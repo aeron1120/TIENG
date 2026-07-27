@@ -1,0 +1,15 @@
+# --- 데모 코어 (필수) ---
+numpy>=1.23
+scipy>=1.9
+opencv-python>=4.7        # 실카메라 실행용. 헤드리스 서버는 opencv-python-headless
+Pillow>=10.0               # 사이드 패널 UI 한글 라벨 렌더링(맑은고딕)
+
+# --- 정량 검증(evaluate.py) 플롯 (선택) ---
+matplotlib>=3.6
+
+# --- 볼 다각형 ROI (--use-facemesh, 선택) ---
+mediapipe>=0.10
+
+# --- 로컬 대시보드(dashboard/app.py, 선택) ---
+fastapi>=0.100
+uvicorn>=0.22

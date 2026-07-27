@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TIENG rPPG 데모 — 기능 구조도 (현재 + 추가 가능)</title>
+<style>
+  :root{
+    --bg:#0f1116; --panel:#171a21; --panel2:#1c2029; --line:#2a2f3a;
+    --tx:#e8ebf0; --tx2:#a8b0be; --tx3:#79808f;
+    --now:#3fae6b;   --now-bg:#12331f;   --now-bd:#245a37;
+    --opt:#3d8be0;   --opt-bg:#122238;   --opt-bd:#255089;
+    --next:#e0a63d;  --next-bg:#2a2410;  --next-bd:#5a4a1a;
+    --no:#d75f6f;    --no-bg:#2a1519;    --no-bd:#5a2730;
+    --core:#c98bff;  --core-bg:#221836;  --core-bd:#402a63;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans KR",sans-serif;
+    line-height:1.5;padding:28px 20px 60px}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 4px}
+  .lead{color:var(--tx2);font-size:14px;margin:0 0 18px}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:0 0 22px;padding:12px 16px;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;font-size:13px}
+  .lg{display:flex;align-items:center;gap:7px;color:var(--tx2)}
+  .dot{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
+  .d-now{background:var(--now)} .d-opt{background:var(--opt)} .d-next{background:var(--next)} .d-no{background:var(--no)}
+
+  .stage{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:0 0 8px}
+  @media(max-width:720px){.stage{grid-template-columns:1fr}}
+  .arrow{text-align:center;color:var(--tx3);font-size:18px;margin:2px 0 10px;user-select:none}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card.now{border-left:4px solid var(--now)}
+  .card.next{border-left:4px dashed var(--next);background:var(--panel2)}
+  .head{display:flex;align-items:center;gap:9px;margin:0 0 8px}
+  .num{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-weight:700;font-size:13px;
+    background:var(--core-bg);color:var(--core);border:1px solid var(--core-bd);flex:0 0 auto}
+  .title{font-size:15px;font-weight:700;margin:0}
+  .kicker{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--tx3);margin:0 0 8px}
+  ul{margin:6px 0 0;padding:0;list-style:none}
+  li{position:relative;padding:3px 0 3px 18px;font-size:13.5px;color:var(--tx)}
+  li::before{content:"";position:absolute;left:2px;top:10px;width:6px;height:6px;border-radius:50%;background:var(--now)}
+  .next li::before{background:var(--next)}
+  li .badge{font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:6px;margin-left:6px;vertical-align:middle}
+  .b-opt{background:var(--opt-bg);color:var(--opt);border:1px solid var(--opt-bd)}
+  .b-src{background:#20242e;color:var(--tx3);border:1px solid var(--line);font-weight:600}
+  .sub{color:var(--tx2);font-size:12.5px}
+
+  .section-title{margin:26px 0 10px;font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .section-title::before{content:"";width:4px;height:16px;border-radius:2px;background:var(--core)}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  @media(max-width:720px){.grid3,.grid2{grid-template-columns:1fr}}
+  .rm{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;border-top:3px solid var(--next)}
+  .rm h3{margin:0 0 4px;font-size:14px}
+  .rm .src{font-size:11px;color:var(--tx3);margin:0 0 8px}
+  .no-card{background:var(--no-bg);border:1px solid var(--no-bd);border-radius:12px;padding:12px 16px}
+  .no-card li::before{background:var(--no)}
+  .foot{margin-top:26px;color:var(--tx3);font-size:12px;border-top:1px solid var(--line);padding-top:12px}
+  code{background:#20242e;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:12px;color:#cdd4e0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>TIENG TouchFree Vitals — 기능 구조도</h1>
+  <p class="lead">현재 구현된 파이프라인과 각 단계에서 <b>추가 가능한 확장</b>, 그리고 의도적으로 <b>범위에서 제외</b>한 것까지 한눈에.
+     · 데모 코어(<code>rppg_demo_v4.py</code>) + 도구(<code>evaluate.py</code>, <code>dashboard</code>)</p>
+
+  <div class="legend">
+    <div class="lg"><span class="dot d-now"></span>구현됨 (기본)</div>
+    <div class="lg"><span class="dot d-opt"></span>이번 확장 · 옵션 플래그</div>
+    <div class="lg"><span class="dot d-next"></span>추가 가능 (로드맵)</div>
+    <div class="lg"><span class="dot d-no"></span>범위 제외 (하지 않음)</div>
+    <div class="lg" style="margin-left:auto"><span class="badge b-src">출처</span> 논문=rppg1 / 기획서=TIENG 기획서</div>
+  </div>
+
+  <!-- ① -->
+  <div class="stage">
+    <div class="card now">
+      <div class="head"><span class="num">①</span><p class="title">입력 — 웹캠 캡처</p></div>
+      <ul>
+        <li>OpenCV 웹캠, 640×480 · ~30fps, 좌우반전</li>
+        <li>밝기 보정 <code>--bright</code>, 노출/화이트밸런스 고정 옵션</li>
+      </ul>
+    </div>
+    <div class="card next">
+      <div class="kicker">여기서 추가 가능</div>
+      <ul>
+        <li>라즈베리파이 카메라 모듈 입력 <span class="badge b-src">기획서 7</span></li>
+        <li>IR·저조도 카메라(역광 대응) <span class="badge b-src">기획서 9 리스크</span></li>
+        <li>해상도·노출 자동 최적화(FPS 확보)</li>
+      </ul>
+    </div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <!-- ② -->
+  <div class="stage">
+    <div class="card now">
+      <div class="head"><span class="num">②</span><p class="title">얼굴 검출 + ROI 선택</p></div>
+      <ul>
+        <li>Haar 얼굴검출 → 이마·좌볼·우볼 사각형 후보</li>
+        <li>MediaPipe 볼 다각형 ROI <span class="badge b-opt">--use-facemesh</span></li>
+      </ul>
+    </div>
+    <div class="card next">
+      <div class="kicker">여기서 추가 가능</div>
+      <ul>
+        <li>볼 다각형 ROI를 기본값으로 승격 <span class="badge b-src">논문 2.1.2</span></li>
+        <li>랜드마크 추적 안정화 · 자동 재검출</li>
+        <li>좌/우 볼 지터 개별 정량화</li>
+      </ul>
+    </div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <!-- ③ -->
+  <div class="stage">
+    <div class="card now">
+      <div class="head"><span class="num">③</span><p class="title">스킨 마스크 + RGB 추출</p></div>
+      <ul>
+        <li>YCrCb 피부 마스크, 최소 피부픽셀 150</li>
+        <li>피부픽셀 가중 결합 · <span class="sub">skin_ratio·brightness 로깅</span></li>
+      </ul>
+    </div>
+    <div class="card next">
+      <div class="kicker">여기서 추가 가능</div>
+      <ul>
+        <li>적응형 스킨 임계(개인·조명 보정) <span class="badge b-src">기획서 9</span></li>
+        <li>조명 정규화 / 색공간 비교(HSV 등)</li>
+      </ul>
+    </div>
+  </div>
+  <div class="arrow">↓ &nbsp;&nbsp; 심박(HR)과 호흡(RR) 두 갈래로 분기 &nbsp;&nbsp; ↓</div>
+
+  <!-- ④ HR / ④' RR -->
+  <div class="stage">
+    <div class="card now">
+      <div class="head"><span class="num">④</span><p class="title">심박(HR) 추정</p></div>
+      <ul>
+        <li>POS → detrend → bandpass → Welch PSD → BPM</li>
+        <li>저주파 제거(호흡 참조 회귀) <span class="badge b-opt">--lowfreq-ref</span></li>
+        <li>parabolic 보간으로 세밀 주파수</li>
+      </ul>
+    </div>
+    <div class="card now">
+      <div class="head"><span class="num">④′</span><p class="title">호흡(RR) 보조지표</p></div>
+      <ul>
+        <li>상체 optical-flow → 호흡대역 → RPM</li>
+        <li>가슴 미노출 시 <span class="sub">"chest not visible" 보류</span></li>
+      </ul>
+    </div>
+  </div>
+  <div class="stage" style="margin-top:6px">
+    <div class="card next">
+      <div class="kicker">HR에 추가 가능</div>
+      <ul>
+        <li>CHROM 등 알고리즘 비교·선택 <span class="badge b-src">기획서 12</span></li>
+        <li>딥러닝 rPPG(DeepPhys/PhysNet) <span class="badge b-src">논문·기획서</span></li>
+        <li>칼만필터 기반 HR 추적</li>
+      </ul>
+    </div>
+    <div class="card next">
+      <div class="kicker">RR에 추가 가능</div>
+      <ul>
+        <li>FMCW 레이더 호흡 변위(주 센서) <span class="badge b-src">논문 3장</span></li>
+        <li>레이더–카메라 대역별 SQI 융합 <span class="badge b-src">논문 4.1.3</span></li>
+      </ul>
+    </div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <!-- ⑤ SQI -->
+  <div class="stage">
+    <div class="card now">
+      <div class="head"><span class="num">⑤</span><p class="title">SQI 품질 판단 <span class="sub">(이 프로젝트의 핵심)</span></p></div>
+      <ul>
+        <li>SQI = peak SNR + HR대역 에너지비 + ROI 지터 + 밝기</li>
+        <li>게이트: SQI≥0.5 표시 / 미만이면 사유와 함께 보류</li>
+        <li>jump guard(급변 억제) + EMA(평활)</li>
+      </ul>
+    </div>
+    <div class="card next">
+      <div class="kicker">여기서 추가 가능</div>
+      <ul>
+        <li>센서별 SQI 동적 가중 융합 <span class="badge b-src">논문 4.1.3</span></li>
+        <li>spectral entropy 등 지표 추가</li>
+        <li>게이트 임계 자동 튜닝</li>
+      </ul>
+    </div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <!-- ⑥ output -->
+  <div class="stage">
+    <div class="card now">
+      <div class="head"><span class="num">⑥</span><p class="title">출력 · 기록 · 알림</p></div>
+      <ul>
+        <li>화면 UI(HR/RR/SQI/보류사유/파형)</li>
+        <li>CSV 로그: SQI 구성요소·시나리오·FPS <span class="badge b-opt">--scenario --profile</span></li>
+        <li>보호자 알림 데모(로그·텍스트 파일)</li>
+      </ul>
+    </div>
+    <div class="card next">
+      <div class="kicker">여기서 추가 가능</div>
+      <ul>
+        <li>SQLite 기록 · 장기 추세 <span class="badge b-src">기획서 8</span></li>
+        <li>실제 이메일 알림 → 카카오/SMS <span class="badge b-src">기획서 6.2</span></li>
+        <li>LED·부저 현장 경고(본선)</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- tools -->
+  <div class="section-title">별도 실행 도구 (데모 CSV 활용)</div>
+  <div class="grid3">
+    <div class="card now">
+      <div class="head"><p class="title">evaluate.py</p></div>
+      <ul>
+        <li>펄스옥시미터 대비 MAE/RMSE</li>
+        <li>±5·±10bpm · 보류율 · SQI coverage</li>
+        <li>Bland-Altman·산점도·타임라인 PNG</li>
+      </ul>
+    </div>
+    <div class="card now">
+      <div class="head"><p class="title">dashboard</p></div>
+      <ul>
+        <li>실시간 웹(BPM/RR/SQI/추세)</li>
+        <li>숫자만 표시 · 원본영상 미저장</li>
+      </ul>
+    </div>
+    <div class="card next">
+      <div class="kicker">추가 가능</div>
+      <ul>
+        <li>run_experiment.py(3시나리오 자동)</li>
+        <li>공개 데이터셋 검증(UBFC·PURE) <span class="badge b-src">기획서 12</span></li>
+        <li>검증 리포트 자동 생성</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- system roadmap -->
+  <div class="section-title">시스템 레벨 확장 (추가 가능 · 기획서 3개월 로드맵)</div>
+  <div class="grid2">
+    <div class="rm"><h3>라즈베리파이5 온디바이스 포팅</h3><p class="src">기획서 7 (5–6주차)</p>
+      ROI만 처리·해상도 제한으로 10~15fps 확보, 원본 영상 미전송(프라이버시).</div>
+    <div class="rm"><h3>FMCW 레이더 융합</h3><p class="src">논문 3–4장 (본체)</p>
+      HR=카메라·RR=레이더, 레이더 호흡을 저주파 참조로, SQI 기반 대역별 가중 융합.</div>
+    <div class="rm"><h3>딥러닝 rPPG & 벤치마크</h3><p class="src">논문·기획서 12 (rPPG-Toolbox)</p>
+      DeepPhys·PhysNet·TS-CAN을 고전(POS/CHROM)과 동일 환경에서 비교.</div>
+    <div class="rm"><h3>다중 피험자 검증 · 개인 보정</h3><p class="src">기획서 6.3 · 9</p>
+      5–10명 데이터, 조명/움직임 조건별 오차표, 피부색 차이 보정.</div>
+  </div>
+
+  <!-- out of scope -->
+  <div class="section-title">범위 제외 — 의도적으로 하지 않음</div>
+  <div class="no-card">
+    <ul>
+      <li>SpO2(산소포화도) · 혈압 추정 <span class="sub">— 경쟁사 영역, 데모 범위 밖 (기획서 12-2)</span></li>
+      <li>의료 진단 · 응급 판단 표현 <span class="sub">— 웰니스 보조로 한정 (규제 리스크)</span></li>
+      <li>자격증명·동의 전 실제 SMS/카카오 푸시 <span class="sub">— 지금은 CSV/이메일 데모까지만</span></li>
+    </ul>
+  </div>
+
+  <div class="foot">
+    범례: <b>구현됨</b>은 지금 <code>python rppg_demo_v4.py</code> 로 동작. <b>옵션</b>은 플래그로 on/off.
+    <b>추가 가능</b>은 아직 미구현(로드맵). 근거 출처는 각 항목의 회색 태그 참조 —
+    rppg1 논문(FMCW 레이더 유도 저주파 제거 + 품질지수 융합) / TIENG 보완 기획서.
+    본 시스템은 연구·시연용이며 의료기기가 아닙니다.
+  </div>
+</div>
+</body>
+</html>

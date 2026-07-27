@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>헬스케어 디바이스 원리 시장조사 · TIENG 적용 정리</title>
+<style>
+  :root{
+    --bg:#0f1116;--panel:#171a21;--panel2:#1c2029;--line:#2a2f3a;
+    --tx:#e8ebf0;--tx2:#a8b0be;--tx3:#79808f;
+    --green:#3fae6b;--blue:#3d8be0;--amber:#e0a63d;--red:#d75f6f;--purple:#c98bff;--skin:#e8b48c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans KR",sans-serif;line-height:1.55;padding:30px 20px 64px}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:23px;margin:0 0 4px}
+  .lead{color:var(--tx2);font-size:14px;margin:0 0 22px}
+  h2{font-size:17px;margin:30px 0 12px;display:flex;align-items:center;gap:9px}
+  h2::before{content:"";width:4px;height:17px;border-radius:2px;background:var(--purple)}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--tx2);font-weight:600}
+  td b{color:var(--tx)}
+  .tag{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:6px}
+  .t-use{background:#12331f;color:var(--green);border:1px solid #245a37}
+  .t-fus{background:#122238;color:var(--blue);border:1px solid #255089}
+  .t-no{background:#2a1519;color:var(--red);border:1px solid #5a2730}
+  .t-ref{background:#2a2410;color:var(--amber);border:1px solid #5a4a1a}
+
+  .dev{display:flex;gap:16px;align-items:flex-start;background:var(--panel);border:1px solid var(--line);
+    border-radius:14px;padding:14px 16px;margin:0 0 12px}
+  .dev .ic{flex:0 0 96px;background:var(--panel2);border-radius:10px;padding:6px}
+  .dev .bd{flex:1;min-width:0}
+  .dev h3{margin:0 0 3px;font-size:15.5px}
+  .dev .sub{font-size:11.5px;color:var(--tx3);margin:0 0 7px}
+  .dev p{margin:5px 0;font-size:13.5px;color:var(--tx)}
+  .dev .k{color:var(--tx3);font-size:12px}
+  ul{margin:6px 0;padding-left:18px}li{font-size:13.5px;margin:3px 0}
+  svg{display:block;width:100%;height:auto}
+  .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:10px 0}
+  .box.rec{border-left:4px solid var(--green)}
+  .box.no{border-left:4px solid var(--red)}
+  .src{margin-top:26px;font-size:12px;color:var(--tx2)}
+  .src a{color:var(--blue);text-decoration:none;word-break:break-all}
+  .foot{margin-top:18px;color:var(--tx3);font-size:12px;border-top:1px solid var(--line);padding-top:12px}
+  code{background:#20242e;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>헬스케어 디바이스 동작 원리 시장조사 & TIENG 적용 정리</h1>
+  <p class="lead">주요 생체신호 측정 디바이스가 <b>어떤 물리 원리</b>로 동작하는지, 그리고 카메라 rPPG 프로젝트(TIENG)에
+     <b>무엇을, 어떤 역할로</b> 쓸 수 있는지 정리. (조사 시점 2026-07)</p>
+
+  <!-- 요약표 -->
+  <h2>한눈에 요약</h2>
+  <table>
+    <tr><th>디바이스</th><th>핵심 원리</th><th>접촉</th><th>측정</th><th>TIENG 적용</th></tr>
+    <tr><td><b>손가락 펄스옥시미터</b></td><td>적색+적외선 투과 흡광비(PPG)</td><td>접촉</td><td>SpO2·심박·맥파</td><td><span class="tag t-use">검증 기준(정답값)</span></td></tr>
+    <tr><td><b>스마트워치 광학 HR</b></td><td>녹색광 반사 PPG (+ECG전극, +적색 SpO2)</td><td>착용</td><td>심박·HRV·SpO2·ECG</td><td><span class="tag t-ref">보조 기준·비교군</span></td></tr>
+    <tr><td><b>혈압계</b></td><td>커프 오실로메트릭 / 커프리스 PTT</td><td>접촉</td><td>혈압</td><td><span class="tag t-no">범위 밖</span></td></tr>
+    <tr><td><b>FMCW 레이더 (60GHz)</b></td><td>흉벽 변위=호흡, 위상=심박(비접촉)</td><td>비접촉</td><td>심박·호흡·재실</td><td><span class="tag t-fus">융합 확장</span></td></tr>
+    <tr><td><b>카메라 rPPG (우리 것)</b></td><td>피부색 미세변화(PPG) 영상 분석</td><td>비접촉</td><td>심박·호흡(보조)</td><td><span class="tag t-use">본 시스템</span></td></tr>
+  </table>
+
+  <!-- 디바이스별 원리 -->
+  <h2>디바이스별 동작 원리</h2>
+
+  <div class="dev">
+    <div class="ic">
+      <svg viewBox="0 0 96 84" role="img" aria-label="손가락 펄스옥시미터">
+        <rect x="18" y="30" width="60" height="30" rx="8" fill="#1c2029" stroke="#3a4150"/>
+        <rect x="30" y="38" width="40" height="14" rx="4" fill="#e8b48c"/>
+        <circle cx="36" cy="26" r="4" fill="#d75f6f"/><circle cx="60" cy="26" r="4" fill="#c98bff"/>
+        <path d="M36 30 v6 M60 30 v6" stroke="#79808f" stroke-width="1.4"/>
+        <path d="M24 68 h48" stroke="#3fae6b" stroke-width="2"/>
+        <path d="M24 68 q6 -10 12 0 t12 0 t12 0 t12 0" fill="none" stroke="#3fae6b" stroke-width="1.6"/>
+      </svg>
+    </div>
+    <div class="bd">
+      <h3>손가락 펄스옥시미터 (SpO2)</h3>
+      <p class="sub">투과식 · 의료/가정용 · rPPG 데이터셋의 표준 정답값</p>
+      <p>손가락 양쪽에 <b>적색 660nm</b>과 <b>적외선 940nm</b> LED를 쏘고 반대편 광센서로 투과광을 측정. 산소가 많은 헤모글로빈과 적은 헤모글로빈의 <b>흡광 특성이 다른 점</b>을 이용해, 두 파장의 흡수비(ratio-of-ratios)를 Beer–Lambert 룩업으로 SpO2로 환산합니다. 동시에 맥동 성분(PPG)에서 심박·맥파도 얻습니다.</p>
+      <p class="k">→ rPPG 연구의 표준 정답 기기: UBFC-rPPG·PURE 데이터셋이 <b>CMS50E</b>를 60Hz 기준으로 사용.</p>
+    </div>
+  </div>
+
+  <div class="dev">
+    <div class="ic">
+      <svg viewBox="0 0 96 84" role="img" aria-label="스마트워치 광학 심박">
+        <rect x="30" y="8" width="36" height="14" rx="4" fill="#2a2f3a"/>
+        <rect x="30" y="62" width="36" height="14" rx="4" fill="#2a2f3a"/>
+        <rect x="24" y="22" width="48" height="40" rx="9" fill="#1c2029" stroke="#3a4150"/>
+        <circle cx="42" cy="42" r="4" fill="#3fae6b"/><circle cx="54" cy="42" r="4" fill="#3fae6b"/>
+        <circle cx="48" cy="52" r="3.4" fill="#d75f6f"/>
+        <path d="M34 34 q6 -8 12 0" fill="none" stroke="#3fae6b" stroke-width="1.4"/>
+      </svg>
+    </div>
+    <div class="bd">
+      <h3>스마트워치 · 밴드 광학 심박</h3>
+      <p class="sub">반사식 PPG · 애플워치/갤럭시워치/핏빗</p>
+      <p>손목에 <b>녹색광(약 525–565nm)</b>을 쏘고 반사광을 광다이오드로 측정. 혈액이 녹색을 잘 흡수하므로, 박동 때마다 혈류가 늘면 반사광이 줄어드는 변화를 심박으로 환산합니다(녹색은 SNR이 커서 심박에 유리). 상위 모델은 <b>ECG 전극</b>(전기 신호)과 <b>적색 660nm SpO2</b> 센서를 추가로 탑재.</p>
+      <p class="k">→ 우리 카메라 rPPG와 원리(PPG)는 같지만, 착용·접촉이 필요하다는 게 결정적 차이.</p>
+    </div>
+  </div>
+
+  <div class="dev">
+    <div class="ic">
+      <svg viewBox="0 0 96 84" role="img" aria-label="혈압계 커프">
+        <ellipse cx="48" cy="44" rx="24" ry="20" fill="none" stroke="#3a4150" stroke-width="8"/>
+        <rect x="20" y="34" width="56" height="20" rx="6" fill="#1c2029" stroke="#3a4150"/>
+        <text x="34" y="48" fill="#a8b0be" font-size="11" font-family="monospace">120/80</text>
+        <path d="M72 60 q10 6 6 16" fill="none" stroke="#79808f" stroke-width="2"/>
+      </svg>
+    </div>
+    <div class="bd">
+      <h3>혈압계 (커프 / 커프리스)</h3>
+      <p class="sub">오실로메트릭 · PTT 기반 커프리스</p>
+      <p><b>커프식(오실로메트릭)</b>: 팔을 압박했다 풀면서 동맥에서 생기는 압력 진동의 크기 변화로 수축기·이완기 혈압을 추정. 정확하지만 반복 압박이 불편하고 연속 측정이 어렵습니다.
+         <b>커프리스</b>: ECG와 PPG의 시간 지연(PTT, 맥파 전달 시간)으로 혈압을 추정 — 연속·무구속이지만 <b>개인별 보정이 필수</b>이고 PTT만으로는 정확도 한계가 있습니다.</p>
+      <p class="k">→ 두 방식 모두 접촉 센서(커프 또는 ECG+PPG 2채널+보정)가 필요 → 카메라 단독 데모 범위 밖.</p>
+    </div>
+  </div>
+
+  <div class="dev">
+    <div class="ic">
+      <svg viewBox="0 0 96 84" role="img" aria-label="FMCW 레이더">
+        <circle cx="26" cy="60" r="4" fill="#e0a63d"/>
+        <path d="M26 60 A26 26 0 0 1 52 34" fill="none" stroke="#e0a63d" stroke-width="2.4"/>
+        <path d="M26 60 A18 18 0 0 1 44 42" fill="none" stroke="#e0a63d" stroke-width="2.4"/>
+        <path d="M26 60 A34 34 0 0 1 60 26" fill="none" stroke="#e0a63d" stroke-width="2.4"/>
+        <rect x="66" y="30" width="18" height="34" rx="5" fill="#1c2029" stroke="#3a4150"/>
+        <path d="M75 30 v-8 M70 26 l5 -4 5 4" stroke="#a8b0be" stroke-width="1.6" fill="none"/>
+      </svg>
+    </div>
+    <div class="bd">
+      <h3>FMCW 레이더 (60GHz mmWave)</h3>
+      <p class="sub">비접촉 · 옷·이불 투과 · 재실 감지</p>
+      <p>주파수를 시간에 따라 바꾸는 연속파(FMCW)를 쏘고 반사파의 주파수 차이로 거리·속도를 잽니다. <b>흉벽의 주기적 팽창·수축</b>은 호흡, 반사 신호의 <b>위상 미세변화</b>는 심박으로 복원. 조명·어둠에 영향받지 않고 옷 위로도 동작합니다.</p>
+      <p class="k">→ rppg1 논문의 핵심 센서. 호흡을 높은 SNR로 잡아 카메라 rPPG의 <b>저주파 참조·RR 융합</b>에 이상적.</p>
+    </div>
+  </div>
+
+  <!-- TIENG 적용 -->
+  <h2>TIENG 프로젝트에 쓸 만한 것</h2>
+
+  <div class="box rec">
+    <h3 style="margin:0 0 6px">① 지금 바로 — 손가락 펄스옥시미터 = 검증 기준(정답값)</h3>
+    <p style="margin:4px 0;font-size:13.5px">우리 카메라 HR이 "얼마나 맞는지"를 증명할 <b>ground truth</b>. rPPG 표준 데이터셋(UBFC·PURE)도 <code>CMS50E</code>급 손가락 산소포화도계를 기준으로 씁니다. 기획서 예산에도 <b>의료용 펄스옥시미터 3만원</b>으로 이미 잡혀 있음.</p>
+    <ul>
+      <li>사용법: 데모와 동시에 손가락 착용 → 두 HR을 시간축 맞춰 비교 → <code>evaluate.py</code>에 <code>--ref</code>로 투입 (MAE/RMSE/±5·10bpm).</li>
+      <li>가능하면 <b>맥파 파형 출력(CMS50E류)</b> 모델을 고르면 신호 대 신호 비교까지 가능.</li>
+    </ul>
+  </div>
+
+  <div class="box" style="border-left:4px solid var(--blue)">
+    <h3 style="margin:0 0 6px">② 융합 확장 — 저가 60GHz mmWave 레이더 모듈</h3>
+    <p style="margin:4px 0;font-size:13.5px">논문의 <b>레이더 유도 저주파 제거·대역별 SQI 융합</b>을 실제로 구현하려면 레이더가 필요합니다. 메이커용 <b>Seeed MR60BHA2</b>가 현실적: 60GHz FMCW, 최대 1.5m에서 호흡·심박, <b>라즈베리파이/ESPHome 연동</b>, 심박 ~85%·호흡 ~90% 검출.</p>
+    <ul>
+      <li>현재 코드의 <code>--lowfreq-ref</code>(상체 모션 참조)를 <b>레이더 호흡 신호로 교체</b>하면 논문 4.1.2에 정확히 대응.</li>
+      <li>HR=카메라 / RR=레이더로 <b>대역 분할 융합</b> → 저조도·움직임 구간 보완.</li>
+      <li>가격은 메이커용 저가대(수만 원, 판매처별 상이) — 본선용 확장으로 적합.</li>
+    </ul>
+  </div>
+
+  <div class="box" style="border-left:4px solid var(--amber)">
+    <h3 style="margin:0 0 6px">③ 데이터셋 — 알고리즘 검증(장비 없이도)</h3>
+    <p style="margin:4px 0;font-size:13.5px">피험자를 많이 못 모아도, 공개 데이터셋으로 정량 검증이 가능. <b>UBFC-rPPG</b>(웹캠 C920, 640×480 30fps, 1m 정면)와 <b>PURE</b>(정지·말하기·머리움직임 6종 시나리오)는 우리 실험 조건과 거의 동일하고 CMS50E 정답이 동봉되어 있습니다.</p>
+  </div>
+
+  <div class="box no">
+    <h3 style="margin:0 0 6px">✕ 범위 밖 — 하지 않는 것</h3>
+    <ul style="margin:4px 0">
+      <li><b>SpO2(산소포화도)</b>: 적색·적외선 <b>다파장 접촉 광학</b>이 필요 → 일반 RGB 웹캠으로는 불가. (연구용 rPPG-SpO2 시도는 있으나 신뢰도 낮음)</li>
+      <li><b>혈압</b>: 커프 또는 ECG+PPG 2채널+개인 보정 필요 → 카메라 단독 데모 범위 밖.</li>
+      <li>→ 기획서 12-2의 "경쟁사 영역"과 일치. 우리는 <b>HR 신뢰성 + 돌봄 흐름</b>에 집중.</li>
+    </ul>
+  </div>
+
+  <!-- 우선순위 표 -->
+  <h2>적용 우선순위</h2>
+  <table>
+    <tr><th>순위</th><th>디바이스</th><th>역할</th><th>난이도</th><th>단계</th></tr>
+    <tr><td>1</td><td>손가락 펄스옥시미터</td><td>정확도 검증 정답값</td><td>낮음</td><td>예선(지금)</td></tr>
+    <tr><td>2</td><td>공개 데이터셋(UBFC/PURE)</td><td>알고리즘 비교·검증</td><td>낮음</td><td>예선~본선</td></tr>
+    <tr><td>3</td><td>Seeed MR60BHA2 레이더</td><td>RR 융합·저주파 참조</td><td>중간</td><td>본선 확장</td></tr>
+    <tr><td>4</td><td>스마트워치(보유 시)</td><td>보조 비교군</td><td>낮음</td><td>선택</td></tr>
+  </table>
+
+  <div class="src">
+    <b>출처</b><br>
+    · 펄스옥시미터 원리: <a href="https://iowaprotocols.medicine.uiowa.edu/protocols/pulse-oximetry-basic-principles-and-interpretation">Univ. of Iowa — Pulse Oximetry Basic Principles</a>,
+      <a href="https://link.springer.com/chapter/10.1007/978-3-031-06413-5_12">Springer — Pulse Oximetry Working Principle</a><br>
+    · 스마트워치 PPG/ECG/SpO2: <a href="https://support.apple.com/en-us/120277">Apple Support — Heart rate on Apple Watch</a>,
+      <a href="https://www.poalarhealth.com/blogs/news/ppg-technology-in-smartwatches-how-your-wearable-tracks-health-through-light">PPG Technology in Smartwatches</a><br>
+    · 혈압(오실로메트릭/커프리스 PTT): <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC9920508/">MDPI/PMC — Cuffless BP with PTT</a>,
+      <a href="https://www.nature.com/articles/s41598-017-11507-3">Nature — PTT-based Cuffless BP</a><br>
+    · FMCW 레이더 원리: <a href="https://www.wevolver.com/article/contactless-measurement-of-heart-rate-and-respiration-rate-transforming-healthcare-with-radar-sensors">Wevolver — Contactless HR/RR with Radar</a>,
+      <a href="https://pubs.rsc.org/en/content/articlehtml/2024/sd/d4sd00073k">RSC — Contactless vital sign monitoring survey</a><br>
+    · 데이터셋 정답(CMS50E): <a href="https://sites.google.com/view/ybenezeth/ubfcrppg">UBFC-rPPG Dataset</a>,
+      <a href="https://ubicomplab.cs.washington.edu/pdfs/rppg-toolbox.pdf">rPPG-Toolbox (PURE/CMS50E)</a><br>
+    · 저가 레이더 모듈: <a href="https://www.seeedstudio.com/MR60BHA2-60GHz-mmWave-Sensor-Breathing-and-Heartbeat-Module-p-5945.html">Seeed MR60BHA2</a>,
+      <a href="https://wiki.seeedstudio.com/getting_started_with_mr60bha2_mmwave_kit/">Seeed Wiki — MR60BHA2</a>
+  </div>
+
+  <div class="foot">
+    수치(검출률·거리 등)는 제조사·리뷰 발표 기준이며 실제 환경에서 달라질 수 있음. 가격은 판매처·시점에 따라 변동.
+    본 자료는 웰니스 데모 기획용이며 의료적 판단 근거가 아닙니다.
+  </div>
+</div>
+</body>
+</html>

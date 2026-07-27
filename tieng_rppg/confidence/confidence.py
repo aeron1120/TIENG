@@ -146,7 +146,7 @@ def gate_check(ctx: FrameContext, n_samples: int, fps: float, band: Band) -> Gat
 class SpectralResult:
     bpm: float
     snr_db: float           # 대역 내 주피크+배음 대 나머지
-    harmonic_ratio: float   # P(2f) / P(f)
+    harmonic_ratio: float   # P(2f) / P(f). 2f가 대역 밖이면 nan (측정 불가)
     peak_ratio: float       # P(2등 피크) / P(주피크)
     band_power_frac: float  # 대역 내 파워 / 전체 파워
 
@@ -203,10 +203,17 @@ def spectral_analysis(x: np.ndarray, fps: float, band: Band) -> SpectralResult:
     snr_db = 10.0 * math.log10(max(p_sig, 1e-20) / p_noise)
 
     # 배음 일관성: 진짜 맥파는 2f에 에너지가 있고, 백색잡음은 없다.
-    harm_mask = _mask_around(2 * f_peak, 0.10)
-    p_harm = float(np.sum(psd[harm_mask]) * df)
+    #
+    # 단, 2f가 대역 밖이면 앞단 대역통과가 이미 지워버린 뒤다. 남은 잔재로 비율을
+    # 재면 신호 품질이 아니라 필터 감쇠를 재게 되고, 부호까지 뒤집힌다 — 잡음이
+    # 많을수록 2f 부근에 에너지가 남아 비율이 커지기 때문이다. 측정 불가로 둔다.
+    # (RR 대역 0.1–0.5Hz 에서는 12rpm 이상이면 전부 여기 해당한다)
     p_fund = float(np.sum(psd[_mask_around(f_peak, 0.10)]) * df)
-    harmonic_ratio = p_harm / max(p_fund, 1e-20)
+    if 2 * f_peak + 0.10 <= band.f_hi:
+        p_harm = float(np.sum(psd[_mask_around(2 * f_peak, 0.10)]) * df)
+        harmonic_ratio = p_harm / max(p_fund, 1e-20)
+    else:
+        harmonic_ratio = float("nan")
 
     # 피크 모호성: 2등 피크가 주피크에 가까우면 FFT가 헷갈리고 있다는 뜻.
     masked = band_psd.copy()
@@ -251,7 +258,11 @@ def score_snr(snr_db: float) -> float:
 
 
 def score_harmonic(ratio: float) -> float:
-    """배음비가 0.05~0.6이면 생리학적으로 그럴듯하다. 너무 크면 주파수 오검출."""
+    """배음비가 0.05~0.6이면 생리학적으로 그럴듯하다. 너무 크면 주파수 오검출.
+
+    2f가 대역 밖이라 배음비를 잴 수 없는 경우에는 이 함수를 부르지 않는다 —
+    scores 에서 키 자체를 빼고, combine 이 가중치 합에서도 제외한다.
+    """
     if ratio <= 0:
         return 0.15
     lo, hi = 0.05, 0.60
@@ -309,13 +320,20 @@ WEIGHTS = {
 
 
 def combine(scores: dict) -> float:
+    """없는 키는 '측정 불가'로 보고 가중치 합에서도 뺀다.
+
+    기본값 0.5를 채워 넣으면 '해당 없음'과 '품질이 그저 그럼'이 같아진다.
+    잴 수 없는 성분 때문에 confidence 가 깎이면 안 된다.
+    """
     num = 0.0
     den = 0.0
     for k, w in WEIGHTS.items():
-        s = float(np.clip(scores.get(k, 0.5), 1e-6, 1.0))
+        if k not in scores:
+            continue
+        s = float(np.clip(scores[k], 1e-6, 1.0))
         num += w * math.log(s)
         den += w
-    return float(math.exp(num / den))
+    return float(math.exp(num / den)) if den > 0 else 0.0
 
 
 @dataclass
@@ -373,11 +391,12 @@ class VitalEstimator:
 
         scores = {
             "snr":         score_snr(sr.snr_db),
-            "harmonic":    score_harmonic(sr.harmonic_ratio),
             "unambiguity": score_unambiguity(sr.peak_ratio),
             "agreement":   score_agreement(sr.bpm, bpm_td, tol),
             "temporal":    score_temporal(sr.bpm, self._prev_bpm, dt, self.band),
         }
+        if np.isfinite(sr.harmonic_ratio):
+            scores["harmonic"] = score_harmonic(sr.harmonic_ratio)
         conf = combine(scores)
 
         self._prev_bpm = sr.bpm

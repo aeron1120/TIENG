@@ -13,7 +13,7 @@ TouchFree Vitals — 호흡수(RR) 추정 골조  v0.1
 * Source 는 "프레임마다 스칼라 하나"를 만들어 (t, v) 로 쌓는다. 조밀 광류장을
   통째로 들고 다니지 않는다 — Pi 실시간성의 핵심.
 * Source 와 Estimator 는 서로를 모른다. 새 신호원(열화상 콧구멍 온도 등)을
-  추가하려면 Source 하나만 구현하면 된다.
+  추가하려면 Source 와 그 센서의 GateContext 만 구현하면 된다.
 * 모든 Source 는 비균일 표본을 낼 수 있다고 가정하고, 공통 전처리에서
   균일 격자로 리샘플링한다. (RIAV/RIFV 는 박동당 1개라 반드시 필요)
 
@@ -31,7 +31,8 @@ from typing import Optional, Sequence
 import numpy as np
 from scipy import signal as sps
 
-from confidence import BAND_RR, Band, FrameContext, VitalEstimator, VitalReading, fuse
+from confidence import (BAND_RR, Band, GateContext, VitalEstimator, VitalReading,
+                        fuse)
 
 
 # ===========================================================================
@@ -78,7 +79,7 @@ def preprocess(v: np.ndarray, fs: float, band: Band = BAND_RR) -> np.ndarray:
 class RespirationSource(ABC):
     """모든 호흡 신호원의 공통 인터페이스.
 
-    새 센서를 붙인다 == 이 클래스를 하나 더 구현한다.
+    새 센서를 붙인다 == 이 클래스와 confidence.GateContext 를 하나씩 구현한다.
     (열화상 콧구멍 온도, 레이더 위상, 깊이카메라 흉부 변위 …)
     """
     name: str = "base"
@@ -454,11 +455,17 @@ class RespirationEstimator:
         self._vital = {s.name: VitalEstimator(band, fs, calibration)
                        for s in self.sources}
 
-    def compute(self, ctx: FrameContext, t_now: float):
+    def compute(self, ctx, t_now: float):
+        """ctx: 모든 Source 가 같은 센서에서 나오면 GateContext 하나를 넘긴다.
+        센서가 섞여 있으면 {source_name: GateContext} 를 넘긴다 — 열화상이 코를
+        놓쳤는데 가시광은 가슴을 잘 보고 있는 상황을 표현하려면 게이트가
+        Source 별로 독립이어야 한다.
+        """
         results = []
         for src in self.sources:
             if not src.ready(self.band.min_window_sec):
                 continue
+            src_ctx: GateContext = ctx[src.name] if isinstance(ctx, dict) else ctx
             t, v = src.series()
             grid, vv = resample_uniform(t, v, self.fs)
             if len(vv) < 32:
@@ -471,7 +478,7 @@ class RespirationEstimator:
                        for e in self.estimators}
 
             # confidence 모듈은 전처리된 신호를 그대로 받는다
-            reading = self._vital[src.name].update(x_bp, ctx, t_now)
+            reading = self._vital[src.name].update(x_bp, src_ctx, t_now)
             results.append(SourceResult(src.name, src.kind,
                                         reading.bpm if reading.ok else float("nan"),
                                         reading, per_est))

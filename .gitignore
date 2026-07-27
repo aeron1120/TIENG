@@ -1,3 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
+
+# confidence 셀프테스트 산출물 (실행할 때마다 재생성)
+tieng_rppg/confidence/calibration_*.json
+tieng_rppg/confidence/coverage_mae_curve.png

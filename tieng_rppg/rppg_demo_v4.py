@@ -698,7 +698,30 @@ def selftest() -> bool:
         print(f"  {'OK' if passed else 'XX'} true={true_rpm:3d} est={'None' if est.rpm is None else f'{est.rpm:6.1f}'} err={err:4.1f}")
     resp_ok = resp_ok_count == 4
 
-    all_ok = mask_ok and heart_ok and gate_ok and lf_ok and resp_ok
+    print("=== SELFTEST 6: --rr-engine new (confidence/respiration.py) ===")
+    engine, msg = _maybe_rr_engine("new")
+    if engine is None:
+        # 모듈이 없어도 데모는 legacy 로 정상 동작한다 — 회귀로 보지 않는다.
+        print(f"  -- skipped: {msg}")
+        rr_new_ok = True
+    else:
+        true_rpm = 15.0
+        fs = 30.0; t = np.arange(0, 40.0, 1.0 / fs)
+        # ChestMotionSource 는 광류 '속도'를 받아 내부에서 적분한다 → 변위의 미분을 넣는다
+        vy = (2 * np.pi * (true_rpm / 60.0)) * np.cos(2 * np.pi * (true_rpm / 60.0) * t)
+        vy += rng.normal(0, 0.15, size=vy.shape)
+        for ti, vi in zip(t, vy):
+            engine.sources[0].update(float(ti), float(vi))
+        est = _rr_estimate_from_engine(
+            engine, t_now=float(t[-1]), duration=float(t[-1] - t[0]),
+            roi_intensity=120.0, motion_px=0.5, fps_jitter=0.02)
+        err = float("inf") if est.rpm is None else abs(est.rpm - true_rpm)
+        rr_new_ok = err <= 2.0 and est.sqi > 0.0
+        print(f"  {'OK' if rr_new_ok else 'XX'} true={true_rpm:4.1f} "
+              f"est={'None' if est.rpm is None else f'{est.rpm:6.1f}'} err={err:4.1f} "
+              f"conf={est.sqi:.2f} hold='{est.hold_reason}'")
+
+    all_ok = mask_ok and heart_ok and gate_ok and lf_ok and resp_ok and rr_new_ok
     print(f"\n=== SELFTEST RESULT: {'PASS' if all_ok else 'FAIL'} ===")
     return all_ok
 
@@ -978,6 +1001,73 @@ def _maybe_facemesh_engine(use_facemesh: bool, min_skin: int):
         return None, f"facemesh 초기화 실패({exc}) - Haar ROI로 폴백"
 
 
+def _maybe_rr_engine(mode: str):
+    """--rr-engine new 시 confidence/respiration.py 의 RespirationEstimator 를 만든다.
+
+    실패하면 (None, 사유). 호출측은 기존 estimate_respiration 경로로 폴백한다.
+    흉부 광류 v_y 는 데모가 이미 계산하므로 ChestMotionSource 하나만 연결한다
+    (RIAV/RIFV/RIIV 는 박동 단위 맥파 표본이 필요해 아직 배선하지 않았다).
+    """
+    if mode != "new":
+        return None, ""
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "confidence"))
+        from respiration import ChestMotionSource, RespirationEstimator
+        return RespirationEstimator([ChestMotionSource()]), ""
+    except Exception as exc:
+        return None, f"respiration 모듈 로드 실패({exc}) - 기존 RR 경로로 폴백"
+
+
+def _fps_jitter(dts: Iterable[float]) -> float:
+    """프레임 간격의 변동계수(std/mean). confidence 게이트의 UNSTABLE_FPS 판정 입력."""
+    arr = np.asarray(list(dts), dtype=np.float64)
+    if len(arr) < 5:
+        return 0.0
+    mean = float(arr.mean())
+    return float(arr.std() / mean) if mean > 1e-6 else 0.0
+
+
+def _rr_estimate_from_engine(
+    engine,
+    *,
+    t_now: float,
+    duration: float,
+    roi_intensity: float,
+    motion_px: float,
+    fps_jitter: float,
+) -> RespirationEstimate:
+    """RespirationEstimator 출력을 기존 RespirationEstimate 로 변환한다.
+
+    confidence(0~1)를 sqi 자리에 그대로 싣는다. 둘 다 같은 방향의 품질 척도라
+    게이트/히스테리시스/CSV/패널 등 하류 코드를 건드리지 않아도 된다.
+    """
+    from confidence import FrameContext  # sys.path 는 _maybe_rr_engine 에서 설정됨
+
+    ctx = FrameContext(
+        roi_found=True,
+        roi_mean_intensity=roi_intensity,
+        motion_magnitude=motion_px,
+        fps_jitter=fps_jitter,
+    )
+    try:
+        bpm, conf, results = engine.compute(ctx, t_now)
+    except Exception:
+        return RespirationEstimate(None, 0.0, np.array([]), "signal_error", duration, "signal error")
+
+    if not results:
+        # Source 가 아직 min_window_sec(20s)를 못 채웠다 — 전부 skip 된 상태
+        return RespirationEstimate(None, 0.0, np.array([]), "collecting", duration, "collecting samples")
+
+    if not np.isfinite(bpm):
+        reading = results[0].reading
+        if reading is not None and not reading.ok:
+            return RespirationEstimate(None, conf, np.array([]), "hold", duration, reading.reason.value)
+        # 게이트는 통과했으나 fuse() 의 min_conf 미달
+        return RespirationEstimate(None, conf, np.array([]), "ok", duration, "low RR confidence")
+
+    return RespirationEstimate(float(bpm), float(conf), np.array([]), "ok", duration, "")
+
+
 # --------------------------------------------------------------------------- #
 # 메인 웹캠 루프
 # --------------------------------------------------------------------------- #
@@ -994,6 +1084,13 @@ def run_webcam(args: argparse.Namespace) -> None:
         print(f"[facemesh] {fm_msg}")
     elif facemesh_engine is not None:
         print("[facemesh] MediaPipe 볼 다각형 ROI 사용")
+
+    rr_engine, rr_msg = _maybe_rr_engine(args.rr_engine)
+    if rr_msg:
+        print(f"[rr] {rr_msg}")
+    elif rr_engine is not None:
+        print("[rr] confidence/respiration.py RespirationEstimator 사용 (ChestMotionSource)")
+    rr_engine_tag = "new" if rr_engine is not None else "legacy"
 
     if args.lock_exposure and not args.force_lock_exposure:
         print("--lock-exposure: 이 카메라에서는 화면이 어두워질 수 있어 자동 고정을 건너뜁니다. (--force-lock-exposure 로 강제)")
@@ -1018,11 +1115,13 @@ def run_webcam(args: argparse.Namespace) -> None:
     active_alert_message = ""
     prev_resp_gray: Optional[np.ndarray] = None
     resp_chest_ok = True
+    resp_roi_intensity = 128.0          # 흉부 ROI 평균 밝기 (confidence 게이트 입력)
     notifier = DemoNotifier(args.alert_log, args.alert_inbox, args.alert_cooldown_sec)
 
     # [5순위] 프로파일링 상태
     fps_ema = 0.0; prev_frame_t = None
     latencies: List[float] = []; fps_samples: List[float] = []
+    frame_dts: Deque[float] = deque(maxlen=30)   # fps_jitter 산출용 최근 프레임 간격
 
     csv_file = None; csv_writer = None
     if args.log:
@@ -1034,7 +1133,7 @@ def run_webcam(args: argparse.Namespace) -> None:
             "roi_name", "skin_pixel_count", "skin_ratio", "brightness", "roi_jitter_px",
             # [4순위] SQI 구성요소 + 저주파 + 시나리오 + fps
             "peak_snr_db", "hr_band_energy_ratio", "q_snr", "q_energy", "q_motion",
-            "lowfreq_applied", "scenario", "fps",
+            "lowfreq_applied", "scenario", "rr_engine", "fps",
             "heart_alert", "resp_alert",
         ])
 
@@ -1042,7 +1141,8 @@ def run_webcam(args: argparse.Namespace) -> None:
     cv2.resizeWindow(UI_WIN_NAME, args.width + UI_PANEL_W, args.height)
 
     start = time.time()
-    print(f"데모 시작 (scenario={args.scenario or 'none'}, lowfreq_ref={args.lowfreq_ref}). "
+    print(f"데모 시작 (scenario={args.scenario or 'none'}, lowfreq_ref={args.lowfreq_ref}, "
+          f"rr_engine={rr_engine_tag}). "
           f"얼굴을 화면에 두고 8~12초 가만히. 종료 q/ESC.")
     print("주의: 연구/시연용이며 의료 판단용이 아닙니다. SpO2/혈압 미구현.")
 
@@ -1065,6 +1165,7 @@ def run_webcam(args: argparse.Namespace) -> None:
                     inst = 1.0 / dt
                     fps_ema = inst if fps_ema == 0 else 0.9 * fps_ema + 0.1 * inst
                     fps_samples.append(inst)
+                    frame_dts.append(dt)
             prev_frame_t = loop_t0
 
             face_box = None; face_found = False
@@ -1117,8 +1218,12 @@ def run_webcam(args: argparse.Namespace) -> None:
                 rg = cv2.GaussianBlur(cv2.resize(rg, (96, 48), interpolation=cv2.INTER_AREA), (5, 5), 0)
                 if prev_resp_gray is not None and prev_resp_gray.shape == rg.shape:
                     flow = cv2.calcOpticalFlowFarneback(prev_resp_gray, rg, None, 0.5, 2, 15, 2, 5, 1.1, 0)
-                    resp_times.append(now); resp_motion.append(float(np.mean(flow[:, :, 1])))
+                    vy = float(np.mean(flow[:, :, 1]))
+                    resp_times.append(now); resp_motion.append(vy)
+                    if rr_engine is not None:
+                        rr_engine.sources[0].update(now, vy)     # 경로 A: 흉부 광류 v_y
                 prev_resp_gray = rg
+                resp_roi_intensity = float(rg.mean())
             else:
                 prev_resp_gray = None
 
@@ -1156,9 +1261,17 @@ def run_webcam(args: argparse.Namespace) -> None:
                                                              last_resp_estimate.duration, "chest ROI not visible")
                     resp_hold_reason = "chest ROI not visible"
                 else:
-                    last_resp_estimate = estimate_respiration(
-                        resp_times, resp_motion, fs_resample=args.resp_fs,
-                        rpm_min=args.rpm_min, rpm_max=args.rpm_max, min_sec=args.resp_min_sec)
+                    if rr_engine is not None:
+                        last_resp_estimate = _rr_estimate_from_engine(
+                            rr_engine, t_now=now,
+                            duration=(resp_times[-1] - resp_times[0]) if len(resp_times) >= 2 else 0.0,
+                            roi_intensity=resp_roi_intensity, motion_px=jitter_px,
+                            fps_jitter=_fps_jitter(frame_dts))
+                    else:
+                        last_resp_estimate = estimate_respiration(
+                            resp_times, resp_motion, fs_resample=args.resp_fs,
+                            rpm_min=args.rpm_min, rpm_max=args.rpm_max, min_sec=args.resp_min_sec)
+                    # 게이트/EMA/hold 사유는 엔진과 무관하게 동일하게 적용한다
                     resp_hold_reason = last_resp_estimate.hold_reason
                     if last_resp_estimate.rpm is not None and last_resp_estimate.sqi >= args.resp_sqi_gate:
                         disp_rpm = last_resp_estimate.rpm if disp_rpm is None else (
@@ -1211,7 +1324,7 @@ def run_webcam(args: argparse.Namespace) -> None:
                         f"{last_brightness:.1f}", f"{jitter_px:.2f}",
                         f"{e.peak_snr_db:.2f}", f"{e.hr_band_energy_ratio:.3f}",
                         f"{e.q_snr:.3f}", f"{e.q_energy:.3f}", f"{e.q_motion:.3f}",
-                        int(e.lowfreq_applied), args.scenario, f"{fps_ema:.1f}",
+                        int(e.lowfreq_applied), args.scenario, rr_engine_tag, f"{fps_ema:.1f}",
                         int(sustained_heart), int(sustained_resp),
                     ])
                     csv_file.flush()
@@ -1311,6 +1424,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--use-facemesh", action="store_true", help="[2순위] MediaPipe 볼 다각형 ROI 사용(미설치 시 폴백)")
     p.add_argument("--scenario", type=str, default="", choices=["", "static", "lighting", "head_motion"],
                    help="[4순위] 실험 시나리오 태그(로그에 기록)")
+    p.add_argument("--rr-engine", type=str, default="legacy", choices=["legacy", "new"],
+                   help="호흡수 추정 엔진. legacy=내장 estimate_respiration(기본), "
+                        "new=confidence/respiration.py RespirationEstimator. "
+                        "선택 결과는 CSV rr_engine 열에 기록된다(모듈 로드 실패 시 legacy 폴백)")
  
     p.add_argument("--profile", action="store_true", help="[5순위] 종료 시 FPS/지연 요약 출력")
     p.add_argument("--duration", type=float, default=0.0,

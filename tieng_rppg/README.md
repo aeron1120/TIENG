@@ -13,6 +13,11 @@ tieng_rppg/
 ├── rppg_demo_v4.py        # 메인 데모 (웹캠 HR/RR + SQI 게이팅 + 저주파제거/facemesh/프로파일링)
 ├── roi_facemesh.py        # [2순위] MediaPipe 볼 다각형 ROI (선택, 미설치 시 자동 폴백)
 ├── evaluate.py            # [1순위] 펄스옥시미터 기준 정량 검증(MAE/RMSE/±5·±10/보류율/플롯)
+├── confidence/            # 신뢰도·호흡수 모듈 (데모와 독립 실행/검증 가능)
+│   ├── confidence.py        # 4층 confidence (게이트→SQI→시간일관성→캘리브레이션) + fuse
+│   ├── respiration.py       # 호흡수 추정 (Source × Estimator 분리). --rr-engine new 가 사용
+│   ├── integrate_webcam.py  # confidence 단독 웹캠 배선 예제
+│   └── selftest_*.py        # 합성 신호 자체 검증
 ├── dashboard/
 │   └── app.py             # [6순위] FastAPI 로컬 대시보드 (숫자만, 원본영상 미저장)
 ├── requirements.txt
@@ -54,6 +59,9 @@ python rppg_demo_v4.py --log head_motion.csv  --scenario head_motion   --profile
 # 저주파 제거 + 볼 다각형 ROI 동시 사용
 python rppg_demo_v4.py --lowfreq-ref --use-facemesh --log run.csv --scenario lighting
 
+# 호흡수 엔진 교체 (기본은 legacy = 내장 estimate_respiration)
+python rppg_demo_v4.py --rr-engine new --log run.csv --scenario static
+
 # 정량 검증 (펄스옥시미터 CSV와 비교)
 python evaluate.py --demo static.csv --ref pulseox.csv --out report/
 python evaluate.py --demo head_motion.csv --ref pulseox.csv --offset -1.5   # 시작시각 정렬 보정
@@ -90,6 +98,8 @@ python dashboard/app.py --selftest
 | facemesh 기하 | `python roi_facemesh.py` | 다각형→마스크→RGB, 가중결합 (cv2만 필요) |
 | 검증 하네스 | `python evaluate.py --selftest` | MAE/게이팅 대비/coverage/정렬 |
 | 대시보드 | `python dashboard/app.py --selftest` | 엔드포인트/waiting/프라이버시 |
+| confidence | `cd confidence && python selftest_confidence.py` | 오차 상관·캘리브레이션·히스테리시스·융합·알림 |
+| 호흡수 골조 | `cd confidence && python selftest_respiration.py` | 추정기 4종·윈도우 길이·RIAV/RIFV/RIIV·융합 |
 
 ## 아직 안 한 것 (범위 방어)
 

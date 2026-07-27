@@ -41,6 +41,11 @@ tieng_rppg/
 ├── run_experiment.py     # [신규] static/lighting/head_motion 3시나리오 자동 실행 + 요약표
 ├── roi_facemesh.py       # [옵션] MediaPipe 볼 다각형 ROI. mediapipe 없으면 자동 폴백. selftest PASS
 ├── evaluate.py           # 정량 검증 하네스 (펄스옥시미터 CSV 대비 MAE/RMSE 등). selftest PASS
+├── confidence/           # [신규] 신뢰도·호흡수 모듈. 데모와 독립 실행/검증 가능. selftest PASS
+│   ├── confidence.py       # 4층 confidence + 캘리브레이션 + fuse
+│   ├── respiration.py      # 호흡수 골조 (Source × Estimator). --rr-engine new 가 사용
+│   ├── integrate_webcam.py # confidence 단독 웹캠 배선 예제 (데모와 별개 파이프라인)
+│   └── selftest_confidence.py / selftest_respiration.py
 ├── dashboard/
 │   └── app.py            # FastAPI 로컬 대시보드 (숫자만 표시, 원본영상 미저장). selftest PASS
 ├── requirements.txt      # 의존성 (Pillow 추가됨 - 사이드 패널 한글 라벨용)
@@ -182,14 +187,18 @@ raw SQI/게이팅 판정 자체와 무관한, 화면 배지 전용 로직.
 - 정적·조명고정 rPPG 단독: MAE 4.66 / RMSE 7.89 / ±5bpm 81.1% / ±10bpm 88.7%.
 - 머리 움직임: MAE 13.4 → SQI<0.5 구간 제거 시 MAE 2.89 (게이팅 효과 = 이 데모의 핵심 근거).
 
-### CSV 컬럼(`--log` 출력, 변경 없음)
+### CSV 컬럼(`--log` 출력)
 ```
 elapsed_sec, heart_bpm, heart_sqi, heart_status, heart_hold_reason,
 resp_rpm, resp_sqi, resp_status, resp_hold_reason,
 roi_name, skin_pixel_count, skin_ratio, brightness, roi_jitter_px,
 peak_snr_db, hr_band_energy_ratio, q_snr, q_energy, q_motion,
-lowfreq_applied, scenario, fps, heart_alert, resp_alert
+lowfreq_applied, scenario, rr_engine, fps, heart_alert, resp_alert
 ```
+`rr_engine` 은 나중에 추가된 열이다(`legacy`|`new`). 소비자(evaluate.py,
+dashboard/app.py, run_experiment.py)는 모두 열 이름으로 읽으므로 기존 코드는 영향 없다.
+`--rr-engine new` 인 행에서는 `resp_sqi` 가 SQI 가 아니라 confidence 값이다 —
+두 엔진의 RR 을 섞어서 통계 내지 말 것.
 
 ---
 

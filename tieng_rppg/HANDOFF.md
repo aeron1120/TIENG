@@ -44,7 +44,7 @@ tieng_rppg/
 ├── confidence/           # [신규] 신뢰도·호흡수 모듈. 데모와 독립 실행/검증 가능. selftest PASS
 │   ├── confidence.py       # 4층 confidence + 캘리브레이션 + fuse
 │   ├── respiration.py      # 호흡수 골조 (Source × Estimator). --rr-engine new 가 사용
-│   ├── integrate_webcam.py # confidence 단독 웹캠 배선 예제 (데모와 별개 파이프라인)
+│   ├── example_wiring.py   # 배선 예제 (카메라 불필요). 웹캠 루프는 데모 한 곳에만 존재
 │   └── selftest_confidence.py / selftest_respiration.py
 ├── dashboard/
 │   └── app.py            # FastAPI 로컬 대시보드 (숫자만 표시, 원본영상 미저장). selftest PASS

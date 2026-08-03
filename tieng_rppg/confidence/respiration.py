@@ -5,6 +5,7 @@ TouchFree Vitals — 호흡수(RR) 추정 골조  v0.1
 ----------------
 경로 A (기계적 변위)      : ChestMotionSource, LandmarkSource
 경로 B (맥파 변조 복조)   : RIIVSource(기저선), RIAVSource(진폭), RIFVSource(박동간격)
+경로 C (열 변조)          : ThermalNostrilSource. 카메라 드라이버는 thermal_mlx90640.py
 주파수 추정 (교체 가능)   : FFTEstimator, AutocorrEstimator, BurgAREstimator, PeakCountEstimator
 품질 판정 + 융합          : confidence.py 재사용 (VitalEstimator / fuse)
 
@@ -261,6 +262,24 @@ class RIIVSource(_PPGModulationSource):
             self._push(t_i, v)
 
 
+# --- 경로 C: 열화상 온도 변조 -----------------------------------------------
+
+class ThermalNostrilSource(RespirationSource):
+    """콧구멍 ROI 평균 온도 (경로 C).
+
+    날숨(따뜻)·들숨(차가움)이 온도 진동을 만든다. ChestMotionSource와 같은 이유로
+    열화상 프레임을 직접 보지 않는다 — ROI 픽셀의 평균 온도값 하나만 받는다.
+    프레임에서 ROI를 잘라 평균을 내는 일(그리고 어느 좌표가 코인지 정하는 일)은
+    캡처 계층(thermal_mlx90640.roi_stats)의 책임이다. 절대온도를 그대로 받아도
+    된다 — 하류 preprocess()가 detrend로 기저선을 지운다.
+    """
+    name = "thermal_nostril"
+    kind = "thermal"
+
+    def update(self, t: float, mean_temp_c: float) -> None:
+        self._push(t, mean_temp_c)
+
+
 # ===========================================================================
 # 주파수 추정기 — 교체 가능
 # ===========================================================================
@@ -495,4 +514,7 @@ class RespirationEstimator:
 # [하드웨어]  LandmarkSource 를 MediaPipe Pose 또는 LK 추적으로 구현
 # [검증]      메트로놈 호흡(10/12/15/20 bpm)으로 Estimator 4종 벤치마크
 # [검증]      복부 ROI vs 흉부 ROI 비교 — 누운 자세에선 복부가 유리할 것
-# [확장]      ThermalNostrilSource(RespirationSource) — 열화상 도입 시
+# [하드웨어]  MLX90640 실장비 입고 후: thermal_mlx90640.MLX90640Capture 실측 검증
+#            (T_MIN_ROI_PIXELS/T_MIN_DELTA_T 재측정), RGB 얼굴 위치 → 열화상 좌표
+#            오프셋 캘리브레이션, rppg_demo_v4.py 배선(현재는 미배선 — confidence/
+#            아래에서만 독립 실행/검증됨, respiration.py 최초 골조와 같은 단계)

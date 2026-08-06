@@ -5,3 +5,15 @@ __pycache__/
 # confidence 셀프테스트 산출물 (실행할 때마다 cwd 에 재생성 — 경로 고정 불가)
 calibration_*.json
 coverage_mae_curve.png
+
+# web
+node_modules/
+dist/
+
+# 런타임 로그 (Phase 2부터 생성)
+logs/*.csv
+
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

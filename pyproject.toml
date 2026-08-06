@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "touchfree-vitals"
+version = "0.1.0"
+description = "비접촉 생체신호 모니터링 + 환경 개입 시스템"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "structlog>=24.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML",
+]
+
+[tool.setuptools]
+packages = ["core", "core.adapters", "api", "api.routes"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# legacy/ 는 Phase 2·5에서 이식해 올 기존 프로토타입이다. 지금은 손대지 않는다.
+extend-exclude = ["legacy"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+exclude = ["legacy"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

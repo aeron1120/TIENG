@@ -1,0 +1,33 @@
+device_id: tfv-pi-01
+sample_rate_hz: 1
+
+adapters:
+  - id: rppg
+    module: core.adapters.rppg
+    mode: live
+    params: { camera_index: 0, width: 640, height: 480, window_s: 10 }
+  - id: bme680
+    module: core.adapters.env_bme680
+    mode: live
+    params: { i2c_addr: 0x76 }
+  - id: rr_estimator
+    module: core.adapters.rr_mock
+    mode: simulated
+    params: { base_rpm: 15, noise: 1.2 }
+  - id: posture
+    module: core.adapters.posture_mock
+    mode: unavailable
+
+# actuators / policies 는 Phase 3·5에서 읽는다. 지금은 registry가 무시한다.
+actuators:
+  - id: room_light
+    module: actuators.tuya_plug
+    params: { device_id: "...", local_key: "...", ip: "192.168.0.x" }
+
+policies:
+  - module: core.policy.l1_light
+    enabled: true
+  - module: core.policy.l3_breathing
+    enabled: true
+  - module: core.policy.l4_notify
+    enabled: true

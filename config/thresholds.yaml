@@ -1,0 +1,11 @@
+profile: demo          # demo | production
+
+demo:
+  hr: { low: 55, high: 95, sustain_s: 20 }
+  confidence_min: 0.4
+  night_mode: { start: "22:00", end: "07:00" }
+
+production:
+  hr: { low: 45, high: 120, sustain_s: 120 }
+  confidence_min: 0.6
+  night_mode: { start: "21:00", end: "08:00" }

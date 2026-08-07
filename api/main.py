@@ -16,6 +16,7 @@ from api.routes.snapshot import router as snapshot_router
 from api.schemas import Snapshot, server_now
 from api.ws import Hub
 from api.ws import router as ws_router
+from core.metrics_log import MetricCsvLogger
 from core.registry import Registry
 
 log = structlog.get_logger(__name__)
@@ -30,6 +31,7 @@ def _config_path() -> Path:
 async def _sample_loop(app: FastAPI) -> None:
     registry: Registry = app.state.registry
     hub: Hub = app.state.hub
+    csv_log: MetricCsvLogger | None = app.state.csv_log
     period = 1.0 / registry.config.sample_rate_hz
 
     # sleep(period)만 쓰면 처리 시간만큼 주기가 밀린다. 절대 시각 기준으로 맞춘다.
@@ -44,6 +46,8 @@ async def _sample_loop(app: FastAPI) -> None:
                 interventions=[],  # 정책은 Phase 3·5
             )
             app.state.latest = snapshot
+            if csv_log is not None:
+                csv_log.write(snapshot)
             await hub.broadcast(snapshot)
         except Exception as exc:
             # 루프가 죽으면 대시보드가 통째로 멎는다. 한 틱을 버리고 계속 돈다.
@@ -61,9 +65,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     registry = Registry.from_yaml(path)
     await registry.start()
 
+    csv_log: MetricCsvLogger | None = None
+    if registry.config.metrics_csv:
+        csv_log = MetricCsvLogger(Path(registry.config.metrics_csv))
+        csv_log.open()
+        log.info("metrics_csv.open", path=registry.config.metrics_csv)
+
     app.state.registry = registry
     app.state.hub = Hub()
     app.state.latest = None
+    app.state.csv_log = csv_log
 
     task = asyncio.create_task(_sample_loop(app))
     try:
@@ -75,6 +86,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except asyncio.CancelledError:
             pass
         await registry.stop()
+        if csv_log is not None:
+            csv_log.close()
 
 
 app = FastAPI(title="TouchFree Vitals", lifespan=lifespan)

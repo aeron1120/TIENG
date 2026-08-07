@@ -35,6 +35,7 @@ class AdapterEntry(BaseModel):
 class DeviceConfig(BaseModel):
     device_id: str
     sample_rate_hz: float = 1.0
+    metrics_csv: str | None = None  # 비우면 CSV 로깅을 하지 않는다
     adapters: list[AdapterEntry] = Field(default_factory=list)
 
 

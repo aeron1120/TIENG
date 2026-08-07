@@ -8,6 +8,9 @@ import { ICON, LABEL, STATE_LABEL, displayValue, effectiveState } from '../metri
 
 // 기기 옆 대형 화면. 몇 걸음 떨어져 읽는다는 전제로 주지표 하나를 크게 세우고
 // 나머지는 오른쪽에 모은다 (tieng_stitch KioskView 레이아웃).
+//
+// 폭에 상한(max-w-shell)을 두는 이유: 상한이 없으면 초광폭 모니터에서 주지표가
+// 좌상단에 홀로 남고 화면 가운데가 통째로 비어 버린다.
 
 const HERO_KEY = 'hr'
 
@@ -17,8 +20,8 @@ export function Kiosk() {
   if (!snapshot) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-ink">
-        <p className="animate-measuring font-mono text-sm tracking-widest text-muted uppercase">
-          서버 연결 대기 중…
+        <p className="animate-measuring font-mono text-xs tracking-[0.3em] text-muted uppercase">
+          서버 연결 대기 중
         </p>
       </main>
     )
@@ -33,81 +36,98 @@ export function Kiosk() {
 
   return (
     <div className="flex min-h-screen flex-col bg-ink font-sans text-fg select-none">
-      <header className="hairline-b z-20 flex items-center justify-between border-gold/20 px-6 py-4 md:px-12">
-        <div className="flex items-center gap-3 font-mono text-xs tracking-[0.3em] text-gold uppercase">
-          <Activity className="h-4 w-4" />
-          <span>VITAL_MONITOR_SYS</span>
-          <span className="tracking-normal text-muted">[{snapshot.device_id}]</span>
-        </div>
-        <div className="flex items-center gap-2 font-mono text-xs tracking-wider text-muted uppercase">
-          <span
-            className={`h-2.5 w-2.5 rounded-full ${
-              stale ? 'bg-muted' : 'animate-pulse bg-gold'
-            }`}
-          />
-          <span>
-            {stale ? '수신 끊김' : new Date(snapshot.ts).toLocaleTimeString('ko-KR')}
-          </span>
+      <header className="border-b-[0.5px] border-gold/15">
+        <div className="mx-auto flex w-full max-w-shell items-center justify-between px-6 py-4 md:px-10">
+          <div className="flex items-center gap-3 font-mono text-[11px] tracking-[0.32em] text-gold uppercase">
+            <Activity className="h-4 w-4" />
+            <span>VITAL_MONITOR_SYS</span>
+            <span className="tracking-[0.12em] text-faint">[{snapshot.device_id}]</span>
+          </div>
+          <div className="flex items-center gap-2.5 font-mono text-[11px] tracking-[0.18em] text-muted uppercase">
+            <span
+              className={
+                stale
+                  ? 'h-2 w-2 rounded-full bg-faint'
+                  : 'h-2 w-2 animate-pulse rounded-full bg-gold shadow-[0_0_8px_rgba(197,160,89,0.7)]'
+              }
+            />
+            <span className="tnum">
+              {stale ? '수신 끊김' : new Date(snapshot.ts).toLocaleTimeString('ko-KR')}
+            </span>
+          </div>
         </div>
       </header>
 
-      <main className="flex flex-1 flex-col gap-8 px-6 py-8 md:px-12 lg:flex-row">
-        {/* 왼쪽: 주지표 하나를 크게 */}
-        <section className="flex flex-1 flex-col justify-between lg:pr-8">
-          <div className="flex flex-1 flex-col justify-center">
-            <div className="mb-4 flex items-center gap-3">
-              <span className="font-mono text-xs tracking-[0.3em] text-gold uppercase">
+      {/* 화면이 세로로 길면 남는 높이를 컴포넌트 사이에 흩뿌리지 않고 위아래 여백으로
+          몰아준다. 안쪽이 비면 고장 난 것처럼 보이지만 바깥 여백은 여백으로 읽힌다. */}
+      <main className="mx-auto flex w-full max-w-shell flex-1 flex-col gap-8 px-6 py-8 md:px-10 lg:grid lg:grid-cols-[minmax(0,1fr)_380px] lg:items-center lg:gap-12">
+        {/* 주지표는 위, 추세는 남는 높이를 전부 먹는다. 그래야 오른쪽 사이드바와
+            윗줄이 맞고 왼쪽 열에 빈 구멍이 생기지 않는다. */}
+        <section className="hero-glow relative flex min-w-0 flex-col gap-8 lg:self-stretch">
+          <div className="relative z-10">
+            <div className="mb-5 flex flex-wrap items-center gap-3">
+              <span className="flex items-center gap-2 font-mono text-[11px] tracking-[0.32em] text-gold uppercase">
+                <HeroIcon className="h-4 w-4" />
                 {hero ? (LABEL[hero.key] ?? hero.key) : '지표 없음'}
               </span>
-              <HeroIcon className="h-4 w-4 text-gold" />
               {hero && <StateBadge mode={hero.mode} state={heroState} />}
             </div>
 
             <div className="flex items-baseline gap-4">
+              {/* 크기를 폭이 아니라 화면 높이에도 묶는다. 세로로 긴 화면에서 숫자가
+                  작게 남으면 가운데가 통째로 비어 보인다. */}
               {heroValue === null ? (
-                <span className="animate-measuring font-serif text-7xl leading-none font-extralight tracking-tight text-muted/60 sm:text-9xl">
+                <span className="animate-measuring font-serif text-[clamp(3.5rem,min(9vw,18vh),12rem)] leading-[0.85] text-faint/50">
                   —
                 </span>
               ) : (
                 <>
-                  <span className="font-serif text-7xl leading-none font-light tracking-tight text-fg sm:text-9xl lg:text-[170px]">
+                  <span className="tnum font-serif text-[clamp(4.5rem,min(13vw,26vh),20rem)] leading-[0.95] tracking-[-0.035em] text-fg">
                     {heroValue}
                   </span>
                   {hero?.unit && (
-                    <span className="font-mono text-xl text-gold sm:text-3xl">{hero.unit}</span>
+                    <span className="font-mono text-xl tracking-[0.1em] text-gold sm:text-3xl">
+                      {hero.unit}
+                    </span>
                   )}
                 </>
               )}
             </div>
 
             {heroValue === null && (
-              <p className="mt-4 font-sans text-xl font-light text-muted sm:text-2xl">
+              <p className="mt-5 text-lg font-light text-muted sm:text-xl">
                 {STATE_LABEL[heroState]} — 값을 표시하지 않는다
               </p>
             )}
 
-            {/* 신뢰도. 값이 없으면 없다고 그린다. 임의의 숫자로 채우지 않는다. */}
-            <div className="mt-6 w-full max-w-md">
-              <div className="mb-1.5 flex justify-between font-mono text-xs text-muted">
-                <span>CONFIDENCE</span>
-                <span>{confidence === null ? '—' : `${Math.round(confidence * 100)}%`}</span>
+            {/* 신뢰도. 값이 없으면 비운다. 임의의 숫자로 채우지 않는다. */}
+            <div className="mt-10 w-full max-w-lg">
+              <div className="mb-2 flex justify-between font-mono text-[10px] tracking-[0.22em] text-faint uppercase">
+                <span>confidence</span>
+                <span className="tnum text-muted">
+                  {confidence === null ? '—' : `${Math.round(confidence * 100)}%`}
+                </span>
               </div>
-              <div className="hairline h-1 w-full overflow-hidden rounded-full border-gold/20 bg-panel">
+              <div className="h-[3px] w-full overflow-hidden rounded-full bg-white/5">
                 <div
-                  className="h-full bg-gold transition-all duration-500"
+                  className="h-full rounded-full bg-gold transition-all duration-700"
                   style={{ width: confidence === null ? '0%' : `${confidence * 100}%` }}
                 />
               </div>
             </div>
           </div>
 
-          <div className="mt-6">
+          <div className="relative z-10 h-[clamp(220px,36vh,460px)] lg:h-auto lg:min-h-56 lg:flex-1">
             <TrendChart history={history} metricKey={hero?.key ?? HERO_KEY} stale={stale} />
           </div>
         </section>
 
-        {/* 오른쪽: 나머지 지표 */}
-        <section className="hairline-t flex w-full flex-col gap-3.5 border-gold/20 pt-6 lg:hairline-l lg:w-96 lg:border-t-0 lg:pt-0 lg:pl-8">
+        {/* 오른쪽: 나머지 지표. 세로선이 왼쪽 열 전체 높이를 따라가도록 늘리고,
+            카드는 위에서부터 쌓아 주지표 라벨과 눈높이를 맞춘다. */}
+        <section className="flex flex-col gap-3 border-t-[0.5px] border-gold/15 pt-6 lg:self-stretch lg:justify-start lg:border-t-0 lg:border-l-[0.5px] lg:pt-1 lg:pl-12">
+          <h2 className="mb-1 font-mono text-[10px] tracking-[0.3em] text-muted uppercase">
+            보조 지표
+          </h2>
           {rest.map((metric) => (
             <MetricCard key={`${metric.source}:${metric.key}`} metric={metric} stale={stale} />
           ))}
@@ -116,11 +136,13 @@ export function Kiosk() {
 
       <SignalBanner state={heroState} />
 
-      <footer className="hairline-t flex items-center justify-between border-gold/20 px-6 py-2.5 font-mono text-[11px] tracking-widest text-muted uppercase md:px-12">
-        <span>
-          지표 {snapshot.metrics.length} · 이력 {history.length}틱
-        </span>
-        <span>{snapshot.interventions.length}건 개입 기록</span>
+      <footer className="border-t-[0.5px] border-gold/15">
+        <div className="mx-auto flex w-full max-w-shell items-center justify-between px-6 py-3 font-mono text-[10px] tracking-[0.22em] text-faint uppercase md:px-10">
+          <span className="tnum">
+            지표 {snapshot.metrics.length} · 이력 {history.length}틱
+          </span>
+          <span className="tnum">개입 {snapshot.interventions.length}건</span>
+        </div>
       </footer>
     </div>
   )

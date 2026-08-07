@@ -6,6 +6,8 @@
 # Phase 2·3에서 실제 어댑터가 생기면 module 만 갈아끼우면 된다.
 device_id: tfv-mock-01
 sample_rate_hz: 1
+# 개발용이라 기본은 끈다. 백업 데모로 쓸 때는 logs/metrics.csv 로 채운다.
+metrics_csv: null
 
 adapters:
   - id: rppg

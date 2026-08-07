@@ -1,14 +1,17 @@
 device_id: tfv-pi-01
 sample_rate_hz: 1
+metrics_csv: logs/metrics.csv
 
 adapters:
   - id: rppg
     module: core.adapters.rppg
     mode: live
-    params: { camera_index: 0, width: 640, height: 480, window_s: 10 }
+    # window_s 는 데모 v4 에서 검증된 12초를 쓴다. 10초 아래로 내리면 BPM 이 튄다.
+    params: { camera_index: 0, width: 640, height: 480, window_s: 12 }
   - id: bme680
     module: core.adapters.env_bme680
     mode: live
+    provides: [temp, humidity]      # Phase 3 에서 모듈이 생기면 지운다
     params: { i2c_addr: 0x76 }
   - id: rr_estimator
     module: core.adapters.rr_mock

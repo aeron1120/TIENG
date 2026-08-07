@@ -1,56 +1,46 @@
+import { ICON, LABEL, displayValue, effectiveState } from '../metrics'
 import type { Metric } from '../types'
 import { StateBadge } from './StateBadge'
 
-const LABEL: Record<string, string> = {
-  hr: '심박수',
-  rr: '호흡수',
-  temp: '온도',
-  humidity: '습도',
-  lux: '조도',
-  noise: '소음',
-  occupancy: '재실',
-  posture: '자세',
-}
-
-const POSTURE_LABEL: Record<string, string> = {
-  sitting: '앉음',
-  standing: '섬',
-  lying: '누움',
-}
-
 export function MetricCard({ metric, stale }: { metric: Metric; stale: boolean }) {
-  // 수신이 끊기면 서버가 뭐라 했든 프론트가 stale로 덮는다 (README §2).
-  const state = stale ? 'stale' : metric.state
-
-  // value가 null이거나 신뢰할 수 없으면 반드시 "—". 0으로 대체하지 않는다 (README §2).
-  const showValue = !stale && metric.value !== null
+  const state = effectiveState(metric, stale)
+  const shown = displayValue(metric, stale)
+  const Icon = ICON[metric.key] ?? ICON.posture
+  const dim = state === 'no_adapter' || state === 'stale'
 
   return (
-    <article className={`card state-${state}`}>
-      <header className="card-head">
-        <h2>{LABEL[metric.key] ?? metric.key}</h2>
+    <article
+      className={`hairline flex flex-col justify-between rounded-xl p-3.5 sm:p-4 ${
+        dim ? 'bg-panel-dim border-gold/15 opacity-85' : 'bg-panel border-gold/20'
+      } ${state === 'error' ? 'border-alert/60' : ''}`}
+    >
+      <header className="mb-2 flex min-w-0 items-center justify-between gap-1">
+        <span className="flex shrink-0 items-center gap-1.5 font-mono text-[10px] tracking-wide text-muted uppercase sm:text-[11px]">
+          <Icon className={`h-3.5 w-3.5 ${dim ? 'text-muted' : 'text-gold'}`} />
+          {LABEL[metric.key] ?? metric.key}
+        </span>
         <StateBadge mode={metric.mode} state={state} />
       </header>
 
-      <div className="value">
-        {showValue ? (
-          <>
-            <span className="number">
-              {typeof metric.value === 'string'
-                ? (POSTURE_LABEL[metric.value] ?? metric.value)
-                : metric.value}
-            </span>
-            {metric.unit && <span className="unit">{metric.unit}</span>}
-          </>
+      <div className="mt-1 mb-2 flex items-baseline gap-1.5">
+        {shown === null ? (
+          // 값이 없다는 사실 자체가 정보다. 숫자처럼 보이면 안 된다.
+          <span className="font-serif text-3xl font-extralight text-muted/60 sm:text-4xl">—</span>
         ) : (
-          <span className="number blank">—</span>
+          <>
+            <span className="font-serif text-3xl font-light tracking-tight text-fg sm:text-4xl">
+              {shown}
+            </span>
+            {metric.unit && <span className="font-mono text-xs text-muted">{metric.unit}</span>}
+          </>
         )}
       </div>
 
-      <footer className="card-foot">
-        <span className="source">{metric.source}</span>
-        {showValue && metric.confidence !== null && (
-          <span className="confidence">신뢰도 {(metric.confidence * 100).toFixed(0)}%</span>
+      <footer className="hairline-t mt-auto flex justify-between gap-2 border-gold/15 pt-2 font-mono text-[10px] whitespace-nowrap text-muted sm:text-xs">
+        <span>{metric.source}</span>
+        {/* 값이 없어도 confidence 는 보여준다. 왜 보류됐는지 읽을 단서가 된다. */}
+        {metric.confidence !== null && !stale && (
+          <span>신뢰도 {(metric.confidence * 100).toFixed(0)}%</span>
         )}
       </footer>
     </article>

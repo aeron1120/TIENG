@@ -13,6 +13,12 @@ dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0",
     "structlog>=24.1",
+    "numpy>=1.23",
+    "scipy>=1.9",
+    # 5.x 는 CascadeClassifier 와 번들 haarcascade 를 들어냈다. 얼굴 검출이 통째로
+    # 사라지면 ROI 가 화면 중앙 고정 박스로 떨어져 정확도를 잃는다. 데모가 검증된 4.x 유지.
+    # 헤드리스 서버에 올릴 때는 opencv-python-headless 로 바꾼다.
+    "opencv-python>=4.7,<5",
 ]
 
 [project.optional-dependencies]
@@ -38,9 +44,15 @@ extend-exclude = ["legacy"]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.mypy]
-python_version = "3.11"
+# 코드 자체는 3.11 을 지킨다. 이 값만 3.12 인 이유는 numpy 2.5 의 스텁이
+# 3.12 문법(type 문)을 써서 3.11 로 두면 스텁 파싱에서 먼저 죽기 때문이다.
+python_version = "3.12"
 strict = true
 exclude = ["legacy"]
+
+[[tool.mypy.overrides]]
+module = ["scipy.*", "cv2.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

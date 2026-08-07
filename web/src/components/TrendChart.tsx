@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { LABEL } from '../metrics'
 import type { Snapshot } from '../types'
 
@@ -12,7 +12,10 @@ const WINDOWS = [
   { key: '10m', label: '10분', points: 600 },
 ] as const
 
+type WindowKey = (typeof WINDOWS)[number]['key']
+
 const MIN_HALF_SPAN = 10 // 값이 안 움직여도 축이 확대돼 요동치는 것처럼 보이지 않게
+const BASELINE = 100 // viewBox 바닥. 면적 채우기용
 
 interface Point {
   x: number
@@ -28,24 +31,23 @@ export function TrendChart({
   metricKey: string
   stale: boolean
 }) {
-  const [window, setWindow] = useState<(typeof WINDOWS)[number]['key']>('5m')
-  const span = WINDOWS.find((w) => w.key === window) ?? WINDOWS[1]
+  const [win, setWin] = useState<WindowKey>('5m')
+  const gradientId = useId()
+  const span = WINDOWS.find((w) => w.key === win) ?? WINDOWS[1]
 
   const series = history.slice(-span.points).map((snap) => {
     const metric = snap.metrics.find((m) => m.key === metricKey)
-    const value = metric && typeof metric.value === 'number' ? metric.value : null
-    return value
+    return metric && typeof metric.value === 'number' ? metric.value : null
   })
 
   const measured = series.filter((v): v is number => v !== null)
   const heldRatio = series.length ? 1 - measured.length / series.length : 0
-
   const title = `${LABEL[metricKey] ?? metricKey} 추세`
 
   if (measured.length < 2) {
     return (
-      <Frame title={title} window={window} onWindow={setWindow} held={null}>
-        <div className="flex h-full items-center justify-center font-mono text-xs text-muted">
+      <Frame title={title} win={win} onWin={setWin} held={null} span={span.label}>
+        <div className="flex h-full items-center justify-center font-mono text-[11px] tracking-[0.18em] text-faint uppercase">
           추세를 그릴 만큼 쌓이지 않았다
         </div>
       </Frame>
@@ -55,13 +57,13 @@ export function TrendChart({
   const hi = Math.max(...measured)
   const lo = Math.min(...measured)
   const center = (hi + lo) / 2
-  const half = Math.max((hi - lo) / 2, MIN_HALF_SPAN) * 1.2
+  const half = Math.max((hi - lo) / 2, MIN_HALF_SPAN) * 1.25
   const yMin = center - half
   const yMax = center + half
 
   const toPoint = (value: number, index: number): Point => ({
     x: series.length > 1 ? (index / (series.length - 1)) * 100 : 50,
-    y: 95 - ((value - yMin) / (yMax - yMin)) * 90,
+    y: 92 - ((value - yMin) / (yMax - yMin)) * 84,
   })
 
   // 보류 구간에서 끊어 여러 조각으로 나눈다.
@@ -77,42 +79,60 @@ export function TrendChart({
   })
   if (current.length) segments.push(current)
 
-  const last = segments.at(-1)?.at(-1)
-  const liveTip = !stale && series.at(-1) !== null ? last : undefined
+  const tip = series.at(-1) !== null ? segments.at(-1)?.at(-1) : undefined
 
   return (
-    <Frame title={title} window={window} onWindow={setWindow} held={heldRatio}>
-      <div className="relative h-full w-full">
-        <div className="pointer-events-none absolute inset-0 flex flex-col justify-between">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="hairline-b w-full border-gold/10" />
-          ))}
-        </div>
-
-        <div className="pointer-events-none absolute left-0 flex h-full flex-col justify-between py-0.5 font-mono text-[10px] text-muted">
+    <Frame title={title} win={win} onWin={setWin} held={heldRatio} span={span.label}>
+      <div className="flex h-full w-full">
+        <div className="flex w-10 shrink-0 flex-col justify-between py-[2px] pr-2 text-right font-mono text-[10px] text-faint tabular-nums">
           <span>{Math.round(yMax)}</span>
           <span>{Math.round(center)}</span>
           <span>{Math.round(yMin)}</span>
         </div>
 
-        <svg
-          className={`absolute inset-0 h-full w-full overflow-visible ${stale ? 'opacity-30' : ''}`}
-          viewBox="0 0 100 100"
-          preserveAspectRatio="none"
-        >
-          {segments.map((seg, i) => (
-            <path
-              key={i}
-              d={pathOf(seg)}
-              fill="none"
-              stroke="#c5a059"
-              strokeWidth="2"
-              strokeLinecap="round"
-              vectorEffect="non-scaling-stroke"
+        <div className="relative min-w-0 flex-1">
+          <div className="pointer-events-none absolute inset-0 flex flex-col justify-between">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <div key={i} className="border-b-[0.5px] w-full border-gold/[0.08]" />
+            ))}
+          </div>
+
+          <svg
+            className={`absolute inset-0 h-full w-full ${stale ? 'opacity-25' : ''}`}
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+          >
+            <defs>
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#c5a059" stopOpacity="0.16" />
+                <stop offset="100%" stopColor="#c5a059" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+
+            {segments.map((seg, i) => (
+              <path key={`fill-${i}`} d={areaOf(seg)} fill={`url(#${gradientId})`} stroke="none" />
+            ))}
+            {segments.map((seg, i) => (
+              <path
+                key={`line-${i}`}
+                d={pathOf(seg)}
+                fill="none"
+                stroke="#c5a059"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+          </svg>
+
+          {/* 끝점 마커는 SVG 밖에 둔다. preserveAspectRatio=none 안의 원은 찌그러진다. */}
+          {tip && !stale && (
+            <span
+              className="absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gold shadow-[0_0_8px_rgba(197,160,89,0.8)]"
+              style={{ left: `${tip.x}%`, top: `${tip.y}%` }}
             />
-          ))}
-          {liveTip && <circle cx={liveTip.x} cy={liveTip.y} r="2.5" fill="#c5a059" />}
-        </svg>
+          )}
+        </div>
       </div>
     </Frame>
   )
@@ -120,34 +140,41 @@ export function TrendChart({
 
 function Frame({
   title,
-  window,
-  onWindow,
+  win,
+  onWin,
   held,
+  span,
   children,
 }: {
   title: string
-  window: string
-  onWindow: (key: (typeof WINDOWS)[number]['key']) => void
+  win: WindowKey
+  onWin: (key: WindowKey) => void
   held: number | null
+  span: string
   children: React.ReactNode
 }) {
   return (
-    <section className="hairline flex w-full flex-col gap-2 rounded-xl border-gold/20 bg-panel p-4">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="m-0 font-mono text-xs tracking-wider text-muted uppercase">
+    // h-full: 남는 세로 공간을 그래프가 흡수한다. 안 그러면 화면 아래가 통째로 빈다.
+    <section className="border-[0.5px] flex h-full w-full flex-col gap-3 rounded-lg border-gold/15 bg-panel px-4 py-3.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="m-0 flex items-center gap-2.5 font-mono text-[10px] tracking-[0.28em] text-faint uppercase">
           {title}
           {/* 보류율은 검증 슬라이드의 근거가 되는 숫자다 (README §8). 숨기지 않는다. */}
           {held !== null && held > 0 && (
-            <span className="ml-2 text-gold">보류 {(held * 100).toFixed(0)}%</span>
+            <span className="tnum rounded-full border border-gold/30 px-1.5 py-[2px] tracking-[0.1em] text-gold normal-case">
+              보류 {(held * 100).toFixed(0)}%
+            </span>
           )}
         </h2>
-        <div className="flex gap-1 font-mono text-[11px]">
+        <div className="flex gap-1 font-mono text-[10px]">
           {WINDOWS.map((w) => (
             <button
               key={w.key}
-              onClick={() => onWindow(w.key)}
-              className={`rounded px-2 py-0.5 transition-colors ${
-                window === w.key ? 'bg-gold font-semibold text-ink' : 'text-muted hover:bg-white/5'
+              onClick={() => onWin(w.key)}
+              className={`rounded px-2 py-[3px] transition-colors ${
+                win === w.key
+                  ? 'bg-gold font-medium text-ink'
+                  : 'text-faint hover:bg-white/[0.06] hover:text-muted'
               }`}
             >
               {w.label}
@@ -155,7 +182,13 @@ function Frame({
           ))}
         </div>
       </div>
-      <div className="relative mt-1 h-32 w-full">{children}</div>
+
+      <div className="relative min-h-24 w-full flex-1">{children}</div>
+
+      <div className="flex justify-between pl-10 font-mono text-[10px] tracking-[0.15em] text-faint">
+        <span>-{span}</span>
+        <span>now</span>
+      </div>
     </section>
   )
 }
@@ -165,14 +198,22 @@ function pathOf(points: Point[]): string {
   if (points.length === 1) {
     // 조각이 한 점뿐이면 아주 짧은 선으로 그려 눈에 보이게 한다.
     const p = points[0]
-    return `M ${p.x.toFixed(1)},${p.y.toFixed(1)} L ${(p.x + 0.4).toFixed(1)},${p.y.toFixed(1)}`
+    return `M ${p.x.toFixed(2)},${p.y.toFixed(2)} L ${(p.x + 0.3).toFixed(2)},${p.y.toFixed(2)}`
   }
-  let d = `M ${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`
+  let d = `M ${points[0].x.toFixed(2)},${points[0].y.toFixed(2)}`
   for (let i = 0; i < points.length - 1; i++) {
     const a = points[i]
     const b = points[i + 1]
     const cx = (a.x + b.x) / 2
-    d += ` C ${cx.toFixed(1)},${a.y.toFixed(1)} ${cx.toFixed(1)},${b.y.toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}`
+    d += ` C ${cx.toFixed(2)},${a.y.toFixed(2)} ${cx.toFixed(2)},${b.y.toFixed(2)} ${b.x.toFixed(2)},${b.y.toFixed(2)}`
   }
   return d
+}
+
+function areaOf(points: Point[]): string {
+  if (points.length < 2) return ''
+  const line = pathOf(points)
+  const first = points[0]
+  const last = points[points.length - 1]
+  return `${line} L ${last.x.toFixed(2)},${BASELINE} L ${first.x.toFixed(2)},${BASELINE} Z`
 }

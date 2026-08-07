@@ -25,6 +25,7 @@ W_BRIGHTNESS = 0.10
 SNR_MID_DB = 6.0  # q_snr = 0.5 가 되는 SNR
 SNR_SLOPE_DB = 3.0
 SKIN_RATIO_REF = 0.35  # 이만큼 잡히면 ROI 품질 만점
+SKIN_RATIO_FLOOR = 0.10  # 이 아래면 ROI 가 얼굴을 놓친 것으로 본다
 BRIGHTNESS_OK = (45.0, 220.0)  # 밖이면 절반으로 감점
 BETA_MOTION = 0.7  # q_motion = 1 - BETA * jitter_norm
 
@@ -69,6 +70,12 @@ def score(
     q_brightness = 1.0 if BRIGHTNESS_OK[0] <= brightness <= BRIGHTNESS_OK[1] else 0.5
     # 움직임은 가산이 아니라 곱으로 깎는다. 흔들리면 나머지가 아무리 좋아도 못 믿는다.
     q_motion = 1.0 - BETA_MOTION * _clip(jitter_norm)
+
+    # 피부가 이만큼도 안 잡히면 얼굴을 놓친 것이므로 가중합에 맡기지 않는다.
+    # q_roi 지분이 0.15 뿐이라, 얼굴이 나가도 잡음 스펙트럼의 SNR 이 높으면
+    # 게이트를 통과해 엉뚱한 BPM 이 나간다 (실측에서 skin 2% 에 159bpm 관측).
+    if skin_ratio < SKIN_RATIO_FLOOR:
+        return Quality(0.0, q_snr, q_energy, q_roi, q_brightness, q_motion)
 
     confidence = _clip(
         (

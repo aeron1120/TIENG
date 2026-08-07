@@ -111,6 +111,36 @@ def test_confidence_components_move_the_right_way() -> None:
     assert shaky.hold_reason() == "motion/ROI jitter"
 
 
+def test_roi_floor_holds_even_when_the_spectrum_looks_clean() -> None:
+    """얼굴을 놓치면 SNR 이 아무리 좋아도 값을 내지 않는다.
+
+    가중합에만 맡기면 q_roi 지분이 작아 잡음이 게이트를 통과한다. 실측에서
+    피부 2% 상태로 159bpm 이 나갔던 경로다.
+    """
+    lost = quality.score(
+        peak_snr_db=20.0, band_energy_ratio=0.9, skin_ratio=0.02, brightness=100.0, jitter_norm=0.0
+    )
+    assert lost.confidence == 0.0
+    assert lost.hold_reason() == "low ROI quality"
+
+
+def test_roi_floor_does_not_punish_a_normal_roi() -> None:
+    ok = quality.score(
+        peak_snr_db=20.0, band_energy_ratio=0.9, skin_ratio=0.12, brightness=100.0, jitter_norm=0.0
+    )
+    assert ok.confidence > 0.4
+
+
+async def test_lost_face_is_held_end_to_end() -> None:
+    """어댑터까지 이어서, 얼굴을 놓친 창은 low_quality 로 보류된다."""
+    t, rgb = _synthetic_rgb(72)
+    metric = _adapter()._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.02, brightness=100.0)
+
+    assert metric.state == "low_quality"
+    assert metric.value is None
+    assert metric.confidence == 0.0
+
+
 def test_confidence_stays_in_range_at_extremes() -> None:
     best = quality.score(
         peak_snr_db=99.0, band_energy_ratio=1.0, skin_ratio=1.0, brightness=128.0, jitter_norm=0.0

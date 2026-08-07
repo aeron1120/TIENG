@@ -1,13 +1,16 @@
 @import 'tailwindcss';
 
-/* tieng_stitch(upstream/main)의 임상 모니터 룩.
-   폰트는 CDN 이 아니라 public/fonts 에 번들한다. 전체가 LAN 안에서 돌아야 하므로
-   런타임에 외부로 나가는 요청을 만들지 않는다 (README §1 비목표). */
+/* 폰트는 CDN 이 아니라 public/fonts 에 번들한다. 전체가 LAN 안에서 돌아야 하므로
+   런타임에 외부로 나가는 요청을 만들지 않는다 (README §1 비목표).
+
+   Pretendard 는 한글 음절 전체(11,172자) + 라틴을 담도록 서브셋했다. 원본에서
+   CJK 한자·가나를 덜어 1.76MB. 음절 일부만 남기면 새 문구를 쓸 때 조용히
+   대체 폰트로 떨어지므로 블록을 통째로 유지한다. */
 
 @font-face {
-  font-family: 'Playfair Display';
-  src: url('/fonts/playfairdisplay.woff2') format('woff2');
-  font-weight: 400 900; /* 가변폰트. Playfair 는 400 아래가 없다 */
+  font-family: 'Pretendard';
+  src: url('/fonts/pretendard.woff2') format('woff2');
+  font-weight: 100 900;
   font-display: swap;
   font-style: normal;
 }
@@ -31,12 +34,11 @@
   --color-gold-soft: #d4b478;
   --color-alert: #e53935;
 
-  --font-sans: 'Pretendard', 'Inter', system-ui, sans-serif;
-  --font-serif: 'Playfair Display', Georgia, serif;
+  --font-sans: 'Pretendard', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
 
   /* 대형 화면에서도 한 눈에 들어오도록 상한을 둔다. 상한이 없으면 초광폭
-     모니터에서 주지표가 좌상단에 홀로 남고 가운데가 비어 버린다. */
+     모니터에서 주지표가 좌상단에 홀로 남고 화면 가운데가 비어 버린다. */
   --spacing-shell: 1560px;
 }
 
@@ -78,6 +80,14 @@
   animation: subtle-pulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+/* 값이 바뀔 때 숫자 폭이 흔들리지 않게. 계기판에서 제일 티나는 부분이다. */
 .tnum {
   font-variant-numeric: tabular-nums;
+}
+
+/* 한글에는 자간을 주지 않는다. 라틴 대문자에 어울리는 tracking 을 한글에 걸면
+   음절이 벌어져 "심 박 수" 처럼 깨져 보인다. 라틴 전용 라벨에만 tracking 을 쓴다. */
+.kr {
+  letter-spacing: 0;
+  word-spacing: 0;
 }

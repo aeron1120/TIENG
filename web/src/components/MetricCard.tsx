@@ -10,13 +10,13 @@ export function MetricCard({ metric, stale }: { metric: Metric; stale: boolean }
 
   return (
     <article
-      className={`border-[0.5px] rounded-lg px-4 py-3 transition-colors ${
+      className={`rounded-lg border-[0.5px] px-4 py-3 transition-colors ${
         dim ? 'border-faint/15 bg-panel-dim' : 'border-gold/20 bg-panel'
       } ${state === 'error' ? 'border-alert/50' : ''}`}
     >
       <header className="flex min-w-0 items-center justify-between gap-2">
         <span
-          className={`flex min-w-0 items-center gap-1.5 font-mono text-[11px] tracking-[0.12em] uppercase ${
+          className={`kr flex min-w-0 items-center gap-1.5 text-[12px] font-medium ${
             dim ? 'text-faint' : 'text-muted'
           }`}
         >
@@ -29,10 +29,10 @@ export function MetricCard({ metric, stale }: { metric: Metric; stale: boolean }
       <div className="mt-2.5 flex items-baseline gap-1.5">
         {shown === null ? (
           // 값이 없다는 사실 자체가 정보다. 숫자처럼 보이면 안 된다.
-          <span className="font-serif text-[26px] leading-none text-faint/70">—</span>
+          <span className="text-[26px] leading-none font-extralight text-faint/70">—</span>
         ) : (
           <>
-            <span className="tnum font-serif text-[30px] leading-none tracking-tight text-fg">
+            <span className="tnum text-[30px] leading-none font-light tracking-[-0.02em] text-fg">
               {shown}
             </span>
             {metric.unit && <span className="font-mono text-[11px] text-muted">{metric.unit}</span>}

@@ -14,7 +14,9 @@ const WINDOWS = [
 
 type WindowKey = (typeof WINDOWS)[number]['key']
 
-const MIN_HALF_SPAN = 10 // 값이 안 움직여도 축이 확대돼 요동치는 것처럼 보이지 않게
+// 값이 안 움직여도 축이 확대돼 요동치는 것처럼 보이지 않게 하는 하한.
+// 너무 크게 잡으면 반대로 실제 변동이 납작해지고 그래프 위쪽이 텅 빈다.
+const MIN_HALF_SPAN = 5
 const BASELINE = 100 // viewBox 바닥. 면적 채우기용
 
 interface Point {
@@ -47,7 +49,7 @@ export function TrendChart({
   if (measured.length < 2) {
     return (
       <Frame title={title} win={win} onWin={setWin} held={null} span={span.label}>
-        <div className="flex h-full items-center justify-center font-mono text-[11px] tracking-[0.18em] text-faint uppercase">
+        <div className="kr flex h-full items-center justify-center text-[12px] text-faint">
           추세를 그릴 만큼 쌓이지 않았다
         </div>
       </Frame>
@@ -57,7 +59,7 @@ export function TrendChart({
   const hi = Math.max(...measured)
   const lo = Math.min(...measured)
   const center = (hi + lo) / 2
-  const half = Math.max((hi - lo) / 2, MIN_HALF_SPAN) * 1.25
+  const half = Math.max((hi - lo) / 2, MIN_HALF_SPAN) * 1.15
   const yMin = center - half
   const yMax = center + half
 
@@ -157,16 +159,16 @@ function Frame({
     // h-full: 남는 세로 공간을 그래프가 흡수한다. 안 그러면 화면 아래가 통째로 빈다.
     <section className="border-[0.5px] flex h-full w-full flex-col gap-3 rounded-lg border-gold/15 bg-panel px-4 py-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="m-0 flex items-center gap-2.5 font-mono text-[10px] tracking-[0.28em] text-faint uppercase">
+        <h2 className="kr m-0 flex items-center gap-2.5 text-[12px] font-medium text-faint">
           {title}
           {/* 보류율은 검증 슬라이드의 근거가 되는 숫자다 (README §8). 숨기지 않는다. */}
           {held !== null && held > 0 && (
-            <span className="tnum rounded-full border border-gold/30 px-1.5 py-[2px] tracking-[0.1em] text-gold normal-case">
+            <span className="tnum rounded-full border border-gold/30 px-1.5 py-[2px] text-[11px] text-gold">
               보류 {(held * 100).toFixed(0)}%
             </span>
           )}
         </h2>
-        <div className="flex gap-1 font-mono text-[10px]">
+        <div className="kr flex gap-1 text-[11px]">
           {WINDOWS.map((w) => (
             <button
               key={w.key}
@@ -185,9 +187,9 @@ function Frame({
 
       <div className="relative min-h-24 w-full flex-1">{children}</div>
 
-      <div className="flex justify-between pl-10 font-mono text-[10px] tracking-[0.15em] text-faint">
-        <span>-{span}</span>
-        <span>now</span>
+      <div className="flex justify-between pl-10 font-mono text-[10px] text-faint">
+        <span className="kr">-{span}</span>
+        <span className="tracking-[0.15em]">now</span>
       </div>
     </section>
   )

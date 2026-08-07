@@ -20,8 +20,8 @@ const STATE_TONE: Record<State, string> = {
   no_adapter: 'bg-transparent text-faint border-faint/20',
 }
 
-const CHIP =
-  'shrink-0 rounded-full border px-2 py-[3px] font-mono text-[10px] leading-none tracking-wide whitespace-nowrap'
+// 한글 라벨이라 자간을 주지 않는다.
+const CHIP = 'kr shrink-0 rounded-full border px-2 py-[3px] text-[11px] leading-none whitespace-nowrap'
 
 export function StateBadge({ mode, state }: { mode: Mode; state: State }) {
   return (

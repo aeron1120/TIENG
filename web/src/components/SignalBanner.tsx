@@ -30,7 +30,7 @@ export function SignalBanner({ state }: { state: State }) {
         }`}
       >
         <Icon className="h-3.5 w-3.5 shrink-0" />
-        <span className="font-mono text-[11px] tracking-[0.2em] uppercase">{message}</span>
+        <span className="kr text-[12px] font-medium">{message}</span>
       </div>
     </div>
   )

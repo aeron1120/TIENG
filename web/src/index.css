@@ -1,22 +1,43 @@
 @import 'tailwindcss';
 
-/* tieng_stitch(upstream/main)의 디자인 토큰을 옮겼다.
-   폰트는 웹폰트 CDN 대신 시스템 스택으로 둔다. 전체가 LAN 안에서 돌아야 하므로
-   외부 의존을 만들지 않는다 (README §1 비목표). Playfair/JetBrains 가 설치돼
-   있으면 그걸 쓰고, 없으면 Georgia/Consolas 로 떨어진다. */
+/* tieng_stitch(upstream/main)의 임상 모니터 룩.
+   폰트는 CDN 이 아니라 public/fonts 에 번들한다. 전체가 LAN 안에서 돌아야 하므로
+   런타임에 외부로 나가는 요청을 만들지 않는다 (README §1 비목표). */
+
+@font-face {
+  font-family: 'Playfair Display';
+  src: url('/fonts/playfairdisplay.woff2') format('woff2');
+  font-weight: 400 900; /* 가변폰트. Playfair 는 400 아래가 없다 */
+  font-display: swap;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrainsmono.woff2') format('woff2');
+  font-weight: 100 800;
+  font-display: swap;
+  font-style: normal;
+}
+
 @theme {
   --color-ink: #0a0a0a;
   --color-panel: #141414;
-  --color-panel-dim: #0f0f0f;
+  --color-panel-dim: #101010;
   --color-fg: #e5e5e5;
   --color-muted: #a3a3a3;
+  --color-faint: #6b6b6b;
   --color-gold: #c5a059;
   --color-gold-soft: #d4b478;
   --color-alert: #e53935;
 
   --font-sans: 'Pretendard', 'Inter', system-ui, sans-serif;
-  --font-serif: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  --font-serif: 'Playfair Display', Georgia, serif;
   --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+
+  /* 대형 화면에서도 한 눈에 들어오도록 상한을 둔다. 상한이 없으면 초광폭
+     모니터에서 주지표가 좌상단에 홀로 남고 가운데가 비어 버린다. */
+  --spacing-shell: 1560px;
 }
 
 @layer base {
@@ -25,25 +46,22 @@
     color: var(--color-fg);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 }
 
-/* 0.5px 실선. 대형 화면에서 1px 는 굵어 보인다. */
-.hairline {
-  border-width: 0.5px;
-  border-style: solid;
-}
-.hairline-b {
-  border-bottom-width: 0.5px;
-  border-bottom-style: solid;
-}
-.hairline-t {
-  border-top-width: 0.5px;
-  border-top-style: solid;
-}
-.hairline-l {
-  border-left-width: 0.5px;
-  border-left-style: solid;
+/* 0.5px 실선은 border-[0.5px] 같은 Tailwind 임의값으로 쓴다.
+   커스텀 .hairline 클래스로 두면 유틸리티 레이어 밖이라 lg:border-t-0 을 이겨서
+   큰 화면에서 지워야 할 선이 남는다. */
+
+/* 주지표 뒤에 깔리는 아주 옅은 금빛. 숫자를 화면에서 띄워 보이게 한다. */
+.hero-glow::before {
+  content: '';
+  position: absolute;
+  inset: -20% -10% -30% -15%;
+  background: radial-gradient(60% 55% at 22% 45%, rgba(197, 160, 89, 0.09), transparent 70%);
+  pointer-events: none;
+  z-index: 0;
 }
 
 @keyframes subtle-pulse {
@@ -52,10 +70,14 @@
     opacity: 1;
   }
   50% {
-    opacity: 0.4;
+    opacity: 0.35;
   }
 }
 
 .animate-measuring {
-  animation: subtle-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  animation: subtle-pulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
 }

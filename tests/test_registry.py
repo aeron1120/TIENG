@@ -33,7 +33,7 @@ async def test_dead_adapter_degrades_to_error_and_others_keep_running() -> None:
 
 async def test_missing_module_becomes_no_adapter_card() -> None:
     reg = _registry(
-        AdapterEntry(id="rppg", module="core.adapters.rppg", mode="live", provides=["hr"])
+        AdapterEntry(id="rppg", module="core.adapters.not_built_yet", mode="live", provides=["hr"])
     )
     await reg.start()
     (metric,) = await reg.read_all(TS)
@@ -62,7 +62,7 @@ async def test_all_metrics_share_the_caller_timestamp() -> None:
     reg = _registry(
         AdapterEntry(id="rr", module="core.adapters.rr_mock", mode="simulated"),
         AdapterEntry(id="posture", module="core.adapters.posture_mock", mode="simulated"),
-        AdapterEntry(id="rppg", module="core.adapters.rppg", mode="live", provides=["hr"]),
+        AdapterEntry(id="rppg", module="core.adapters.not_built_yet", mode="live", provides=["hr"]),
     )
     await reg.start()
     metrics = await reg.read_all(TS)
@@ -74,7 +74,7 @@ async def test_all_metrics_share_the_caller_timestamp() -> None:
 
 async def test_card_order_follows_config_order() -> None:
     reg = _registry(
-        AdapterEntry(id="rppg", module="core.adapters.rppg", mode="live", provides=["hr"]),
+        AdapterEntry(id="rppg", module="core.adapters.not_built_yet", mode="live", provides=["hr"]),
         AdapterEntry(id="rr", module="core.adapters.rr_mock", mode="simulated"),
     )
     await reg.start()

@@ -1,1 +1,0 @@
-{"root":["./src/main.tsx","./src/types.ts","./src/components/metriccard.tsx","./src/components/statebadge.tsx","./src/hooks/usesnapshot.ts","./src/pages/kiosk.tsx","./vite.config.ts"],"version":"5.9.3"}

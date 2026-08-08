@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from api.schemas import Metric, Snapshot
-from core.metrics_log import COLUMNS, MetricCsvLogger
+from core.csv_logs import METRIC_COLUMNS, MetricCsvLogger
 
 TS = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
@@ -31,11 +31,11 @@ def test_writes_header_once_and_appends(tmp_path: Path) -> None:
     for _ in range(2):
         logger = MetricCsvLogger(path)
         logger.open()
-        logger.write(_snapshot())
+        logger.write_snapshot(_snapshot())
         logger.close()
 
     rows = list(csv.reader(path.read_text(encoding="utf-8").splitlines()))
-    assert rows[0] == COLUMNS
+    assert rows[0] == METRIC_COLUMNS
     assert len(rows) == 1 + 4  # 헤더 1 + 스냅샷 2회 x 지표 2개
 
 
@@ -44,7 +44,7 @@ def test_held_values_are_kept_as_empty_not_zero(tmp_path: Path) -> None:
     path = tmp_path / "metrics.csv"
     logger = MetricCsvLogger(path)
     logger.open()
-    logger.write(_snapshot())
+    logger.write_snapshot(_snapshot())
     logger.close()
 
     rows = list(csv.DictReader(path.read_text(encoding="utf-8").splitlines()))
@@ -59,7 +59,7 @@ def test_all_rows_share_the_snapshot_timestamp(tmp_path: Path) -> None:
     path = tmp_path / "metrics.csv"
     logger = MetricCsvLogger(path)
     logger.open()
-    logger.write(_snapshot())
+    logger.write_snapshot(_snapshot())
     logger.close()
 
     rows = list(csv.DictReader(path.read_text(encoding="utf-8").splitlines()))

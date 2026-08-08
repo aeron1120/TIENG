@@ -1,0 +1,44 @@
+# TouchFree Vitals 백엔드. 부팅 시 자동 시작하고 죽으면 되살아난다.
+#
+#   sudo cp deploy/tfv.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now tfv
+#   journalctl -u tfv -f
+#
+# 경로와 사용자가 다르면 아래 User/WorkingDirectory 를 고칠 것.
+
+[Unit]
+Description=TouchFree Vitals
+# 카메라·I2C 가 올라온 뒤에 뜨게 한다. 네트워크는 Tuya LAN 제어에 필요하다.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+# 카메라와 I2C/GPIO 접근 권한. 사용자가 이 그룹에 없으면 어댑터가 start 에서 죽는다.
+SupplementaryGroups=video i2c gpio
+
+WorkingDirectory=/home/pi/TIENG
+Environment=DEVICE_CONFIG=config/device.yaml
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/pi/TIENG/.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000
+
+# 죽으면 되살린다. 다만 설정 오류로 무한 재시작하며 로그를 덮지 않도록
+# 5분에 5번을 넘으면 멈추고 사람을 기다린다.
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# 개입은 되돌릴 수 있어야 한다. 종료 신호를 받으면 켜 둔 불을 끄고 나갈 시간을 준다.
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+# SD 카드 수명을 위해 로그는 journal 로만 보낸다. 지표는 logs/*.csv 에 따로 쌓인다.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

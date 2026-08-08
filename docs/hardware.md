@@ -140,7 +140,50 @@ blocked 행은 **주 조건이 맞았는데 막힌 경우만** 남는다. 조건
 
 ---
 
-## 6. 아직 안 붙인 것
+## 6. 부팅 시 자동 실행 (Phase 4)
+
+```bash
+sudo cp deploy/tfv.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now tfv
+journalctl -u tfv -f
+```
+
+`User`, `WorkingDirectory`, `.venv` 경로가 다르면 유닛 파일을 먼저 고친다.
+
+사용자가 `video` / `i2c` / `gpio` 그룹에 없으면 어댑터가 `start` 에서 죽는다:
+
+```bash
+sudo usermod -aG video,i2c,gpio pi && sudo reboot
+```
+
+종료 신호는 SIGINT 로 보내고 20초를 준다. 그 사이에 켜 둔 불을 끄고 나간다 —
+서버를 껐는데 불이 켜진 채로 남으면 안 된다.
+
+---
+
+## 7. 정량 검증 (Phase 5)
+
+옥시미터를 끼고 잰 기준 CSV 가 있으면:
+
+```bash
+python scripts/validate_vs_oximeter.py \
+    --rppg logs/metrics.csv --ref logs/oximeter.csv \
+    --gate 0.4 --ref-warmup-sec 20 --out reports/accuracy.md
+```
+
+`--ref-warmup-sec` 를 빼먹지 말 것. 옥시미터는 손가락에 끼운 뒤 값이 안정되기까지
+20초쯤 걸리고, 그 구간을 기준으로 쓰면 카메라가 틀린 것처럼 보인다.
+
+시작시각 보정은 상호상관으로 자동 탐색한다(`--offset` 으로 수동 지정 가능).
+MAE 를 최소화하는 방식이 아니라 상관을 최대화하므로 보고할 지표를 깎지 않는다.
+
+리포트에 실행 명령이 함께 박힌다. 예전 아카이브 리포트는 인자를 안 남겨 재현이
+안 됐는데, 같은 실수를 반복하지 않기 위해서다.
+
+---
+
+## 8. 아직 안 붙인 것
 
 | 항목 | 계획 |
 |---|---|

@@ -4,11 +4,11 @@ import { MetricCard } from '../components/MetricCard'
 import { SignalBanner } from '../components/SignalBanner'
 import { StateBadge } from '../components/StateBadge'
 import { TrendChart } from '../components/TrendChart'
-import { useSnapshot } from '../hooks/useSnapshot'
 import { ICON, LABEL, STATE_LABEL, displayValue, effectiveState } from '../metrics'
+import { useFeed } from '../snapshotContext'
 
 // 기기 옆 대형 화면. 몇 걸음 떨어져 읽는다는 전제로 주지표 하나를 크게 세우고
-// 나머지는 오른쪽에 모은다 (tieng_stitch KioskView 레이아웃).
+// 나머지는 오른쪽에 모은다.
 //
 // 폭에 상한(max-w-shell)을 두는 이유: 상한이 없으면 초광폭 모니터에서 주지표가
 // 좌상단에 홀로 남고 화면 가운데가 통째로 비어 버린다.
@@ -16,11 +16,11 @@ import { ICON, LABEL, STATE_LABEL, displayValue, effectiveState } from '../metri
 const HERO_KEY = 'hr'
 
 export function Kiosk() {
-  const { snapshot, history, stale } = useSnapshot()
+  const { snapshot, history, stale } = useFeed()
 
   if (!snapshot) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-ink">
+      <main className="flex flex-1 items-center justify-center">
         <p className="kr animate-measuring text-sm text-muted">서버 연결 대기 중</p>
       </main>
     )
@@ -34,31 +34,7 @@ export function Kiosk() {
   const confidence = !stale && hero ? hero.confidence : null
 
   return (
-    <div className="flex min-h-screen flex-col bg-ink font-sans text-fg select-none">
-      <header className="border-b-[0.5px] border-gold/15">
-        <div className="mx-auto flex w-full max-w-shell items-center justify-between px-6 py-4 md:px-10">
-          <div className="flex items-center gap-3 font-mono text-[11px] tracking-[0.32em] text-gold uppercase">
-            <Activity className="h-4 w-4" />
-            <span>VITAL_MONITOR_SYS</span>
-            <span className="tracking-[0.12em] text-faint">[{snapshot.device_id}]</span>
-          </div>
-          <div className="flex items-center gap-2.5 text-[12px] text-muted">
-            <span
-              className={
-                stale
-                  ? 'h-2 w-2 rounded-full bg-faint'
-                  : 'h-2 w-2 animate-pulse rounded-full bg-gold shadow-[0_0_8px_rgba(197,160,89,0.7)]'
-              }
-            />
-            <span className="kr tnum">
-              {stale ? '수신 끊김' : new Date(snapshot.ts).toLocaleTimeString('ko-KR')}
-            </span>
-          </div>
-        </div>
-      </header>
-
-      {/* 화면이 세로로 길면 남는 높이를 컴포넌트 사이에 흩뿌리지 않고 위아래 여백으로
-          몰아준다. 안쪽이 비면 고장 난 것처럼 보이지만 바깥 여백은 여백으로 읽힌다. */}
+    <>
       <main className="mx-auto flex w-full max-w-shell flex-1 flex-col gap-8 px-6 py-8 md:px-10 lg:grid lg:grid-cols-[minmax(0,1fr)_380px] lg:items-center lg:gap-12">
         {/* 주지표는 위, 추세는 남는 높이를 전부 먹는다. 그래야 오른쪽 사이드바와
             윗줄이 맞고 왼쪽 열에 빈 구멍이 생기지 않는다. */}
@@ -73,8 +49,6 @@ export function Kiosk() {
             </div>
 
             <div className="flex items-baseline gap-4">
-              {/* 크기를 폭이 아니라 화면 높이에도 묶는다. 세로로 긴 화면에서 숫자가
-                  작게 남으면 가운데가 통째로 비어 보인다. */}
               {heroValue === null ? (
                 <span className="animate-measuring text-[clamp(3.5rem,min(9vw,18vh),12rem)] leading-[0.85] font-thin text-faint/50">
                   —
@@ -146,6 +120,6 @@ export function Kiosk() {
           <span className="tnum">개입 {snapshot.interventions.length}건</span>
         </div>
       </footer>
-    </div>
+    </>
   )
 }

@@ -28,6 +28,11 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _console import force_utf8  # noqa: E402
+
+force_utf8()
 
 TIME_COLS = ("elapsed_sec", "time", "sec", "t", "timestamp", "ts")
 BPM_COLS = ("pr", "bpm", "hr", "pulse", "heart_bpm", "spo2_hr", "heart_rate")

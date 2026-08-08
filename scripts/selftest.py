@@ -18,6 +18,11 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _console import force_utf8  # noqa: E402
+
+force_utf8()
 
 from actuators.tuya_plug import TuyaPlug  # noqa: E402
 from api.schemas import Metric, Snapshot, server_now  # noqa: E402

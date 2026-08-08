@@ -19,6 +19,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _console import force_utf8  # noqa: E402
+
+force_utf8()
 
 from actuators.base import Actuator  # noqa: E402
 from api.schemas import server_now  # noqa: E402

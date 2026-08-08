@@ -84,16 +84,21 @@ async def test_card_order_follows_config_order() -> None:
     assert [m.key for m in metrics] == ["hr", "rr"]
 
 
-async def test_mock_config_yields_cards_with_more_than_one_badge() -> None:
-    """Phase 1 완료 기준: 실측 0개인데도 카드가 서로 다른 뱃지를 달고 뜬다."""
+async def test_mock_config_runs_the_whole_pipeline_without_hardware() -> None:
+    """하드웨어 0개로 지표·액추에이터·정책이 전부 올라온다."""
     reg = Registry.from_yaml(REPO_ROOT / "config" / "device.mock.yaml")
     await reg.start()
     metrics = await reg.read_all(server_now())
+    actuators, policies = dict(reg.actuators), list(reg.policies)
     await reg.stop()
 
-    assert [m.key for m in metrics] == ["hr", "temp", "humidity", "rr", "posture"]
-    assert {m.mode for m in metrics} == {"unavailable", "simulated"}
-    assert {m.state for m in metrics} == {"no_adapter", "ok"}
+    assert [m.key for m in metrics] == [
+        "temp", "humidity", "lux", "occupancy", "hr", "rr", "posture",
+    ]
+    # 전부 합성값이다. 하나라도 live 로 새면 데모에서 실측이라고 오해된다.
+    assert {m.mode for m in metrics} == {"simulated"}
+    assert "room_light" in actuators
+    assert [p.level for p in policies] == ["L1"]
 
 
 async def test_rr_mock_holds_the_value_when_quality_is_low() -> None:

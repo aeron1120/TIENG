@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from core import quality
+from core import quality, thresholds
 from core.adapters.rppg import RppgAdapter
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -154,5 +154,6 @@ def test_confidence_stays_in_range_at_extremes() -> None:
 
 def test_gate_comes_from_thresholds_yaml() -> None:
     """임계값은 코드가 아니라 thresholds.yaml 이 정한다 (README §10)."""
-    gate = quality.load_confidence_min(REPO_ROOT / "config" / "thresholds.yaml")
-    assert gate == 0.4  # demo 프로파일
+    active = thresholds.load(REPO_ROOT / "config" / "thresholds.yaml")
+    assert active.profile == "demo"
+    assert active.confidence_min == 0.4

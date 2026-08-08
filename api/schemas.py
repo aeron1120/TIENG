@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 Mode = Literal["live", "simulated", "unavailable"]
 State = Literal["ok", "low_quality", "stale", "error", "no_adapter"]
+Level = Literal["L0", "L1", "L2", "L3", "L4"]  # 개입 단계
 
 # 0.0~1.0 범위 밖 confidence는 게이팅 판단을 조용히 망가뜨리므로 스키마에서 막는다.
 Confidence = Annotated[float, Field(ge=0.0, le=1.0)]
@@ -36,7 +37,7 @@ class Metric(BaseModel):
 
 class InterventionEvent(BaseModel):
     id: str
-    level: Literal["L0", "L1", "L2", "L3", "L4"]
+    level: Level
     action: str  # "light_up" | "ventilate" | "breathing_guide" | "notify_guardian"
     trigger: str  # 사람이 읽을 수 있는 발화 조건 문자열
     before: dict[str, float]  # 개입 직전 지표 스냅샷

@@ -1,23 +1,28 @@
-# 하드웨어 0개로 개발/백업 데모용. DEVICE_CONFIG=config/device.mock.yaml
+# 하드웨어 0개로 개발/백업 데모용.
+#   DEVICE_CONFIG=config/device.mock.yaml uvicorn api.main:app --port 8000
 #
-# Phase 1 시점에는 mock 어댑터가 rr_mock, posture_mock 둘뿐이다.
-# rppg / bme680 항목은 모듈이 아직 없으므로 registry가 no_adapter로 강등하고,
-# provides 에 적힌 key로 "값 없음(—)" 카드 자리만 예약한다.
-# Phase 2·3에서 실제 어댑터가 생기면 module 만 갈아끼우면 된다.
+# L1 조명 개입의 전 구간을 하드웨어 없이 볼 수 있게 배선했다.
+#   env_mock 이 주기적으로 방을 어둡게 함
+#   → hr_mock 신뢰도 하락 → 값 보류 → L1 발화 → simulated 전구 ON
+#   → 조도 회복 → 신뢰도 회복 → 값 복귀
+# 값은 전부 합성이다. 카드 뱃지가 "시뮬레이션"으로 뜨는지 확인할 것.
 device_id: tfv-mock-01
 sample_rate_hz: 1
-# 개발용이라 기본은 끈다. 백업 데모로 쓸 때는 logs/metrics.csv 로 채운다.
-metrics_csv: null
+thresholds: config/thresholds.yaml
+metrics_csv: null              # 개발용이라 기본은 끈다
+interventions_csv: logs/interventions.mock.csv
 
 adapters:
+  # env 를 먼저 둔다. hr_mock 이 같은 틱의 조도를 보고 신뢰도를 만들기 때문에
+  # 순서가 뒤집히면 한 틱 늦게 반응한다.
+  - id: env
+    module: core.adapters.env_mock
+    mode: simulated
+    params: { base_lux: 140, dark_lux: 25, dark_every_s: 90, dark_for_s: 40 }
   - id: rppg
-    module: core.adapters.rppg
-    mode: unavailable
-    provides: [hr]
-  - id: bme680
-    module: core.adapters.env_bme680
-    mode: unavailable
-    provides: [temp, humidity]
+    module: core.adapters.hr_mock
+    mode: simulated
+    params: { base_bpm: 68, noise: 1.5 }
   - id: rr_estimator
     module: core.adapters.rr_mock
     mode: simulated
@@ -26,3 +31,14 @@ adapters:
     module: core.adapters.posture_mock
     mode: simulated
     params: { hold_ticks: 4 }
+
+actuators:
+  - id: room_light
+    module: actuators.tuya_plug
+    mode: simulated            # 네트워크를 건드리지 않는다
+    params: { simulated_lux_gain: 120 }
+
+policies:
+  - module: core.policy.l1_light
+    enabled: true
+    params: { switch_id: room_light }

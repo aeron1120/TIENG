@@ -1,11 +1,23 @@
+# 정책 조건은 코드가 아니라 여기서 온다 (README §0-5, §10).
+# 발표할 때는 어느 프로파일로 돌렸는지 반드시 밝힐 것.
 profile: demo          # demo | production
 
 demo:
   hr: { low: 55, high: 95, sustain_s: 20 }
   confidence_min: 0.4
-  night_mode: { start: "22:00", end: "07:00" }
+  night_mode: { start: "22:00", end: "07:00" }   # 로컬 시간 기준
+  policies:
+    l1_light:
+      lux_min: 80          # 이보다 어두울 때만 조명이 원인이라고 본다
+      cooldown_s: 300      # 껐다 켰다 반복하지 않도록
+      evaluate_after_s: 20 # 켠 뒤 이만큼 지나 confidence 를 다시 잰다
 
 production:
   hr: { low: 45, high: 120, sustain_s: 120 }
   confidence_min: 0.6
   night_mode: { start: "21:00", end: "08:00" }
+  policies:
+    l1_light:
+      lux_min: 60
+      cooldown_s: 900
+      evaluate_after_s: 30

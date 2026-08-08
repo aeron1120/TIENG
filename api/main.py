@@ -12,11 +12,13 @@ from pathlib import Path
 import structlog
 from fastapi import FastAPI
 
+from api.routes.interventions import router as interventions_router
 from api.routes.snapshot import router as snapshot_router
 from api.schemas import Snapshot, server_now
 from api.ws import Hub
 from api.ws import router as ws_router
-from core.metrics_log import MetricCsvLogger
+from core.csv_logs import InterventionCsvLogger, MetricCsvLogger
+from core.policy.runner import PolicyRunner
 from core.registry import Registry
 
 log = structlog.get_logger(__name__)
@@ -31,7 +33,8 @@ def _config_path() -> Path:
 async def _sample_loop(app: FastAPI) -> None:
     registry: Registry = app.state.registry
     hub: Hub = app.state.hub
-    csv_log: MetricCsvLogger | None = app.state.csv_log
+    runner: PolicyRunner = app.state.runner
+    csv_log: MetricCsvLogger | None = app.state.metrics_csv
     period = 1.0 / registry.config.sample_rate_hz
 
     # sleep(period)만 쓰면 처리 시간만큼 주기가 밀린다. 절대 시각 기준으로 맞춘다.
@@ -43,11 +46,16 @@ async def _sample_loop(app: FastAPI) -> None:
                 device_id=registry.config.device_id,
                 ts=ts,
                 metrics=await registry.read_all(ts),
-                interventions=[],  # 정책은 Phase 3·5
+                interventions=[],
             )
+            # 정책은 방금 만든 지표를 보고 판단한다. 발화한 개입은 같은 스냅샷에
+            # 실어 보내야 화면에서 "왜 켜졌는지"가 값과 같이 보인다.
+            await runner.tick(snapshot)
+            snapshot = snapshot.model_copy(update={"interventions": runner.recent})
+
             app.state.latest = snapshot
             if csv_log is not None:
-                csv_log.write(snapshot)
+                csv_log.write_snapshot(snapshot)
             await hub.broadcast(snapshot)
         except Exception as exc:
             # 루프가 죽으면 대시보드가 통째로 멎는다. 한 틱을 버리고 계속 돈다.
@@ -65,16 +73,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     registry = Registry.from_yaml(path)
     await registry.start()
 
-    csv_log: MetricCsvLogger | None = None
-    if registry.config.metrics_csv:
-        csv_log = MetricCsvLogger(Path(registry.config.metrics_csv))
-        csv_log.open()
-        log.info("metrics_csv.open", path=registry.config.metrics_csv)
+    metrics_csv = _open_log(MetricCsvLogger, registry.config.metrics_csv, "metrics_csv")
+    interventions_csv = _open_log(
+        InterventionCsvLogger, registry.config.interventions_csv, "interventions_csv"
+    )
 
     app.state.registry = registry
+    app.state.runner = PolicyRunner(registry.policies, sink=interventions_csv)
     app.state.hub = Hub()
     app.state.latest = None
-    app.state.csv_log = csv_log
+    app.state.metrics_csv = metrics_csv
 
     task = asyncio.create_task(_sample_loop(app))
     try:
@@ -85,11 +93,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await task
         except asyncio.CancelledError:
             pass
+        await app.state.runner.stop()
         await registry.stop()
-        if csv_log is not None:
-            csv_log.close()
+        for logger in (metrics_csv, interventions_csv):
+            if logger is not None:
+                logger.close()
+
+
+def _open_log(cls: type, path: str | None, name: str):  # type: ignore[no-untyped-def]
+    if not path:
+        return None
+    logger = cls(Path(path))
+    logger.open()
+    log.info(f"{name}.open", path=path)
+    return logger
 
 
 app = FastAPI(title="TouchFree Vitals", lifespan=lifespan)
 app.include_router(snapshot_router)
+app.include_router(interventions_router)
 app.include_router(ws_router)

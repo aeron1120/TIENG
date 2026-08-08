@@ -91,3 +91,48 @@ def test_validation_reproduces_the_archived_numbers(client: TestClient) -> None:
 def test_log_download_stays_inside_logs(client: TestClient) -> None:
     with client:
         assert client.get("/api/logs/..%2F..%2Fpyproject.toml/download").status_code == 404
+
+
+def test_camera_says_so_when_there_is_none(client: TestClient) -> None:
+    """mock 구성에는 카메라가 없다. 화면은 이걸 보고 패널을 접는다."""
+    with client:
+        assert client.get("/api/camera").json() == {"available": False, "sources": []}
+        assert client.get("/api/camera/stream").status_code == 404
+
+
+def test_layout_survives_a_reload(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """브라우저 저장소를 안 쓰므로 (README §10) 서버가 배치를 기억해야 한다."""
+    monkeypatch.setattr("core.layout.DEFAULT_PATH", tmp_path / "layout.json")
+
+    with client:
+        assert client.get("/api/layout").json() == {"hero": "hr", "order": []}
+
+        saved = {"hero": "temp", "order": ["lux", "hr", "humidity"]}
+        assert client.put("/api/layout", json=saved).status_code == 200
+        assert client.get("/api/layout").json() == saved
+
+
+def test_layout_falls_back_when_the_file_is_broken(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """배치 파일 하나 때문에 화면이 안 뜨면 안 된다."""
+    broken = tmp_path / "layout.json"
+    broken.write_text("{ 이건 JSON 이 아니다", encoding="utf-8")
+    monkeypatch.setattr("core.layout.DEFAULT_PATH", broken)
+
+    with client:
+        assert client.get("/api/layout").json()["hero"] == "hr"
+
+
+def test_layout_caps_how_much_it_will_store(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """클라이언트가 준 값을 그대로 디스크에 쓰는 유일한 경로다."""
+    monkeypatch.setattr("core.layout.DEFAULT_PATH", tmp_path / "layout.json")
+
+    with client:
+        res = client.put("/api/layout", json={"hero": "hr", "order": [f"k{i}" for i in range(64)]})
+        assert res.status_code == 422
+        assert client.put("/api/layout", json={"hero": "x" * 200, "order": []}).status_code == 422

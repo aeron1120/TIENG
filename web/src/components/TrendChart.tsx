@@ -16,7 +16,12 @@ type WindowKey = (typeof WINDOWS)[number]['key']
 
 // 값이 안 움직여도 축이 확대돼 요동치는 것처럼 보이지 않게 하는 하한.
 // 너무 크게 잡으면 반대로 실제 변동이 납작해지고 그래프 위쪽이 텅 빈다.
-const MIN_HALF_SPAN = 5
+//
+// 절대값이 아니라 비율인 이유: 이제 어느 지표든 주지표가 될 수 있다. 하한을
+// 5 로 고정하면 심박수(±5bpm)에는 맞지만 온도(24.2℃)는 ±5℃ 축에 깔려 완전히
+// 납작해진다. 0 근처 지표를 위해 절대 하한도 같이 둔다.
+const MIN_HALF_SPAN_RATIO = 0.04
+const MIN_HALF_SPAN_ABS = 0.05
 const BASELINE = 100 // viewBox 바닥. 면적 채우기용
 
 interface Point {
@@ -37,10 +42,10 @@ export function TrendChart({
   const gradientId = useId()
   const span = WINDOWS.find((w) => w.key === win) ?? WINDOWS[1]
 
-  const series = history.slice(-span.points).map((snap) => {
-    const metric = snap.metrics.find((m) => m.key === metricKey)
-    return metric && typeof metric.value === 'number' ? metric.value : null
-  })
+  const raw = history
+    .slice(-span.points)
+    .map((snap) => snap.metrics.find((m) => m.key === metricKey)?.value ?? null)
+  const series = raw.map((value) => (typeof value === 'number' ? value : null))
 
   const measured = series.filter((v): v is number => v !== null)
   const heldRatio = series.length ? 1 - measured.length / series.length : 0
@@ -50,7 +55,11 @@ export function TrendChart({
     return (
       <Frame title={title} win={win} onWin={setWin} held={null} span={span.label}>
         <div className="kr flex h-full items-center justify-center text-[12px] text-faint">
-          추세를 그릴 만큼 쌓이지 않았다
+          {/* 자세처럼 값이 문자열인 지표는 선으로 그릴 게 없다. "아직 안 쌓였다"고
+              하면 기다리면 그려지는 줄 알게 된다. */}
+          {raw.some((value) => typeof value === 'string')
+            ? '수치가 아니라 추세를 그리지 않는다'
+            : '추세를 그릴 만큼 쌓이지 않았다'}
         </div>
       </Frame>
     )
@@ -59,7 +68,8 @@ export function TrendChart({
   const hi = Math.max(...measured)
   const lo = Math.min(...measured)
   const center = (hi + lo) / 2
-  const half = Math.max((hi - lo) / 2, MIN_HALF_SPAN) * 1.15
+  const floor = Math.max(Math.abs(center) * MIN_HALF_SPAN_RATIO, MIN_HALF_SPAN_ABS)
+  const half = Math.max((hi - lo) / 2, floor) * 1.15
   const yMin = center - half
   const yMax = center + half
 
@@ -87,9 +97,11 @@ export function TrendChart({
     <Frame title={title} win={win} onWin={setWin} held={heldRatio} span={span.label}>
       <div className="flex h-full w-full">
         <div className="flex w-10 shrink-0 flex-col justify-between py-[2px] pr-2 text-right font-mono text-[10px] text-faint tabular-nums">
-          <span>{Math.round(yMax)}</span>
-          <span>{Math.round(center)}</span>
-          <span>{Math.round(yMin)}</span>
+          {/* 축 폭이 좁으면 정수로 반올림했을 때 세 눈금이 같은 숫자가 된다.
+              온도처럼 소수점이 곧 정보인 지표가 있다. */}
+          {[yMax, center, yMin].map((value, i) => (
+            <span key={i}>{yMax - yMin < 10 ? value.toFixed(1) : Math.round(value)}</span>
+          ))}
         </div>
 
         <div className="relative min-w-0 flex-1">

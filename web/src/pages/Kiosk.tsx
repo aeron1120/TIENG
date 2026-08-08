@@ -1,4 +1,5 @@
 import { Activity } from 'lucide-react'
+import { InterventionLog } from '../components/InterventionLog'
 import { MetricCard } from '../components/MetricCard'
 import { SignalBanner } from '../components/SignalBanner'
 import { StateBadge } from '../components/StateBadge'
@@ -129,6 +130,9 @@ export function Kiosk() {
           {rest.map((metric) => (
             <MetricCard key={`${metric.source}:${metric.key}`} metric={metric} stale={stale} />
           ))}
+          <div className="mt-1">
+            <InterventionLog events={snapshot.interventions} />
+          </div>
         </section>
       </main>
 

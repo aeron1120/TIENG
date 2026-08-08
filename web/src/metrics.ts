@@ -53,6 +53,13 @@ const POSTURE_LABEL: Record<string, string> = {
   lying: '누움',
 }
 
+export const ACTION_LABEL: Record<string, string> = {
+  light_up: '조명 켬',
+  ventilate: '환기',
+  breathing_guide: '호흡 안내',
+  notify_guardian: '보호자 알림',
+}
+
 /** 수신이 끊기면 서버가 뭐라 했든 프론트가 stale 로 덮는다 (README §2). */
 export function effectiveState(metric: Metric, stale: boolean): State {
   return stale ? 'stale' : metric.state
@@ -65,5 +72,7 @@ export function effectiveState(metric: Metric, stale: boolean): State {
 export function displayValue(metric: Metric, stale: boolean): string | null {
   if (stale || metric.value === null) return null
   if (typeof metric.value === 'string') return POSTURE_LABEL[metric.value] ?? metric.value
+  // 재실은 1/0 로 오지만 화면에 "1"이라고 띄우면 아무 뜻도 전달되지 않는다.
+  if (metric.key === 'occupancy') return metric.value >= 0.5 ? '감지' : '없음'
   return String(metric.value)
 }

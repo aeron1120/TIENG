@@ -28,7 +28,7 @@ import structlog
 from scipy.signal import butter, detrend, filtfilt, welch
 
 from api.schemas import Metric, Mode, State, server_now
-from core import quality
+from core import quality, thresholds
 from core.adapters.base import SensorAdapter
 
 log = structlog.get_logger(__name__)
@@ -58,14 +58,14 @@ class RppgAdapter(SensorAdapter):
         width: int = 640,
         height: int = 480,
         window_s: float = WINDOW_SEC,
-        thresholds: str = str(quality.DEFAULT_THRESHOLDS),
+        thresholds_path: str = str(thresholds.DEFAULT_PATH),
     ) -> None:
         super().__init__(id, mode)
         self.camera_index = camera_index
         self.width = width
         self.height = height
         self.window_s = window_s
-        self.thresholds_path = Path(thresholds)
+        self.thresholds_path = Path(thresholds_path)
 
         self._cap: Any = None
         self._detector: Any = None
@@ -86,7 +86,7 @@ class RppgAdapter(SensorAdapter):
     # --- 수명주기 --------------------------------------------------------- #
 
     async def start(self) -> None:
-        self._gate = quality.load_confidence_min(self.thresholds_path)
+        self._gate = thresholds.load(self.thresholds_path).confidence_min
         loop = asyncio.get_running_loop()
         self._cap = await loop.run_in_executor(None, self._open_camera)
         if self._cap is None:

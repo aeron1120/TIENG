@@ -5,16 +5,13 @@
 
 가중치와 정규화 상수는 여기 상수로 둔다. 운영자가 조정하는 임계값이 아니라
 신호처리 알고리즘의 일부라서다. 반대로 "얼마부터 믿을 것인가"(confidence_min)는
-운영 정책이므로 thresholds.yaml 에서 읽는다 (README §10).
+운영 정책이므로 core.thresholds 가 thresholds.yaml 에서 읽는다 (README §10).
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from pathlib import Path
-
-import yaml
 
 # SQI 가중 합. 합이 1.0 이어야 confidence 가 0~1 에 머문다.
 W_SNR = 0.45
@@ -28,8 +25,6 @@ SKIN_RATIO_REF = 0.35  # 이만큼 잡히면 ROI 품질 만점
 SKIN_RATIO_FLOOR = 0.10  # 이 아래면 ROI 가 얼굴을 놓친 것으로 본다
 BRIGHTNESS_OK = (45.0, 220.0)  # 밖이면 절반으로 감점
 BETA_MOTION = 0.7  # q_motion = 1 - BETA * jitter_norm
-
-DEFAULT_THRESHOLDS = Path("config/thresholds.yaml")
 
 
 @dataclass(frozen=True)
@@ -87,13 +82,6 @@ def score(
         * q_motion
     )
     return Quality(confidence, q_snr, q_energy, q_roi, q_brightness, q_motion)
-
-
-def load_confidence_min(path: Path = DEFAULT_THRESHOLDS) -> float:
-    """활성 프로파일의 confidence_min. 발표 때 어느 프로파일인지 밝혀야 한다 (README §7)."""
-    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    profile = raw["profile"]
-    return float(raw[profile]["confidence_min"])
 
 
 def _clip(x: float) -> float:

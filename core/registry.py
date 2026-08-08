@@ -71,6 +71,8 @@ class Registry:
         self.thresholds: Thresholds | None = None
         self._adapters: dict[str, SensorAdapter] = {}
         self._provides: dict[str, list[str]] = {}
+        # 왜 못 올라왔는지. 화면에서 바로 읽을 수 있어야 배선을 고칠 수 있다.
+        self._failures: dict[str, str] = {}
 
     @classmethod
     def from_yaml(cls, path: Path) -> Registry:
@@ -119,6 +121,77 @@ class Registry:
             out += [m.model_copy(update={"ts": ts}) for m in metrics]
         return out
 
+    # --- 상태 --------------------------------------------------------------- #
+
+    def status(self) -> dict[str, Any]:
+        """무엇이 올라왔고 무엇이 왜 안 올라왔는지.
+
+        하드웨어를 붙일 때 서버 로그를 뒤지는 대신 화면에서 바로 보라고 만든다.
+        실패 사유를 그대로 실어 보낸다 — 요약하면 배선을 고칠 단서가 사라진다.
+        """
+        adapters: list[dict[str, Any]] = []
+        for adapter_entry in self.config.adapters:
+            if adapter_entry.id in self._adapters:
+                state = "running"
+            elif adapter_entry.mode == "unavailable":
+                state = "disabled"
+            else:
+                state = "failed"
+            adapters.append({
+                "id": adapter_entry.id,
+                "module": adapter_entry.module,
+                "mode": adapter_entry.mode,
+                "provides": self._provides.get(
+                    adapter_entry.id, list(adapter_entry.provides)
+                ),
+                "state": state,
+                "detail": self._failures.get(adapter_entry.id, ""),
+            })
+
+        actuators: list[dict[str, Any]] = []
+        for entry in self.config.actuators:
+            live = self.actuators.get(entry.id)
+            actuators.append({
+                "id": entry.id,
+                "module": entry.module,
+                "mode": entry.mode,
+                "state": "running" if live is not None else "failed",
+                "detail": self._failures.get(entry.id, ""),
+                "is_on": bool(getattr(live, "is_on", False)) if live is not None else False,
+            })
+
+        policies = [
+            {
+                "level": p.level,
+                "module": type(p).__module__,
+                "reversible": p.reversible,
+                "cooldown_s": p.cooldown_s,
+                "evaluate_after_s": p.evaluate_after_s,
+                "last_reason": p.last_reason,
+                "near_miss": p.near_miss,
+            }
+            for p in self.policies
+        ]
+
+        thresholds = None
+        if self.thresholds is not None:
+            thresholds = {
+                "profile": self.thresholds.profile,
+                "confidence_min": self.thresholds.confidence_min,
+                "night_mode": self.thresholds.night_mode.model_dump(),
+                "policies": self.thresholds.policies,
+            }
+
+        return {
+            "device_id": self.config.device_id,
+            "sample_rate_hz": self.config.sample_rate_hz,
+            "thresholds_path": self.config.thresholds,
+            "thresholds": thresholds,
+            "adapters": adapters,
+            "actuators": actuators,
+            "policies": policies,
+        }
+
     # --- 로딩 --------------------------------------------------------------- #
 
     async def _start_adapters(self) -> None:
@@ -132,6 +205,7 @@ class Registry:
             except Exception as exc:
                 # 하드웨어가 아직 안 붙은 흔한 경우다. 카드는 no_adapter 로 뜬다.
                 log.warning("adapter.start_failed", adapter=entry.id, error=str(exc))
+                self._failures[entry.id] = str(exc)
                 continue
             self._adapters[entry.id] = adapter
             log.info("adapter.started", adapter=entry.id, mode=entry.mode, provides=provides)
@@ -146,6 +220,7 @@ class Registry:
             log.warning(
                 "adapter.load_failed", adapter=entry.id, module=entry.module, error=str(exc)
             )
+            self._failures[entry.id] = str(exc)
             return None, list(entry.provides)
 
         if entry.mode == "unavailable":
@@ -156,6 +231,7 @@ class Registry:
             adapter = cls(id=entry.id, mode=entry.mode, **entry.params)
         except Exception as exc:
             log.warning("adapter.init_failed", adapter=entry.id, error=str(exc))
+            self._failures[entry.id] = str(exc)
             return None, list(cls.provides)
         return adapter, list(adapter.provides)
 
@@ -169,6 +245,7 @@ class Registry:
                 log.warning(
                     "actuator.unavailable", actuator=entry.id, module=entry.module, error=str(exc)
                 )
+                self._failures[entry.id] = str(exc)
                 continue
             self.actuators[entry.id] = actuator
             log.info("actuator.started", actuator=entry.id, mode=entry.mode)

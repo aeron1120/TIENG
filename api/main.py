@@ -12,8 +12,11 @@ from pathlib import Path
 import structlog
 from fastapi import FastAPI
 
+from api.routes.diagnostics import router as diagnostics_router
+from api.routes.export import router as export_router
 from api.routes.interventions import router as interventions_router
 from api.routes.snapshot import router as snapshot_router
+from api.routes.system import router as system_router
 from api.schemas import Snapshot, server_now
 from api.ws import Hub
 from api.ws import router as ws_router
@@ -79,6 +82,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     app.state.registry = registry
+    app.state.config_path = path
     app.state.runner = PolicyRunner(registry.policies, sink=interventions_csv)
     app.state.hub = Hub()
     app.state.latest = None
@@ -112,4 +116,7 @@ def _open_log(cls: type, path: str | None, name: str):  # type: ignore[no-untype
 app = FastAPI(title="TouchFree Vitals", lifespan=lifespan)
 app.include_router(snapshot_router)
 app.include_router(interventions_router)
+app.include_router(system_router)
+app.include_router(export_router)
+app.include_router(diagnostics_router)
 app.include_router(ws_router)

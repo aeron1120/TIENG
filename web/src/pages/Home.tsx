@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useGet } from '../hooks/useApi'
-import { LABEL, displayValue } from '../metrics'
+import { LABEL, displayValue, verdict } from '../metrics'
 import { useFeed } from '../snapshotContext'
 
 // 첫 화면. 상단 탭만으로도 이동은 되지만, 처음 여는 사람은 탭 여섯 개가 각각
@@ -87,13 +87,8 @@ export function Home() {
           .map((m) => `${LABEL[m.key] ?? m.key} ${displayValue(m, stale)}${m.unit ?? ''}`)
           .join(' · ')
       : null,
-    '/guardian': !snapshot
-      ? null
-      : stale
-        ? '연결이 끊겼습니다'
-        : measured?.length
-          ? '특이사항 없습니다'
-          : '측정 중입니다',
+    // 보호자 화면과 같은 문장이어야 한다. 판정은 metrics.ts 가 정한다.
+    '/guardian': snapshot ? verdict(measured?.length ?? 0, stale).text : null,
     '/system': adapters.length ? `어댑터 ${running}/${adapters.length} 정상` : null,
     '/records': snapshot ? `이번 세션 개입 ${snapshot.interventions.length}건` : null,
     '/selftest': null,

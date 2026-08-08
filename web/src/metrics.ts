@@ -60,6 +60,47 @@ export const ACTION_LABEL: Record<string, string> = {
   notify_guardian: '보호자 알림',
 }
 
+// 개입 전후 비교에 나오는 키. 지표에서 파생된 값만 따로 적고 나머지는 LABEL 을
+// 그대로 쓴다. 표를 두 벌 두면 한쪽에만 지표를 추가하고 지나가게 된다 —
+// 실제로 기록 화면에서 hr·rr 이 라벨 없이 원본 키로 나오고 있었다.
+const DERIVED_LABEL: Record<string, string> = { hr_confidence: '신뢰도' }
+
+export function deltaLabel(key: string): string {
+  return DERIVED_LABEL[key] ?? LABEL[key] ?? key
+}
+
+export interface Verdict {
+  text: string
+  why: string
+  tone: string
+}
+
+/**
+ * "지금 괜찮은가" 한 줄.
+ *
+ * 홈과 보호자 화면이 같은 문장을 써야 한다. 두 곳에서 따로 판단하면 판정 기준이
+ * 바뀔 때 한쪽만 고치고 지나가고, 그러면 같은 순간에 두 화면이 다른 말을 한다.
+ *
+ * 판정은 셋 중 하나다. 애매하게 "주의"를 남발하면 아무도 안 본다.
+ */
+export function verdict(measured: number, stale: boolean): Verdict {
+  if (stale) {
+    return { text: '연결이 끊겼습니다', why: '서버에서 값이 오지 않습니다', tone: 'text-alert' }
+  }
+  if (measured === 0) {
+    return {
+      text: '측정 중입니다',
+      why: '아직 믿을 만한 값이 없어 표시하지 않습니다',
+      tone: 'text-muted',
+    }
+  }
+  return {
+    text: '특이사항 없습니다',
+    why: `지표 ${measured}개가 정상 범위에서 측정되고 있습니다`,
+    tone: 'text-gold',
+  }
+}
+
 /** 수신이 끊기면 서버가 뭐라 했든 프론트가 stale 로 덮는다 (README §2). */
 export function effectiveState(metric: Metric, stale: boolean): State {
   return stale ? 'stale' : metric.state

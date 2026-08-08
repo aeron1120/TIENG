@@ -1,5 +1,5 @@
 import { Empty, Page, Panel } from '../components/Page'
-import { ACTION_LABEL, ICON, LABEL, displayValue } from '../metrics'
+import { ACTION_LABEL, ICON, LABEL, displayValue, verdict } from '../metrics'
 import { useFeed } from '../snapshotContext'
 
 // 보호자 요약. 기기 옆 대형 화면과 달리 "지금 괜찮은가"만 빨리 읽히면 된다.
@@ -23,20 +23,8 @@ export function Guardian() {
   const held = snapshot.metrics.filter((m) => m.state === 'low_quality')
   const offline = snapshot.metrics.filter((m) => m.state === 'no_adapter' || m.state === 'error')
 
-  // 판정은 셋 중 하나. 애매하게 "주의"를 남발하면 아무도 안 본다.
-  const verdict = stale
-    ? { text: '연결이 끊겼습니다', tone: 'text-alert', why: '서버에서 값이 오지 않습니다' }
-    : measured.length === 0
-      ? {
-          text: '측정 중입니다',
-          tone: 'text-muted',
-          why: '아직 믿을 만한 값이 없어 표시하지 않습니다',
-        }
-      : {
-          text: '특이사항 없습니다',
-          tone: 'text-gold',
-          why: `지표 ${measured.length}개가 정상 범위에서 측정되고 있습니다`,
-        }
+  // 홈 화면과 같은 판단을 써야 한다. 판정 기준은 metrics.ts 한 곳에만 있다.
+  const summary = verdict(measured.length, stale)
 
   return (
     <Page
@@ -45,8 +33,8 @@ export function Guardian() {
     >
       <div className="flex flex-col gap-4">
         <Panel className="py-6">
-          <p className={`kr text-2xl font-light sm:text-3xl ${verdict.tone}`}>{verdict.text}</p>
-          <p className="kr mt-2 text-[13px] text-muted">{verdict.why}</p>
+          <p className={`kr text-2xl font-light sm:text-3xl ${summary.tone}`}>{summary.text}</p>
+          <p className="kr mt-2 text-[13px] text-muted">{summary.why}</p>
         </Panel>
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

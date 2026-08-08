@@ -1,5 +1,6 @@
 import { Download, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
+import { Deltas } from '../components/Deltas'
 import { Empty, Page, Panel } from '../components/Page'
 import { useGet } from '../hooks/useApi'
 import { ACTION_LABEL } from '../metrics'
@@ -133,7 +134,8 @@ export function Records() {
                   </span>
                 </div>
                 <p className="kr text-[12px] text-muted">{r.trigger}</p>
-                {r.before && <Delta before={r.before} after={r.after} />}
+                {/* 지나간 기록이라 after 가 없으면 평가가 끝나지 않은 채로 남은 것이다. */}
+                {r.before && <Deltas before={r.before} after={r.after} pending="효과 측정 전" />}
               </li>
             ))}
           </ul>
@@ -143,27 +145,3 @@ export function Records() {
   )
 }
 
-const DELTA_LABEL: Record<string, string> = { hr_confidence: '신뢰도', lux: '조도' }
-
-function Delta({
-  before,
-  after,
-}: {
-  before: Record<string, number>
-  after: Record<string, number> | null
-}) {
-  if (!after) {
-    return <p className="kr text-[11px] text-faint">효과 측정 전</p>
-  }
-  const keys = Object.keys(before).filter((k) => k in after)
-  return (
-    <div className="flex flex-wrap gap-x-4 font-mono text-[11px] text-faint">
-      {keys.map((k) => (
-        <span key={k} className="tnum">
-          <span className="kr">{DELTA_LABEL[k] ?? k}</span> {before[k]} →{' '}
-          <span className={after[k] > before[k] ? 'text-gold' : ''}>{after[k]}</span>
-        </span>
-      ))}
-    </div>
-  )
-}

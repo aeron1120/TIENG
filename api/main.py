@@ -12,6 +12,7 @@ from pathlib import Path
 import structlog
 from fastapi import FastAPI
 
+from api.routes.camera import router as camera_router
 from api.routes.diagnostics import router as diagnostics_router
 from api.routes.export import router as export_router
 from api.routes.interventions import router as interventions_router
@@ -119,4 +120,5 @@ app.include_router(interventions_router)
 app.include_router(system_router)
 app.include_router(export_router)
 app.include_router(diagnostics_router)
+app.include_router(camera_router)
 app.include_router(ws_router)

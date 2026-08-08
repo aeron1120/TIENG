@@ -16,6 +16,7 @@ from api.routes.camera import router as camera_router
 from api.routes.diagnostics import router as diagnostics_router
 from api.routes.export import router as export_router
 from api.routes.interventions import router as interventions_router
+from api.routes.layout import router as layout_router
 from api.routes.snapshot import router as snapshot_router
 from api.routes.system import router as system_router
 from api.schemas import Snapshot, server_now
@@ -121,4 +122,5 @@ app.include_router(system_router)
 app.include_router(export_router)
 app.include_router(diagnostics_router)
 app.include_router(camera_router)
+app.include_router(layout_router)
 app.include_router(ws_router)

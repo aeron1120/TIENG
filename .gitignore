@@ -13,6 +13,9 @@ dist/
 # 런타임 로그 (Phase 2부터 생성)
 logs/*.csv
 
+# 화면 배치 등 기기별 런타임 상태. 설정이 아니라 사용 흔적이다
+state/
+
 *.egg-info/
 .pytest_cache/
 .mypy_cache/

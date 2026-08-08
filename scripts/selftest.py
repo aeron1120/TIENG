@@ -10,12 +10,15 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
+import structlog
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -35,12 +38,23 @@ from core.registry import Registry  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 FS = 30.0
 
-_results: list[tuple[bool, str, str]] = []
+_results: list[dict[str, object]] = []
+_section = ""
+_quiet = False
+
+
+def section(title: str) -> None:
+    """섹션 제목. --json 일 때는 결과를 묶는 이름으로만 쓰인다."""
+    global _section
+    _section = title
+    if not _quiet:
+        print(f"\n{title}")
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
-    _results.append((ok, name, detail))
-    print(f"  {'OK' if ok else 'XX'}  {name:<38} {detail}")
+    _results.append({"section": _section, "name": name, "ok": bool(ok), "detail": str(detail)})
+    if not _quiet:
+        print(f"  {'OK' if ok else 'XX'}  {name:<38} {detail}")
 
 
 # --------------------------------------------------------------------------- #
@@ -60,7 +74,7 @@ def synthetic_rgb(bpm: float, seconds: float = 14.0) -> tuple[np.ndarray, np.nda
 
 
 def test_signal_core() -> None:
-    print("\n[1] rPPG 신호 코어 — 합성 신호로 BPM 복원")
+    section("[1] rPPG 신호 코어 — 합성 신호로 BPM 복원")
     adapter = RppgAdapter(id="rppg", mode="live")
     adapter._gate = thresholds.load(ROOT / "config" / "thresholds.yaml").confidence_min
     for bpm in (55, 72, 90, 120, 150):
@@ -71,7 +85,7 @@ def test_signal_core() -> None:
 
 
 def test_quality_gating() -> None:
-    print("\n[2] 품질 게이팅 — 못 믿을 신호는 값을 내지 않는다")
+    section("[2] 품질 게이팅 — 못 믿을 신호는 값을 내지 않는다")
     adapter = RppgAdapter(id="rppg", mode="live")
     adapter._gate = 0.4
     t, rgb = synthetic_rgb(72)
@@ -88,7 +102,7 @@ def test_quality_gating() -> None:
 
 
 def test_thresholds() -> None:
-    print("\n[3] 임계값 — 코드가 아니라 thresholds.yaml 이 정한다")
+    section("[3] 임계값 — 코드가 아니라 thresholds.yaml 이 정한다")
     active = thresholds.load(ROOT / "config" / "thresholds.yaml")
     check("프로파일 로드", bool(active.profile), f"profile={active.profile}")
     check("L1 임계값 존재", "lux_min" in active.policy("l1_light"), str(active.policy("l1_light")))
@@ -112,7 +126,7 @@ def snapshot(confidence: float, lux: float, at: datetime) -> Snapshot:
 
 
 async def test_l1_policy() -> None:
-    print("\n[4] L1 조명 개입 — 어두울 때만, 야간은 제외")
+    section("[4] L1 조명 개입 — 어두울 때만, 야간은 제외")
     sim_room.reset()
     active = thresholds.load(ROOT / "config" / "thresholds.yaml")
     switch = TuyaPlug(id="room_light", mode="simulated")
@@ -130,7 +144,7 @@ async def test_l1_policy() -> None:
 
 
 async def test_l1_loop() -> None:
-    print("\n[5] L1 폐루프 — 개입하면 효과가 측정된다")
+    section("[5] L1 폐루프 — 개입하면 효과가 측정된다")
     sim_room.reset()
     active = thresholds.load(ROOT / "config" / "thresholds.yaml")
     switch = TuyaPlug(id="room_light", mode="simulated", simulated_lux_gain=120.0)
@@ -155,7 +169,7 @@ async def test_l1_loop() -> None:
 
 
 async def test_mock_pipeline() -> None:
-    print("\n[6] mock 설정 — 하드웨어 0개로 전체 파이프라인")
+    section("[6] mock 설정 — 하드웨어 0개로 전체 파이프라인")
     sim_room.reset()
     registry = Registry.from_yaml(ROOT / "config" / "device.mock.yaml")
     await registry.start()
@@ -173,7 +187,18 @@ async def test_mock_pipeline() -> None:
 
 
 async def main() -> int:
-    print("TouchFree Vitals — 자체 검증 (하드웨어 불필요)")
+    global _quiet
+    parser = argparse.ArgumentParser(description="하드웨어 없이 도는 자체 검증")
+    parser.add_argument("--json", action="store_true", help="결과를 JSON 으로 (웹 화면용)")
+    args = parser.parse_args()
+    _quiet = args.json
+
+    if _quiet:
+        # 로그가 stdout 으로 나오면 JSON 을 오염시킨다. 로그는 원래 stderr 가 맞다.
+        structlog.configure(logger_factory=structlog.PrintLoggerFactory(file=sys.stderr))
+
+    if not _quiet:
+        print("TouchFree Vitals — 자체 검증 (하드웨어 불필요)")
     test_signal_core()
     test_quality_gating()
     test_thresholds()
@@ -181,11 +206,23 @@ async def main() -> int:
     await test_l1_loop()
     await test_mock_pipeline()
 
-    failed = [name for ok, name, _ in _results if not ok]
-    print(f"\n{'-' * 60}")
-    print(f"{len(_results) - len(failed)}/{len(_results)} 통과")
-    for name in failed:
-        print(f"  실패: {name}")
+    failed = [r for r in _results if not r["ok"]]
+    if _quiet:
+        print(
+            json.dumps(
+                {
+                    "total": len(_results),
+                    "passed": len(_results) - len(failed),
+                    "checks": _results,
+                },
+                ensure_ascii=False,
+            )
+        )
+    else:
+        print(f"\n{'-' * 60}")
+        print(f"{len(_results) - len(failed)}/{len(_results)} 통과")
+        for r in failed:
+            print(f"  실패: {r['name']}")
     return 1 if failed else 0
 
 

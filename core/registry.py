@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from actuators.base import Actuator
 from api.schemas import Metric, Mode, State
-from core.adapters.base import SensorAdapter
+from core.adapters.base import PreviewSource, SensorAdapter
 from core.policy.base import InterventionPolicy
 from core.thresholds import Thresholds
 from core.thresholds import load as load_thresholds
@@ -190,6 +190,18 @@ class Registry:
             "adapters": adapters,
             "actuators": actuators,
             "policies": policies,
+        }
+
+    def preview_sources(self) -> dict[str, PreviewSource]:
+        """카메라 화면을 내보낼 수 있는 어댑터.
+
+        비어 있는 게 정상인 경우가 많다 (mock 구성, 카메라 미연결). 미리보기가
+        없을 뿐이고 파이프라인은 그대로 돈다.
+        """
+        return {
+            adapter_id: adapter
+            for adapter_id, adapter in self._adapters.items()
+            if isinstance(adapter, PreviewSource)
         }
 
     # --- 로딩 --------------------------------------------------------------- #

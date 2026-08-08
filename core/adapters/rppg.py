@@ -10,6 +10,10 @@ facemesh ROI·참조 저주파제거는 가져오지 않았다. Phase 2 는 실�
 
 원본 영상은 저장하지 않는다. 프레임은 ROI 평균 RGB 3개 숫자로 줄인 뒤 즉시
 버린다 (README §1 비목표).
+
+미리보기(preview_jpeg)는 그 규칙 안에서 동작한다. 보는 사람이 있을 때만 축소본을
+JPEG 로 만들어 메모리에 하나 들고 있다가 다음 프레임이 오면 덮어쓴다. 디스크에
+쓰지 않고 LAN 밖으로도 나가지 않는다.
 """
 
 from __future__ import annotations
@@ -44,6 +48,13 @@ MIN_SKIN_PIXELS = 150
 JITTER_SCALE_PX = 6.0  # 이만큼 흔들리면 jitter_norm = 1
 FACE_DETECT_SEC = 0.5  # 매 프레임 검출은 Pi에서 FPS를 깎는다
 READ_FAIL_LIMIT = 30  # 연속 실패가 이만큼이면 카메라가 빠진 것으로 본다
+
+PREVIEW_WIDTH = 320  # 얼굴이 ROI 안에 들어왔는지 보는 용도라 이 이상 필요 없다
+PREVIEW_FPS = 10.0
+PREVIEW_QUALITY = 70
+PREVIEW_LINGER_SEC = 3.0  # 마지막 요청 후 이만큼 지나면 인코딩을 멈춘다
+_PREVIEW_ROI = (89, 160, 197)  # BGR. 화면 강조색 #c5a059 와 같은 색
+_PREVIEW_FACE = (120, 120, 120)
 
 
 class RppgAdapter(SensorAdapter):
@@ -80,6 +91,8 @@ class RppgAdapter(SensorAdapter):
         self._skin_ratio = 0.0
         self._brightness = 0.0
         self._fault: str | None = None
+        self._preview: bytes | None = None
+        self._preview_until = 0.0  # 이 시각까지는 보는 사람이 있다고 본다
 
         self._gate = 0.4
 
@@ -112,6 +125,8 @@ class RppgAdapter(SensorAdapter):
         if self._cap is not None:
             self._cap.release()
             self._cap = None
+        with self._lock:
+            self._preview = None
 
     async def read(self) -> list[Metric]:
         with self._lock:
@@ -155,6 +170,7 @@ class RppgAdapter(SensorAdapter):
         last_detect = 0.0
         prev_center: tuple[float, float] | None = None
         failures = 0
+        next_preview = 0.0
 
         while not self._stop.is_set():
             ok, frame = self._cap.read()
@@ -196,8 +212,65 @@ class RppgAdapter(SensorAdapter):
                 while self._times and (now - self._times[0]) > self.window_s:
                     self._times.popleft()
                     self._rgbs.popleft()
+                wanted = now < self._preview_until
+
+            # 미리보기는 보는 사람이 있을 때만 만든다. 아무도 안 보는데 매 프레임
+            # JPEG 을 굽는 건 Pi 에서 그대로 FPS 손해다.
+            if wanted and now >= next_preview:
+                next_preview = now + 1.0 / PREVIEW_FPS
+                self._publish_preview(frame, face_box, width, height)
 
             del frame  # 원본 프레임은 여기서 끝. 저장하지 않는다.
+
+    # --- 미리보기 --------------------------------------------------------- #
+
+    def request_preview(self) -> None:
+        with self._lock:
+            self._preview_until = time.monotonic() + PREVIEW_LINGER_SEC
+
+    def preview_jpeg(self) -> bytes | None:
+        with self._lock:
+            return self._preview
+
+    def _publish_preview(
+        self,
+        frame: np.ndarray,
+        face_box: tuple[int, int, int, int] | None,
+        width: int,
+        height: int,
+    ) -> None:
+        """지금 프레임의 축소본을 JPEG 으로 만들어 하나만 들고 있는다.
+
+        측정에 쓰는 ROI 를 같이 그린다. 신뢰도가 낮을 때 "왜"를 화면에서 바로
+        알 수 있어야 한다 — 얼굴을 놓쳤는지, 박스 밖으로 나갔는지가 보인다.
+        """
+        scale = PREVIEW_WIDTH / float(width)
+        small = cv2.resize(frame, (PREVIEW_WIDTH, max(1, round(height * scale))))
+
+        def box(rect: tuple[int, int, int, int], color: tuple[int, int, int]) -> None:
+            x, y, w, h = rect
+            cv2.rectangle(
+                small,
+                (round(x * scale), round(y * scale)),
+                (round((x + w) * scale), round((y + h) * scale)),
+                color,
+                1,
+            )
+
+        if face_box is not None:
+            box(face_box, _PREVIEW_FACE)
+        for rect in _roi_candidates(face_box, width, height):
+            box(rect, _PREVIEW_ROI)
+
+        # 거울상으로 뒤집는다. 화면을 보면서 자세를 잡는 용도라 좌우가 그대로면
+        # 오른쪽으로 움직였는데 화면은 왼쪽으로 가서 맞추기가 어렵다.
+        ok, buf = cv2.imencode(
+            ".jpg", cv2.flip(small, 1), [int(cv2.IMWRITE_JPEG_QUALITY), PREVIEW_QUALITY]
+        )
+        if not ok:
+            return
+        with self._lock:
+            self._preview = buf.tobytes()
 
     # --- 추정 ------------------------------------------------------------- #
 

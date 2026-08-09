@@ -98,7 +98,7 @@ async def test_mock_config_runs_the_whole_pipeline_without_hardware() -> None:
     # 전부 합성값이다. 하나라도 live 로 새면 데모에서 실측이라고 오해된다.
     assert {m.mode for m in metrics} == {"simulated"}
     assert "room_light" in actuators
-    assert [p.level for p in policies] == ["L1"]
+    assert [p.level for p in policies] == ["L1", "L4"]
 
 
 async def test_rr_mock_holds_the_value_when_quality_is_low() -> None:

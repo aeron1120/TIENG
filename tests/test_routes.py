@@ -30,8 +30,8 @@ def test_system_reports_every_component(client: TestClient) -> None:
     assert body["device_id"] == "tfv-mock-01"
     assert {a["id"] for a in body["adapters"]} == {"env", "rppg", "rr_estimator", "posture"}
     assert all(a["state"] == "running" for a in body["adapters"])
-    assert [a["id"] for a in body["actuators"]] == ["room_light"]
-    assert [p["level"] for p in body["policies"]] == ["L1"]
+    assert [a["id"] for a in body["actuators"]] == ["room_light", "guardian_email"]
+    assert [p["level"] for p in body["policies"]] == ["L1", "L4"]
     assert body["thresholds"]["profile"] == "demo"
 
 
@@ -136,3 +136,9 @@ def test_layout_caps_how_much_it_will_store(
         res = client.put("/api/layout", json={"hero": "hr", "order": [f"k{i}" for i in range(64)]})
         assert res.status_code == 422
         assert client.put("/api/layout", json={"hero": "x" * 200, "order": []}).status_code == 422
+
+
+def test_cancel_rejects_unknown_intervention(client: TestClient) -> None:
+    """이미 나간 알림은 취소되지 않는다. 없는 것도 마찬가지다."""
+    with client:
+        assert client.post("/api/interventions/없는id/cancel").status_code == 404

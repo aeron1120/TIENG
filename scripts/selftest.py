@@ -182,8 +182,8 @@ async def test_mock_pipeline() -> None:
 
     check("지표가 나온다", len(metrics) >= 5, ", ".join(keys))
     check("전부 합성값", modes == {"simulated"}, str(modes))
-    check("액추에이터 로드", actuators == ["room_light"], str(actuators))
-    check("정책 로드", policies == ["L1"], str(policies))
+    check("액추에이터 로드", actuators == ["room_light", "guardian_email"], str(actuators))
+    check("정책 로드", policies == ["L1", "L4"], str(policies))
 
 
 async def main() -> int:

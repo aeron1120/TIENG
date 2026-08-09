@@ -11,6 +11,13 @@ export interface Metric {
   mode: Mode
   state: State
   confidence: number | null
+  /**
+   * 값이 나오기까지의 진행률 (0~1). 준비 시간 개념이 없는 지표는 null.
+   *
+   * state 만으로는 "기다리면 나온다"와 "신호가 나빠서 못 낸다"가 둘 다
+   * low_quality 라 구분되지 않는다.
+   */
+  progress: number | null
   ts: string
 }
 

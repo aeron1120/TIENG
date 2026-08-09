@@ -23,16 +23,32 @@ const STATE_TONE: Record<State, string> = {
 // 한글 라벨이라 자간을 주지 않는다.
 const CHIP = 'kr shrink-0 rounded-full border px-2 py-[3px] text-[11px] leading-none whitespace-nowrap'
 
-export function StateBadge({ mode, state }: { mode: Mode; state: State }) {
+export function StateBadge({
+  mode,
+  state,
+  warmingUp = false,
+}: {
+  mode: Mode
+  state: State
+  warmingUp?: boolean
+}) {
   return (
     <div className="flex shrink-0 items-center gap-1.5">
       <span data-mode={mode} className={`${CHIP} ${MODE_TONE[mode]}`}>
         {MODE_LABEL[mode]}
       </span>
-      {state !== 'ok' && (
-        <span data-state={state} className={`${CHIP} ${STATE_TONE[state]}`}>
-          {STATE_LABEL[state]}
+      {/* 준비 중에 "품질 미달"이라고 붙이면 옆에서 "곧 값이 나옵니다"라고 하는 것과
+          어긋난다. 아직 판정할 근거가 없는 것이지 품질이 나쁜 게 아니다. */}
+      {warmingUp ? (
+        <span data-state="warming_up" className={`${CHIP} ${STATE_TONE.low_quality}`}>
+          준비 중
         </span>
+      ) : (
+        state !== 'ok' && (
+          <span data-state={state} className={`${CHIP} ${STATE_TONE[state]}`}>
+            {STATE_LABEL[state]}
+          </span>
+        )
       )}
     </div>
   )

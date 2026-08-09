@@ -7,7 +7,7 @@ import { SignalBanner } from '../components/SignalBanner'
 import { StateBadge } from '../components/StateBadge'
 import { TrendChart } from '../components/TrendChart'
 import { useLayout } from '../hooks/useLayout'
-import { ICON, LABEL, STATE_LABEL, displayValue, effectiveState } from '../metrics'
+import { ICON, LABEL, STATE_LABEL, displayValue, effectiveState, isWarmingUp } from '../metrics'
 import { useFeed } from '../snapshotContext'
 import type { Metric } from '../types'
 
@@ -43,6 +43,7 @@ export function Kiosk() {
 
   const heroState = hero ? effectiveState(hero, stale) : 'no_adapter'
   const heroValue = hero ? displayValue(hero, stale) : null
+  const warmingUp = hero ? isWarmingUp(hero, stale) : false
   const HeroIcon = hero ? (ICON[hero.key] ?? Activity) : Activity
   const confidence = !stale && hero ? hero.confidence : null
 
@@ -75,7 +76,9 @@ export function Kiosk() {
                   <HeroIcon className="h-4 w-4" />
                   {hero ? (LABEL[hero.key] ?? hero.key) : '지표 없음'}
                 </span>
-                {hero && <StateBadge mode={hero.mode} state={heroState} />}
+                {hero && (
+                  <StateBadge mode={hero.mode} state={heroState} warmingUp={warmingUp} />
+                )}
               </div>
 
               <div className="flex items-baseline gap-4">
@@ -101,22 +104,38 @@ export function Kiosk() {
 
               {heroValue === null && (
                 <p className="kr mt-5 text-lg font-light text-muted sm:text-xl">
-                  {STATE_LABEL[heroState]} — 값을 표시하지 않는다
+                  {warmingUp
+                    ? '측정을 준비하고 있습니다 — 곧 값이 나옵니다'
+                    : `${STATE_LABEL[heroState]} — 값을 표시하지 않습니다`}
                 </p>
               )}
 
-              {/* 신뢰도. 값이 없으면 비운다. 임의의 숫자로 채우지 않는다. */}
+              {/* 막대 하나가 두 가지를 번갈아 보여준다. 준비 중에는 신뢰도가 아직
+                  뜻이 없고, 준비가 끝나면 진행률이 뜻이 없다. 둘을 같이 띄우면
+                  어느 쪽을 봐야 하는지 매번 판단해야 한다. */}
               <div className="mt-10 w-full max-w-lg">
                 <div className="mb-2 flex justify-between font-mono text-[10px] tracking-[0.22em] text-faint uppercase">
-                  <span>confidence</span>
+                  <span>{warmingUp ? 'preparing' : 'confidence'}</span>
                   <span className="tnum text-muted">
-                    {confidence === null ? '—' : `${Math.round(confidence * 100)}%`}
+                    {warmingUp
+                      ? `${Math.round((hero?.progress ?? 0) * 100)}%`
+                      : confidence === null
+                        ? '—'
+                        : `${Math.round(confidence * 100)}%`}
                   </span>
                 </div>
                 <div className="h-[3px] w-full overflow-hidden rounded-full bg-white/5">
                   <div
-                    className="h-full rounded-full bg-gold transition-all duration-700"
-                    style={{ width: confidence === null ? '0%' : `${confidence * 100}%` }}
+                    className={`h-full rounded-full transition-all duration-700 ${
+                      warmingUp ? 'animate-measuring bg-gold-soft' : 'bg-gold'
+                    }`}
+                    style={{
+                      width: warmingUp
+                        ? `${(hero?.progress ?? 0) * 100}%`
+                        : confidence === null
+                          ? '0%'
+                          : `${confidence * 100}%`,
+                    }}
                   />
                 </div>
               </div>
@@ -169,7 +188,7 @@ export function Kiosk() {
         </section>
       </main>
 
-      <SignalBanner state={heroState} />
+      <SignalBanner state={heroState} warmingUp={warmingUp} />
 
       <footer className="border-t-[0.5px] border-gold/15">
         <div className="kr mx-auto flex w-full max-w-shell items-center justify-between px-6 py-3 text-[11px] text-faint md:px-10">

@@ -107,6 +107,19 @@ export function effectiveState(metric: Metric, stale: boolean): State {
 }
 
 /**
+ * 값이 없는 이유가 "아직 시간이 덜 됐다"인가.
+ *
+ * rPPG 는 8초 분량이 모여야 첫 값을 낸다. 그 구간과 "신호가 나빠서 못 낸다"가
+ * 둘 다 state=low_quality 라, 진행률을 봐야 구분된다. 구분하지 않으면 켤 때마다
+ * 처음 8초 동안 품질 경고가 뜬다.
+ */
+export function isWarmingUp(metric: Metric, stale: boolean): boolean {
+  return (
+    !stale && metric.state === 'low_quality' && metric.progress !== null && metric.progress < 1
+  )
+}
+
+/**
  * 화면에 찍을 문자열. 값이 없거나 믿을 수 없으면 null 을 돌려주고, 호출부는
  * 반드시 "—" 를 그린다. 0 으로 대체하지 않는다 (README §2).
  */

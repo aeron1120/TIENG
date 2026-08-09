@@ -11,7 +11,16 @@ const MESSAGE: Partial<Record<State, string>> = {
   no_adapter: '연결된 어댑터가 없다',
 }
 
-export function SignalBanner({ state }: { state: State }) {
+export function SignalBanner({
+  state,
+  warmingUp = false,
+}: {
+  state: State
+  warmingUp?: boolean
+}) {
+  // 준비 중은 문제가 아니다. 경고로 알리면 켤 때마다 처음 8초 동안 빨간 줄이 뜬다.
+  if (warmingUp) return null
+
   const message = MESSAGE[state]
   if (!message) return null
 

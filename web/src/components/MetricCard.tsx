@@ -1,6 +1,6 @@
 import { GripVertical } from 'lucide-react'
 import type { DragEvent, KeyboardEvent } from 'react'
-import { ICON, LABEL, displayValue, effectiveState } from '../metrics'
+import { ICON, LABEL, displayValue, effectiveState, isWarmingUp } from '../metrics'
 import type { Metric } from '../types'
 import { StateBadge } from './StateBadge'
 
@@ -41,6 +41,7 @@ export function MetricCard({
   const Icon = ICON[metric.key] ?? ICON.posture
   const dim = state === 'no_adapter' || state === 'stale'
   const label = LABEL[metric.key] ?? metric.key
+  const warmingUp = isWarmingUp(metric, stale)
 
   return (
     <article
@@ -78,7 +79,7 @@ export function MetricCard({
           <Icon className={`h-3.5 w-3.5 shrink-0 ${dim ? 'text-faint' : 'text-gold'}`} />
           <span className="truncate">{label}</span>
         </span>
-        <StateBadge mode={metric.mode} state={state} />
+        <StateBadge mode={metric.mode} state={state} warmingUp={warmingUp} />
       </header>
 
       <div className="mt-2.5 flex items-baseline gap-1.5">
@@ -95,11 +96,27 @@ export function MetricCard({
         )}
       </div>
 
+      {/* 준비 중이면 "—" 옆에 얼마나 왔는지를 붙인다. 이게 없으면 값이 안 뜨는
+          카드가 고장 난 것처럼 보인다. */}
+      {warmingUp && (
+        <div className="mt-2 h-[2px] w-full overflow-hidden rounded-full bg-white/5">
+          <div
+            className="h-full rounded-full bg-gold-soft transition-all duration-700"
+            style={{ width: `${(metric.progress ?? 0) * 100}%` }}
+          />
+        </div>
+      )}
+
       <footer className="mt-2.5 flex items-center justify-between gap-2 font-mono text-[10px] whitespace-nowrap text-faint">
         <span className="truncate">{metric.source}</span>
-        {/* 값이 없어도 confidence 는 보여준다. 왜 보류됐는지 읽을 단서가 된다. */}
-        {metric.confidence !== null && !stale && (
-          <span className="tnum shrink-0">{(metric.confidence * 100).toFixed(0)}%</span>
+        {warmingUp ? (
+          <span className="kr shrink-0">준비 {Math.round((metric.progress ?? 0) * 100)}%</span>
+        ) : (
+          /* 값이 없어도 confidence 는 보여준다. 왜 보류됐는지 읽을 단서가 된다. */
+          metric.confidence !== null &&
+          !stale && (
+            <span className="tnum shrink-0">{(metric.confidence * 100).toFixed(0)}%</span>
+          )
         )}
       </footer>
     </article>

@@ -22,7 +22,9 @@ adapters:
   - id: rppg
     module: core.adapters.hr_mock
     mode: simulated
-    params: { base_bpm: 68, noise: 1.5 }
+    # warmup_s 는 rPPG 가 창을 채우는 8초를 재현한다. 카메라 없이도 화면의
+    # 진행률 표시가 도는지 볼 수 있다.
+    params: { base_bpm: 68, noise: 1.5, warmup_s: 8 }
   - id: rr_estimator
     module: core.adapters.rr_mock
     mode: simulated

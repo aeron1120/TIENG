@@ -215,3 +215,52 @@ def test_dead_camera_drops_its_last_frame() -> None:
 
     assert adapter._fault is not None
     assert adapter.preview_jpeg() is None
+
+
+# --- 진행률 -------------------------------------------------------------- #
+# 화면이 "기다리면 나온다"와 "신호가 나빠서 못 낸다"를 구분하려면 이 값이 필요하다.
+# 둘 다 state=low_quality 라 상태만 보면 같아 보인다.
+
+
+def test_progress_climbs_while_the_window_fills() -> None:
+    adapter = _adapter()
+    seen = []
+    for seconds in (1.0, 2.0, 4.0, 6.0):
+        t, rgb = _synthetic_rgb(72, seconds=seconds)
+        metric = adapter._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+        assert metric.state == "low_quality" and metric.value is None
+        assert metric.progress is not None
+        seen.append(metric.progress)
+
+    assert seen == sorted(seen), f"진행률이 단조증가하지 않는다: {seen}"
+    assert all(p < 1.0 for p in seen), seen
+
+
+def test_progress_is_full_once_a_value_comes_out() -> None:
+    t, rgb = _synthetic_rgb(72)
+    metric = _adapter()._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+
+    assert metric.state == "ok"
+    assert metric.progress == 1.0
+
+
+def test_bad_signal_is_full_progress_not_warming_up() -> None:
+    """이 구분이 이 필드의 존재 이유다. 창은 다 찼고 신호가 나쁜 것이다."""
+    t, rgb = _synthetic_rgb(72)
+    metric = _adapter()._estimate(t, rgb, jitter_norm=1.0, skin_ratio=0.05, brightness=10.0)
+
+    assert metric.state == "low_quality"
+    assert metric.value is None
+    assert metric.progress == 1.0  # 기다린다고 나아지지 않는다
+
+
+def test_progress_needs_both_gates() -> None:
+    """샘플이 적으면 창이 길어도 아직 못 낸다. 진행률은 덜 찬 쪽을 따른다."""
+    t, rgb = _synthetic_rgb(72, seconds=14.0)
+    sparse_t, sparse_rgb = t[::20], rgb[::20]  # 14초에 걸쳐 21개뿐
+
+    metric = _adapter()._estimate(
+        sparse_t, sparse_rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0
+    )
+    assert metric.state == "low_quality"
+    assert metric.progress is not None and metric.progress < 1.0

@@ -286,12 +286,16 @@ class RppgAdapter(SensorAdapter):
         skin_ratio: float,
         brightness: float,
     ) -> Metric:
-        if len(times) < MIN_SAMPLES or rgbs.shape[0] != len(times):
-            return self._hold(None, "얼굴/피부 샘플 모으는 중")
+        # 값이 나오려면 두 관문을 다 넘어야 한다. 진행률은 둘 중 덜 찬 쪽이다 —
+        # 샘플만 많고 창이 짧아도, 창만 길고 샘플이 적어도 아직 못 낸다.
+        duration = float(times[-1] - times[0]) if len(times) >= 2 else 0.0
+        progress = min(1.0, duration / MIN_SEC, len(times) / MIN_SAMPLES)
 
-        duration = float(times[-1] - times[0])
+        if len(times) < MIN_SAMPLES or rgbs.shape[0] != len(times):
+            return self._hold(None, "얼굴/피부 샘플 모으는 중", progress)
+
         if duration < MIN_SEC:
-            return self._hold(None, f"창 채우는 중 ({duration:.0f}/{MIN_SEC:.0f}s)")
+            return self._hold(None, f"창 채우는 중 ({duration:.0f}/{MIN_SEC:.0f}s)", progress)
 
         n = max(int(duration * FS_RESAMPLE), int(MIN_SEC * FS_RESAMPLE))
         t_uniform = np.linspace(times[0], times[-1], n)
@@ -304,10 +308,10 @@ class RppgAdapter(SensorAdapter):
             pulse = _bandpass(pulse, FS_RESAMPLE, BPM_MIN, BPM_MAX)
         except Exception as exc:
             log.warning("rppg.signal_error", adapter=self.id, error=str(exc))
-            return self._hold(None, "신호 처리 실패")
+            return self._hold(None, "신호 처리 실패", progress)
 
         if not np.all(np.isfinite(pulse)) or float(np.std(pulse)) < 1e-8:
-            return self._hold(None, "신호가 평탄함")
+            return self._hold(None, "신호가 평탄함", progress)
 
         pulse = (pulse - np.mean(pulse)) / (np.std(pulse) + 1e-8)
 
@@ -319,7 +323,7 @@ class RppgAdapter(SensorAdapter):
         band_mask = (freqs >= BPM_MIN / 60.0) & (freqs <= BPM_MAX / 60.0)
         band_idx = np.where(band_mask)[0]
         if len(band_idx) == 0:
-            return self._hold(None, "HR 대역 없음")
+            return self._hold(None, "HR 대역 없음", progress)
 
         peak_idx = int(band_idx[int(np.argmax(psd[band_idx]))])
         bpm = float(_parabolic_peak(psd, peak_idx) * float(freqs[1] - freqs[0]) * 60.0)
@@ -341,15 +345,23 @@ class RppgAdapter(SensorAdapter):
             jitter_norm=jitter_norm,
         )
         if q.confidence < self._gate:
-            return self._hold(q.confidence, q.hold_reason())
-        return self._metric(round(bpm, 1), q.confidence, "ok")
+            return self._hold(q.confidence, q.hold_reason(), progress)
+        return self._metric(round(bpm, 1), q.confidence, "ok", progress)
 
-    def _hold(self, confidence: float | None, reason: str) -> Metric:
-        """값을 지어내지 않고 보류한다 (README §0-4). 사유는 로그로 남긴다."""
-        log.debug("rppg.hold", adapter=self.id, reason=reason, confidence=confidence)
-        return self._metric(None, confidence, "low_quality")
+    def _hold(self, confidence: float | None, reason: str, progress: float) -> Metric:
+        """값을 지어내지 않고 보류한다 (README §0-4). 사유는 로그로 남긴다.
 
-    def _metric(self, value: float | None, confidence: float | None, state: State) -> Metric:
+        progress 는 화면으로 나간다. 사유 문자열을 그대로 보내지 않는 이유는
+        UI 문구를 어댑터가 정하게 되기 때문이다 — 화면은 숫자만 받아서 제 말로 쓴다.
+        """
+        log.debug(
+            "rppg.hold", adapter=self.id, reason=reason, confidence=confidence, progress=progress
+        )
+        return self._metric(None, confidence, "low_quality", progress)
+
+    def _metric(
+        self, value: float | None, confidence: float | None, state: State, progress: float
+    ) -> Metric:
         return Metric(
             key="hr",
             value=value,
@@ -358,6 +370,7 @@ class RppgAdapter(SensorAdapter):
             mode=self.mode,
             state=state,
             confidence=confidence,
+            progress=round(progress, 3),
             ts=server_now(),
         )
 

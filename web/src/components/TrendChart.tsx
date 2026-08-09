@@ -54,12 +54,12 @@ export function TrendChart({
   if (measured.length < 2) {
     return (
       <Frame title={title} win={win} onWin={setWin} held={null} span={span.label}>
-        <div className="kr flex h-full items-center justify-center text-[12px] text-faint">
+        <div className="kr flex h-full items-center justify-center text-[15px] text-faint">
           {/* 자세처럼 값이 문자열인 지표는 선으로 그릴 게 없다. "아직 안 쌓였다"고
               하면 기다리면 그려지는 줄 알게 된다. */}
           {raw.some((value) => typeof value === 'string')
-            ? '수치가 아니라 추세를 그리지 않는다'
-            : '추세를 그릴 만큼 쌓이지 않았다'}
+            ? '수치가 아니라 추세를 그리지 않습니다'
+            : '추세를 그릴 만큼 쌓이지 않았습니다'}
         </div>
       </Frame>
     )
@@ -101,7 +101,7 @@ export function TrendChart({
   return (
     <Frame title={title} win={win} onWin={setWin} held={heldRatio} span={span.label}>
       <div className="flex h-full w-full">
-        <div className="flex w-10 shrink-0 flex-col justify-between py-[2px] pr-2 text-right font-mono text-[10px] text-faint tabular-nums">
+        <div className="flex w-10 shrink-0 flex-col justify-between py-[2px] pr-2 text-right font-mono text-[12px] text-faint tabular-nums">
           {/* 축 폭이 좁으면 정수로 반올림했을 때 세 눈금이 같은 숫자가 된다.
               온도처럼 소수점이 곧 정보인 지표가 있다. */}
           {[yMax, center, yMin].map((value, i) => (
@@ -178,16 +178,16 @@ function Frame({
     // h-full: 남는 세로 공간을 그래프가 흡수한다. 안 그러면 화면 아래가 통째로 빈다.
     <section className="border-[0.5px] flex h-full w-full flex-col gap-3 rounded-lg border-gold/15 bg-panel px-4 py-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="kr m-0 flex items-center gap-2.5 text-[12px] font-medium text-faint">
+        <h2 className="kr m-0 flex items-center gap-2.5 text-[15px] font-medium text-faint">
           {title}
           {/* 보류율은 검증 슬라이드의 근거가 되는 숫자다 (README §8). 숨기지 않는다. */}
           {held !== null && held > 0 && (
-            <span className="tnum rounded-full border border-gold/30 px-1.5 py-[2px] text-[11px] text-gold">
+            <span className="tnum rounded-full border border-gold/30 px-1.5 py-[2px] text-[13px] text-gold">
               보류 {(held * 100).toFixed(0)}%
             </span>
           )}
         </h2>
-        <div className="kr flex gap-1 text-[11px]">
+        <div className="kr flex gap-1 text-[13px]">
           {WINDOWS.map((w) => (
             <button
               key={w.key}
@@ -206,7 +206,7 @@ function Frame({
 
       <div className="relative min-h-24 w-full flex-1">{children}</div>
 
-      <div className="flex justify-between pl-10 font-mono text-[10px] text-faint">
+      <div className="flex justify-between pl-10 font-mono text-[12px] text-faint">
         <span className="kr">-{span}</span>
         <span className="tracking-[0.15em]">now</span>
       </div>

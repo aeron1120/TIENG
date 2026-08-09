@@ -62,17 +62,21 @@ export function Kiosk() {
 
   return (
     <>
-      <main className="mx-auto flex w-full max-w-shell flex-1 flex-col gap-8 px-6 py-8 md:px-10 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:items-center lg:gap-12">
+      {/* 초광폭에서는 사이드바를 넓혀 블록을 두 줄로 세운다. 글자를 키운 만큼
+          카드가 높아져 한 줄로는 화면 밖으로 나간다. 벽에 거는 화면이라 스크롤이
+          생기면 아래쪽 지표는 아무도 못 본다.
+
+          overflow-clip 은 hero-glow 때문이다. 장식용 ::before 가 아래로 30% 삐져나와
+          내용이 다 들어가는데도 200px 넘게 스크롤이 생겼다. 여기서 잘라도 그 지점은
+          이미 투명해서 보이는 건 그대로다. (clip 은 hidden 과 달리 스크롤 컨테이너를
+          만들지 않는다.) */}
+      <main className="mx-auto flex w-full max-w-shell flex-1 flex-col gap-8 overflow-clip px-6 py-8 md:px-10 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:items-center lg:gap-12 2xl:grid-cols-[minmax(0,1fr)_620px]">
         {/* 주지표는 위, 추세는 남는 높이를 전부 먹는다. 그래야 오른쪽 사이드바와
             윗줄이 맞고 왼쪽 열에 빈 구멍이 생기지 않는다. */}
         <section className="hero-glow relative flex min-w-0 flex-col gap-8 lg:self-stretch">
-          {/* 카메라를 큰 숫자 옆에 둔다. 사이드바에 넣으면 보조 지표가 화면 아래로
-              밀려 스크롤이 생기고, 여기는 어차피 비어 있던 자리다. 값이 왜 보류
-              중인지 확인할 때 숫자와 얼굴을 같이 봐야 한다는 점도 맞아떨어진다. */}
-          <div className="relative z-10 flex flex-wrap items-start justify-between gap-x-10 gap-y-6">
-            <div className="min-w-0 flex-1">
+          <div className="relative z-10">
               <div className="mb-5 flex flex-wrap items-center gap-3">
-                <span className="kr flex items-center gap-2 text-[15px] font-medium text-gold">
+                <span className="kr flex items-center gap-2 text-[18px] font-medium text-gold">
                   <HeroIcon className="h-4 w-4" />
                   {hero ? (LABEL[hero.key] ?? hero.key) : '지표 없음'}
                 </span>
@@ -114,7 +118,7 @@ export function Kiosk() {
                   뜻이 없고, 준비가 끝나면 진행률이 뜻이 없다. 둘을 같이 띄우면
                   어느 쪽을 봐야 하는지 매번 판단해야 한다. */}
               <div className="mt-10 w-full max-w-lg">
-                <div className="mb-2 flex justify-between font-mono text-[10px] tracking-[0.22em] text-faint uppercase">
+                <div className="mb-2 flex justify-between font-mono text-[12px] tracking-[0.22em] text-faint uppercase">
                   <span>{warmingUp ? 'preparing' : 'confidence'}</span>
                   <span className="tnum text-muted">
                     {warmingUp
@@ -139,11 +143,6 @@ export function Kiosk() {
                   />
                 </div>
               </div>
-            </div>
-
-            <div className="w-full max-w-[300px] shrink-0">
-              <CameraPanel />
-            </div>
           </div>
 
           <div className="relative z-10 h-[clamp(220px,36vh,460px)] lg:h-auto lg:min-h-56 lg:flex-1">
@@ -155,32 +154,39 @@ export function Kiosk() {
             블록은 위에서부터 쌓아 주지표 라벨과 눈높이를 맞춘다. */}
         <section className="flex flex-col gap-3 border-t-[0.5px] border-gold/15 pt-6 lg:self-stretch lg:justify-start lg:border-t-0 lg:border-l-[0.5px] lg:pt-1 lg:pl-12">
           <div className="flex items-baseline justify-between gap-2">
-            <h2 className="kr text-[12px] font-medium text-muted">보조 지표</h2>
-            <span className="kr text-[10px] text-faint">눌러서 크게 · 끌어서 순서</span>
+            <h2 className="kr text-[15px] font-medium text-muted">보조 지표</h2>
+            <span className="kr text-[12px] text-faint">눌러서 크게 · 끌어서 순서</span>
           </div>
 
           {saveError && (
-            <p className="kr text-[11px] text-alert">배치를 저장하지 못했다 — {saveError}</p>
+            <p className="kr text-[13px] text-alert">배치를 저장하지 못했습니다 — {saveError}</p>
           )}
 
-          {blocks.map((metric) => (
-            <MetricCard
-              key={`${metric.source}:${metric.key}`}
-              metric={metric}
-              stale={stale}
-              onSelect={() => promote(metric.key)}
-              drag={{
-                dragging: dragKey === metric.key,
-                onStart: () => setDragKey(metric.key),
-                onEnter: () => {
-                  if (dragKey && dragKey !== metric.key) {
-                    setDraft(move(keys, dragKey, metric.key))
-                  }
-                },
-                onEnd: finishDrag,
-              }}
-            />
-          ))}
+          {/* 카메라는 사이드바 안이다. 큰 숫자 옆에 두면 초광폭에서 단위(bpm)를
+              가리고, 사이드바는 두 줄이 된 뒤로 아래쪽이 통째로 비어 있었다.
+              맨 뒤에 두는 이유: 카메라가 카드보다 높아서 같은 줄에 선 카드가
+              덩달아 늘어난다. 마지막 줄에 혼자 두면 늘어날 짝이 없다. */}
+          <div className="grid gap-3 2xl:grid-cols-2">
+            {blocks.map((metric) => (
+              <MetricCard
+                key={`${metric.source}:${metric.key}`}
+                metric={metric}
+                stale={stale}
+                onSelect={() => promote(metric.key)}
+                drag={{
+                  dragging: dragKey === metric.key,
+                  onStart: () => setDragKey(metric.key),
+                  onEnter: () => {
+                    if (dragKey && dragKey !== metric.key) {
+                      setDraft(move(keys, dragKey, metric.key))
+                    }
+                  },
+                  onEnd: finishDrag,
+                }}
+              />
+            ))}
+            <CameraPanel />
+          </div>
 
           <div className="mt-1">
             <InterventionLog events={snapshot.interventions} />
@@ -191,7 +197,7 @@ export function Kiosk() {
       <SignalBanner state={heroState} warmingUp={warmingUp} />
 
       <footer className="border-t-[0.5px] border-gold/15">
-        <div className="kr mx-auto flex w-full max-w-shell items-center justify-between px-6 py-3 text-[11px] text-faint md:px-10">
+        <div className="kr mx-auto flex w-full max-w-shell items-center justify-between px-6 py-3 text-[13px] text-faint md:px-10">
           <span className="tnum">
             지표 {snapshot.metrics.length} · 이력 {history.length}틱
           </span>

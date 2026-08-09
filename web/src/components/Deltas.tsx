@@ -16,16 +16,16 @@ export function Deltas({
 }) {
   // after 가 없으면 없는 걸 0 으로 채우지 않는다 (README §0-4).
   if (after === null) {
-    return <p className="kr text-[10px] text-faint">{pending}</p>
+    return <p className="kr text-[12px] text-faint">{pending}</p>
   }
 
   const keys = Object.keys(before).filter((key) => key in after)
   if (keys.length === 0) {
-    return <p className="kr text-[10px] text-faint">측정값 없음</p>
+    return <p className="kr text-[12px] text-faint">측정값 없음</p>
   }
 
   return (
-    <div className="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[10px] text-faint">
+    <div className="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[12px] text-faint">
       {keys.map((key) => (
         <span key={key} className="tnum">
           <span className="kr">{deltaLabel(key)}</span> {before[key]} →{' '}

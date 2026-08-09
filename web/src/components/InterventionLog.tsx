@@ -14,10 +14,10 @@ const ICON: Record<string, typeof Lightbulb> = {
 export function InterventionLog({ events }: { events: InterventionEvent[] }) {
   return (
     <section className="rounded-lg border-[0.5px] border-gold/15 bg-panel px-4 py-3">
-      <h2 className="kr mb-2 text-[12px] font-medium text-muted">개입 기록</h2>
+      <h2 className="kr mb-2 text-[15px] font-medium text-muted">개입 기록</h2>
 
       {events.length === 0 ? (
-        <p className="kr text-[11px] text-faint">아직 개입이 없다</p>
+        <p className="kr text-[13px] text-faint">아직 개입이 없습니다</p>
       ) : (
         <ul className="flex flex-col gap-2.5">
           {events.slice(0, 4).map((event) => (
@@ -40,17 +40,17 @@ function Row({ event }: { event: InterventionEvent }) {
   return (
     <li className="flex flex-col gap-1 border-t-[0.5px] border-gold/10 pt-2 first:border-t-0 first:pt-0">
       <div className="flex items-center justify-between gap-2">
-        <span className="kr flex min-w-0 items-center gap-1.5 text-[12px] text-fg">
+        <span className="kr flex min-w-0 items-center gap-1.5 text-[15px] text-fg">
           <Icon className="h-3.5 w-3.5 shrink-0 text-gold" />
           <span className="truncate">{ACTION_LABEL[event.action] ?? event.action}</span>
-          <span className="shrink-0 rounded-full border border-gold/30 px-1.5 py-[1px] font-mono text-[10px] text-gold">
+          <span className="shrink-0 rounded-full border border-gold/30 px-1.5 py-[1px] font-mono text-[12px] text-gold">
             {event.level}
           </span>
         </span>
-        <span className="tnum shrink-0 font-mono text-[10px] text-faint">{time}</span>
+        <span className="tnum shrink-0 font-mono text-[12px] text-faint">{time}</span>
       </div>
 
-      <p className="kr text-[11px] leading-snug text-muted">{event.trigger}</p>
+      <p className="kr text-[13px] leading-snug text-muted">{event.trigger}</p>
       {/* 지금 도는 개입이라 평가 창이 아직 안 끝났을 수 있다. */}
       <Deltas before={event.before} after={event.after} pending="효과 측정 중" />
     </li>

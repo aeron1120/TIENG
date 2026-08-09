@@ -72,7 +72,7 @@ export function MetricCard({
 
       <header className="flex min-w-0 items-center justify-between gap-2">
         <span
-          className={`kr flex min-w-0 items-center gap-1.5 text-[12px] font-medium ${
+          className={`kr flex min-w-0 items-center gap-1.5 text-[15px] font-medium ${
             dim ? 'text-faint' : 'text-muted'
           }`}
         >
@@ -85,13 +85,13 @@ export function MetricCard({
       <div className="mt-2.5 flex items-baseline gap-1.5">
         {shown === null ? (
           // 값이 없다는 사실 자체가 정보다. 숫자처럼 보이면 안 된다.
-          <span className="text-[26px] leading-none font-extralight text-faint/70">—</span>
+          <span className="text-[30px] leading-none font-extralight text-faint/70">—</span>
         ) : (
           <>
-            <span className="tnum text-[30px] leading-none font-light tracking-[-0.02em] text-fg">
+            <span className="tnum text-[34px] leading-none font-light tracking-[-0.02em] text-fg">
               {shown}
             </span>
-            {metric.unit && <span className="font-mono text-[11px] text-muted">{metric.unit}</span>}
+            {metric.unit && <span className="font-mono text-[13px] text-muted">{metric.unit}</span>}
           </>
         )}
       </div>
@@ -107,7 +107,7 @@ export function MetricCard({
         </div>
       )}
 
-      <footer className="mt-2.5 flex items-center justify-between gap-2 font-mono text-[10px] whitespace-nowrap text-faint">
+      <footer className="mt-2.5 flex items-center justify-between gap-2 font-mono text-[12px] whitespace-nowrap text-faint">
         <span className="truncate">{metric.source}</span>
         {warmingUp ? (
           <span className="kr shrink-0">준비 {Math.round((metric.progress ?? 0) * 100)}%</span>

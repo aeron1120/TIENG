@@ -5,10 +5,10 @@ import type { State } from '../types'
 // 눌러서 신호가 좋아지는 장치가 없는데 버튼만 두면 거짓말이 된다. 상태만 알린다.
 
 const MESSAGE: Partial<Record<State, string>> = {
-  stale: '서버 수신이 끊겼다 · 표시된 값은 최신이 아니다',
-  low_quality: '신호 품질이 기준에 못 미쳐 값을 보류하는 중',
-  error: '어댑터에 오류가 발생했다',
-  no_adapter: '연결된 어댑터가 없다',
+  stale: '서버 수신이 끊겼습니다 · 표시된 값은 최신이 아닙니다',
+  low_quality: '신호 품질이 기준에 못 미쳐 값을 보류하고 있습니다',
+  error: '어댑터에 오류가 발생했습니다',
+  no_adapter: '연결된 어댑터가 없습니다',
 }
 
 export function SignalBanner({
@@ -39,7 +39,7 @@ export function SignalBanner({
         }`}
       >
         <Icon className="h-3.5 w-3.5 shrink-0" />
-        <span className="kr text-[12px] font-medium">{message}</span>
+        <span className="kr text-[15px] font-medium">{message}</span>
       </div>
     </div>
   )

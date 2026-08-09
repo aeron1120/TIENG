@@ -21,7 +21,7 @@ const STATE_TONE: Record<State, string> = {
 }
 
 // 한글 라벨이라 자간을 주지 않는다.
-const CHIP = 'kr shrink-0 rounded-full border px-2 py-[3px] text-[11px] leading-none whitespace-nowrap'
+const CHIP = 'kr shrink-0 rounded-full border px-2 py-[3px] text-[13px] leading-none whitespace-nowrap'
 
 export function StateBadge({
   mode,

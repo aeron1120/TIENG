@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from core import quality, thresholds
+from core.adapters import rppg as rppg_module
 from core.adapters.rppg import RppgAdapter
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +89,52 @@ async def test_camera_fault_surfaces_as_exception() -> None:
     adapter._fault = "카메라 프레임을 연속으로 못 읽었다"
     with pytest.raises(RuntimeError):
         await adapter.read()
+
+
+# --- 카메라 소스 ------------------------------------------------------------ #
+# 파이의 CSI 카메라는 libcamera 전용이라 cv2 로 열리지 않는다. 어느 쪽을 물릴지는
+# config 가 정한다. 노출 고정 자체는 실기에서만 확인된다 — 여기서는 백엔드를
+# 고르는 경로와 실패 사유가 올라오는지까지만 본다.
+
+
+def _without_picamera2(monkeypatch: pytest.MonkeyPatch) -> None:
+    """개발 PC 상태를 강제한다. 파이에서 돌려도 결과가 같아야 한다."""
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise ImportError("No module named 'picamera2'")
+
+    monkeypatch.setattr(rppg_module, "_Picamera2Source", boom)
+
+
+def test_picamera2_backend_surfaces_the_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """hwcheck 가 이 문자열을 그대로 찍는다. '카메라를 열 수 없다'로 뭉개면 안 된다."""
+    _without_picamera2(monkeypatch)
+    adapter = RppgAdapter(id="cam", mode="live", backend="picamera2")
+
+    with pytest.raises(RuntimeError, match="picamera2"):
+        adapter._open_camera()
+
+
+def test_auto_backend_falls_back_to_webcam(monkeypatch: pytest.MonkeyPatch) -> None:
+    """개발 PC 에는 picamera2 가 없다. 같은 코드가 웹캠으로 돌아야 한다."""
+    _without_picamera2(monkeypatch)
+    adapter = RppgAdapter(id="cam", mode="live")
+    monkeypatch.setattr(adapter, "_open_opencv", lambda: "webcam")
+
+    assert adapter._open_camera() == "webcam"
+
+
+def test_opencv_backend_does_not_touch_picamera2(monkeypatch: pytest.MonkeyPatch) -> None:
+    """웹캠을 쓰겠다고 못 박았으면 CSI 를 건드리지 않는다."""
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("backend=opencv 인데 picamera2 를 열려고 했다")
+
+    monkeypatch.setattr(rppg_module, "_Picamera2Source", fail)
+    adapter = RppgAdapter(id="cam", mode="live", backend="opencv")
+    monkeypatch.setattr(adapter, "_open_opencv", lambda: "webcam")
+
+    assert adapter._open_camera() == "webcam"
 
 
 # --- quality.py -------------------------------------------------------------- #

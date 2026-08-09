@@ -14,7 +14,10 @@ adapters:
     module: core.adapters.rppg
     mode: live
     # window_s 는 데모 v4 에서 검증된 12초를 쓴다. 10초 아래로 내리면 BPM 이 튄다.
-    params: { camera_index: 0, width: 640, height: 480, window_s: 12 }
+    # backend 는 파이의 CSI 카메라(카메라 모듈 3)라 picamera2 로 못 박는다. auto 로
+    # 두면 picamera2 가 안 열릴 때 조용히 웹캠 경로로 새서 원인을 찾기 어렵다.
+    # USB 웹캠을 물릴 때만 opencv 로 바꾼다.
+    params: { camera_index: 0, width: 640, height: 480, window_s: 12, backend: picamera2 }
   - id: bme680
     module: core.adapters.env_bme680
     mode: live

@@ -66,7 +66,12 @@ exclude = ["legacy"]
 [[tool.mypy.overrides]]
 # scipy/cv2 는 스텁이 불완전하고, 나머지는 파이에서만 설치되는 하드웨어 드라이버라
 # 개발 PC 에는 아예 없다.
-module = ["scipy.*", "cv2.*", "bme680.*", "smbus2.*", "gpiozero.*", "tinytuya.*"]
+module = [
+    "scipy.*", "cv2.*", "bme680.*", "smbus2.*", "gpiozero.*", "tinytuya.*",
+    # picamera2/libcamera 는 pip 이 아니라 apt 로 온다. pi extras 에 넣을 수 없어
+    # venv 를 --system-site-packages 로 만들어야 보인다 (docs/hardware.md §0).
+    "picamera2.*", "libcamera.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

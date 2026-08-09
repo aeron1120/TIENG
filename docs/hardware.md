@@ -11,18 +11,29 @@
 
 ## 0. 파이 준비
 
+이미지는 **Pi OS Bookworm 64-bit**. numpy·scipy·opencv-python 이 aarch64 휠로 바로
+깔린다 — 32비트는 공식 휠이 없어 OpenCV 를 몇 시간 걸려 소스 빌드하게 된다.
+
 ```bash
 sudo raspi-config          # Interface Options → I2C → Enable
 sudo reboot
 
 sudo apt install -y i2c-tools
 git clone <repo> && cd TIENG
-python -m venv .venv && source .venv/bin/activate
+python -m venv --system-site-packages .venv && source .venv/bin/activate
 pip install -e ".[dev,pi]"          # pi extras 가 드라이버를 깐다
 ```
 
 `pi` extras 에 들어 있는 것: `smbus2`, `bme680`, `gpiozero`, `lgpio`, `tinytuya`.
 개발 PC 에서는 설치하지 않는다 (설치도 안 되고 import 도 안 된다).
+
+**`--system-site-packages` 를 빼먹지 말 것.** CSI 카메라가 쓰는 picamera2 는 pip 이
+아니라 apt 로 오는 패키지(`python3-picamera2`)라, 격리된 venv 에서는 안 보인다.
+Pi OS 데스크톱 이미지에는 이미 깔려 있고, Lite 면 `sudo apt install -y python3-picamera2`.
+
+**Legacy Camera 는 켜지 말 것.** 오래된 문서들이 카메라를 쓰려면 raspi-config 에서
+활성화하라고 하는데, 켜면 libcamera 스택이 죽어 picamera2 가 아예 못 돈다. Bookworm 은
+카메라를 자동 인식하므로 여기서 켤 것은 I2C 뿐이다.
 
 ---
 
@@ -48,6 +59,11 @@ pip install -e ".[dev,pi]"          # pi extras 가 드라이버를 깐다
 - I2C 는 **버스를 공유**한다. BME680(0x76)과 BH1750(0x23)을 같은 SDA/SCL 에 물린다.
 - PIR 만 5V 다. OUT 신호는 3.3V 라 GPIO 에 바로 넣어도 된다.
 - 카메라(rPPG)는 CSI 또는 USB. `camera_index` 는 보통 0.
+  - CSI(카메라 모듈 3)는 libcamera 전용이라 `backend: picamera2` 로 연다. Pi 5 는
+    커넥터가 22핀이므로 **15핀↔22핀 변환 케이블**이 필요하다. 배선 전에
+    `rpicam-hello --timeout 5000` 로 카메라가 잡히는지부터 본다.
+  - USB 웹캠이면 `backend: opencv`. 대신 노출·화벨 고정이 드라이버 마음이라
+    신호가 나빠진다.
 
 배선 후 주소가 보이는지 먼저 확인한다:
 

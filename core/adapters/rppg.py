@@ -8,6 +8,10 @@ facemesh ROI·참조 저주파제거는 가져오지 않았다. Phase 2 는 실�
 것과 무관하게 12초 창이 채워져야 하기 때문이다. cv2 블로킹 호출은 전부 그
 스레드 안에 있고, scipy 추정은 executor 로 뺀다 (README §10).
 
+프레임 소스는 두 가지다. 파이의 CSI 카메라는 libcamera 전용이라 picamera2 로 열고,
+개발 PC 의 USB 웹캠은 cv2 로 연다. 둘 다 read()/release() 만 내주므로 캡처 루프는
+어느 쪽이 물렸는지 모른다.
+
 원본 영상은 저장하지 않는다. 프레임은 ROI 평균 RGB 3개 숫자로 줄인 뒤 즉시
 버린다 (README §1 비목표).
 
@@ -48,6 +52,7 @@ MIN_SKIN_PIXELS = 150
 JITTER_SCALE_PX = 6.0  # 이만큼 흔들리면 jitter_norm = 1
 FACE_DETECT_SEC = 0.5  # 매 프레임 검출은 Pi에서 FPS를 깎는다
 READ_FAIL_LIMIT = 30  # 연속 실패가 이만큼이면 카메라가 빠진 것으로 본다
+SETTLE_SEC = 2.0  # 자동 노출/화벨이 수렴할 때까지 기다렸다가 잠근다
 
 PREVIEW_WIDTH = 320  # 얼굴이 ROI 안에 들어왔는지 보는 용도라 이 이상 필요 없다
 PREVIEW_FPS = 10.0
@@ -69,6 +74,8 @@ class RppgAdapter(SensorAdapter):
         width: int = 640,
         height: int = 480,
         window_s: float = WINDOW_SEC,
+        backend: str = "auto",
+        settle_s: float = SETTLE_SEC,
         thresholds_path: str = str(thresholds.DEFAULT_PATH),
     ) -> None:
         super().__init__(id, mode)
@@ -76,6 +83,10 @@ class RppgAdapter(SensorAdapter):
         self.width = width
         self.height = height
         self.window_s = window_s
+        # "auto" 는 picamera2 를 먼저 보고 없으면 cv2 로 내려간다. 파이 config 는
+        # "picamera2" 로 못 박는다 — 조용히 웹캠 경로로 새면 왜 안 되는지 찾기 어렵다.
+        self.backend = backend
+        self.settle_s = settle_s
         self.thresholds_path = Path(thresholds_path)
 
         self._cap: Any = None
@@ -147,6 +158,19 @@ class RppgAdapter(SensorAdapter):
     # --- 캡처 스레드 ------------------------------------------------------ #
 
     def _open_camera(self) -> Any:
+        """프레임 소스를 연다. 어느 쪽이든 read()/release() 만 내준다."""
+        if self.backend == "opencv":
+            return self._open_opencv()
+        try:
+            return _Picamera2Source(self.camera_index, self.width, self.height, self.settle_s)
+        except Exception as exc:
+            if self.backend == "picamera2":
+                # 사유를 그대로 올린다. hwcheck 가 이걸 그대로 찍어야 쓸모가 있다.
+                raise RuntimeError(f"picamera2 를 열 수 없다: {exc}") from exc
+            log.info("rppg.picamera2_unavailable", adapter=self.id, error=str(exc))
+        return self._open_opencv()
+
+    def _open_opencv(self) -> Any:
         backends: list[int] = []
         if platform.system().lower().startswith("win"):
             backends += [cv2.CAP_DSHOW, cv2.CAP_MSMF]
@@ -373,6 +397,86 @@ class RppgAdapter(SensorAdapter):
             progress=round(progress, 3),
             ts=server_now(),
         )
+
+
+# --------------------------------------------------------------------------- #
+# 카메라 소스
+# --------------------------------------------------------------------------- #
+class _Picamera2Source:
+    """CSI 카메라(libcamera) 프레임 소스.
+
+    카메라 모듈 3 은 Bookworm 에서 libcamera 전용이라 cv2.VideoCapture 로 열리지
+    않는다. cv2 와 같은 read()/release() 를 내주므로 캡처 루프는 그대로 쓴다.
+
+    여는 즉시 노출·화이트밸런스·초점을 고정한다. rPPG 가 보는 건 피부 RGB 의
+    0.1~1% 변동이라 자동 보정이 매 프레임 개입하면 신호보다 큰 잡음이 얹힌다
+    (legacy/tieng_rppg/confidence/example_wiring.py 가 웹캠에서 첫 번째로 꼽던 것).
+    고정값을 코드에 박지 않고 settle_s 동안 수렴시킨 뒤 그 값을 읽어 잠그므로 방
+    밝기가 달라도 따라간다. 웹캠에서는 이게 드라이버마다 먹거나 안 먹었지만
+    (rppg_demo_v4 의 --force-lock-exposure) 여기서는 확정적이다.
+    """
+
+    def __init__(self, camera_index: int, width: int, height: int, settle_s: float) -> None:
+        from picamera2 import Picamera2  # 파이에서만 있다 (apt python3-picamera2)
+
+        self._picam = Picamera2(camera_index)
+        # "RGB888" 을 달라고 하면 넘어오는 배열의 채널 순서는 B,G,R 이다. libcamera
+        # 포맷 이름이 바이트 역순이라 그렇다. cv2 가 기대하는 순서와 같아서 아래
+        # 피부마스크·POS 를 그대로 쓴다. 뒤집으면 피부가 안 잡혀 값이 영영 안 나온다.
+        self._picam.configure(
+            self._picam.create_video_configuration(
+                main={"size": (width, height), "format": "RGB888"},
+                # 추정은 어차피 30Hz 격자로 다시 샘플링한다(FS_RESAMPLE). 그보다 빨리
+                # 받아 봐야 파이에서 CPU 만 먹는다.
+                controls={"FrameDurationLimits": (33333, 33333)},
+            )
+        )
+        self._picam.start()
+        self._freeze(settle_s)
+
+    def _freeze(self, settle_s: float) -> None:
+        from libcamera import controls as libcontrols  # picamera2 가 딸고 온다
+
+        available = self._picam.camera_controls
+
+        # 초점부터. AF 가 계속 초점을 찾으면 ROI 선명도가 프레임마다 달라져 그대로
+        # 신호에 들어온다. 한 번 맞추고 그 자리에 세운다.
+        if "AfMode" in available:
+            self._picam.set_controls({"AfMode": libcontrols.AfModeEnum.Auto})
+            self._picam.autofocus_cycle()
+
+        time.sleep(settle_s)
+        md = self._picam.capture_metadata()
+
+        locked: dict[str, Any] = {"AeEnable": False, "AwbEnable": False}
+        for key in ("ExposureTime", "AnalogueGain", "ColourGains"):
+            if key in md:
+                locked[key] = md[key]
+        if "AfMode" in available:
+            locked["AfMode"] = libcontrols.AfModeEnum.Manual
+            if "LensPosition" in md:
+                locked["LensPosition"] = md["LensPosition"]
+        self._picam.set_controls(locked)
+
+        log.info(
+            "rppg.camera_locked",
+            exposure_us=md.get("ExposureTime"),
+            gain=md.get("AnalogueGain"),
+            lens=md.get("LensPosition"),
+        )
+
+    def read(self) -> tuple[bool, np.ndarray | None]:
+        # 예외를 삼키고 False 를 주는 건 cv2 와 계약을 맞추기 위해서다. 연속 실패는
+        # 캡처 루프가 READ_FAIL_LIMIT 로 세어 카메라가 빠진 것으로 처리한다.
+        try:
+            return True, self._picam.capture_array("main")
+        except Exception as exc:
+            log.debug("rppg.capture_failed", error=str(exc))
+            return False, None
+
+    def release(self) -> None:
+        self._picam.stop()
+        self._picam.close()
 
 
 # --------------------------------------------------------------------------- #

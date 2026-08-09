@@ -14,9 +14,11 @@ demo:
     l4_guardian:
       # 개발 중에는 두 경로를 다 본다. 실사용 프로파일은 지표 이상만 켠다.
       triggers: [abnormal_hr, measurement_lost]
-      lost_sustain_s: 60   # 사람은 있는데 심박수를 이만큼 못 잡으면
+      # L1 이 불을 켜 두면 방이 다시 어두워지지 않아 mock 에서는 이 조건이
+      # 사실상 안 걸린다. demo 는 hr 이탈(excursion)로 L4 를 보여 준다.
+      lost_sustain_s: 25   # 사람은 있는데 심박수를 이만큼 못 잡으면
       cancel_window_s: 30  # 보내기 전 취소할 수 있는 시간
-      cooldown_s: 600
+      cooldown_s: 180      # 시연 중 여러 번 볼 수 있게 짧게
 
 production:
   hr: { low: 45, high: 120, sustain_s: 120 }

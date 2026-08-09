@@ -24,7 +24,10 @@ adapters:
     mode: simulated
     # warmup_s 는 rPPG 가 창을 채우는 8초를 재현한다. 카메라 없이도 화면의
     # 진행률 표시가 도는지 볼 수 있다.
-    params: { base_bpm: 68, noise: 1.5, warmup_s: 8 }
+    # excursion_* 는 L4 보호자 알림을 하드웨어 없이 보기 위한 것이다.
+    # 120초마다 40초 동안 108bpm 으로 올라가 demo 대역(55~95) 밖으로 나간다.
+    params: { base_bpm: 68, noise: 1.5, warmup_s: 8,
+              excursion_bpm: 108, excursion_every_s: 120, excursion_for_s: 40 }
   - id: rr_estimator
     module: core.adapters.rr_mock
     mode: simulated

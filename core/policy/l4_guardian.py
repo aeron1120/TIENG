@@ -134,6 +134,13 @@ class L4Guardian(InterventionPolicy):
         accepted=None 이 "사용자 확인 대기 중"이라는 뜻이고 (README §2 계약),
         화면은 이걸 보고 취소 버튼을 띄운다.
         """
+        # 지속 타이머를 여기서 리셋한다. 쿨다운 동안에는 runner 가 should_fire 를
+        # 아예 부르지 않아 타이머가 갱신되지 않는데, 리셋하지 않으면 쿨다운이
+        # 풀리는 순간 낡은 시작 시각으로 "이미 오래 지속됨"이 되어 곧바로 다시
+        # 발화한다. 실제로 쿨다운 180초 뒤에 "206초 동안 측정하지 못함"으로
+        # 재발화하는 걸 확인했다. 다음 발화는 처음부터 다시 지속돼야 한다.
+        self._reset()
+
         return InterventionEvent(
             id=uuid.uuid4().hex[:12],
             level=self.level,

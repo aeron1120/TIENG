@@ -12,6 +12,11 @@ rPPG 의 핵심 성질 두 가지를 흉내 낸다.
 warmup_s 를 주면 그 구간을 재현하므로 카메라 없이도 진행률 표시를 볼 수 있다.
 기본값이 0 인 것은 이 성질을 원하는 쪽(데모 config)만 켜라는 뜻이다.
 
+여기에 더해 **주기적으로 대역 밖으로 나가는** 구간을 만들 수 있다 (excursion_*).
+L4 보호자 알림을 하드웨어 없이 보려면 이게 필요하다. env_mock 이 조도를 떨어뜨려
+L1 을 보여 주는 것과 같은 장치다 — 다만 L1 이 불을 켜 놓으면 방이 다시 어두워지지
+않아서 조도로는 L4 를 만들 수 없다. 그래서 심박수 쪽에 따로 둔다.
+
 값은 실측이 아니다. config 에서 mode 를 live 로 주지 말 것.
 """
 
@@ -43,6 +48,10 @@ class HeartRateMock(SensorAdapter):
         conf_bright: float = 0.88,
         # 첫 값이 나오기까지의 초. 0 이면 준비 구간 없이 바로 낸다.
         warmup_s: float = 0.0,
+        # 주기적으로 이 값까지 올라간다. 0 이면 대역을 벗어나지 않는다.
+        excursion_bpm: float = 0.0,
+        excursion_every_s: int = 0,
+        excursion_for_s: int = 0,
         thresholds_path: str = str(thresholds.DEFAULT_PATH),
     ) -> None:
         super().__init__(id, mode)
@@ -53,6 +62,9 @@ class HeartRateMock(SensorAdapter):
         self.conf_dark = conf_dark
         self.conf_bright = conf_bright
         self.warmup_s = warmup_s
+        self.excursion_bpm = excursion_bpm
+        self.excursion_every_s = excursion_every_s
+        self.excursion_for_s = excursion_for_s
         self.thresholds_path = Path(thresholds_path)
         self._tick = 0
         self._gate = 0.4
@@ -81,8 +93,20 @@ class HeartRateMock(SensorAdapter):
             # 품질 미달이면 값을 지어내지 않고 보류한다 (README §0-4).
             return [self._metric(None, confidence, "low_quality", progress)]
 
-        bpm = self.base_bpm + 3.0 * math.sin(self._tick / 40.0) + random.gauss(0, self.noise)
+        bpm = self._baseline() + 3.0 * math.sin(self._tick / 40.0) + random.gauss(0, self.noise)
         return [self._metric(round(bpm, 1), confidence, "ok", progress)]
+
+    def _baseline(self) -> float:
+        """평소에는 base_bpm, 이탈 구간에는 excursion_bpm.
+
+        구간을 주기 뒷부분에 둔다. 켜자마자 이상이 뜨면 "정상 → 악화 → 개입"
+        순서를 보여줄 수 없다 (env_mock 의 어두운 구간과 같은 이유).
+        """
+        if self.excursion_every_s <= 0 or self.excursion_bpm <= 0:
+            return self.base_bpm
+        phase = self._tick % self.excursion_every_s
+        away = phase >= (self.excursion_every_s - self.excursion_for_s)
+        return self.excursion_bpm if away else self.base_bpm
 
     def _confidence(self, lux: float) -> float:
         if lux <= self.dark_lux:

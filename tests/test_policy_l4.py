@@ -184,3 +184,24 @@ async def test_runner_cancels_only_while_pending() -> None:
     assert runner.cancel("abc123") is True
     assert runner.recent[0].accepted is False
     assert runner.cancel("없는id") is False
+
+
+async def test_timer_restarts_after_firing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """쿨다운 동안 should_fire 는 불리지 않는다. 타이머를 안 끊으면 쿨다운이 풀리는
+    순간 낡은 시작 시각으로 곧바로 재발화한다."""
+    policy = _policy(FakeNotifier(), triggers=["abnormal_hr"])
+    clock = [1000.0]
+    monkeypatch.setattr("core.policy.l4_guardian.time.monotonic", lambda: clock[0])
+
+    policy.should_fire(_snapshot(hr=140))
+    clock[0] += 3.0
+    assert policy.should_fire(_snapshot(hr=140)) is True
+    await policy.fire(_snapshot(hr=140))
+
+    # 쿨다운이 흐르는 동안 아무도 should_fire 를 부르지 않는다.
+    clock[0] += 600.0
+
+    # 조건이 그대로여도 곧바로 다시 발화하면 안 된다. 처음부터 다시 지속돼야 한다.
+    assert policy.should_fire(_snapshot(hr=140)) is False
+    clock[0] += 3.0
+    assert policy.should_fire(_snapshot(hr=140)) is True

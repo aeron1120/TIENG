@@ -87,7 +87,7 @@ export function Validation() {
 
         {!report.data && !report.error && !report.loading && (
           <Empty>
-            {ready ? '리포트 생성을 누르세요' : '추정 CSV 와 기준 CSV 를 하나씩 고르세요'}
+            {ready ? '리포트 생성을 누르면 된다' : '추정 CSV 와 기준 CSV 를 하나씩 골라야 한다'}
           </Empty>
         )}
 
@@ -128,7 +128,7 @@ function Select({
         onChange={(e) => onChange(e.target.value)}
         className="rounded-md border-[0.5px] border-gold/25 bg-ink px-2.5 py-1.5 font-mono text-[12px] text-fg"
       >
-        <option value="">선택하세요</option>
+        <option value="">선택 안 함</option>
         {options.map((d) => (
           <option key={d.path} value={d.path}>
             {d.name} ({d.size_kb} KB)

@@ -36,7 +36,7 @@ const SECTIONS: Section[] = [
     to: '/live',
     label: '실시간',
     icon: Gauge,
-    desc: '지금 이 방의 지표와 카메라 화면. 블록을 눌러 크게 보고 끌어서 배치를 바꾼다',
+    desc: '지금 이 방의 지표와 카메라 화면. 블록을 눌러 크게 보고 끌어서 배치를 바꿉니다',
   },
   {
     to: '/guardian',
@@ -54,19 +54,19 @@ const SECTIONS: Section[] = [
     to: '/records',
     label: '기록',
     icon: ClipboardList,
-    desc: '개입 이력과 로그 CSV. 발화하지 않은 순간도 사유와 함께 남는다',
+    desc: '개입 이력과 로그 CSV. 발화하지 않은 순간도 사유와 함께 남습니다',
   },
   {
     to: '/selftest',
     label: '자체검증',
     icon: FlaskConical,
-    desc: '계약·품질 게이트·정책 조건을 한 번에 점검한다',
+    desc: '계약·품질 게이트·정책 조건을 한 번에 점검합니다',
   },
   {
     to: '/validation',
     label: '정량검증',
     icon: Ruler,
-    desc: '펄스옥시미터 기준으로 MAE·RMSE·보류율을 낸다',
+    desc: '펄스옥시미터 기준으로 MAE·RMSE·보류율을 냅니다',
   },
 ]
 

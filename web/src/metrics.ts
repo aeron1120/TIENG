@@ -9,7 +9,7 @@ import {
   Volume2,
   Wind,
 } from 'lucide-react'
-import type { Metric, Mode, State } from './types'
+import type { InterventionEvent, Metric, Mode, State } from './types'
 
 export const LABEL: Record<string, string> = {
   hr: '심박수',
@@ -67,6 +67,20 @@ const DERIVED_LABEL: Record<string, string> = { hr_confidence: '신뢰도' }
 
 export function deltaLabel(key: string): string {
   return DERIVED_LABEL[key] ?? LABEL[key] ?? key
+}
+
+// 되돌릴 수 없어서 사용자 확인을 거치는 개입. 확인 전에는 아직 실행되지 않았다.
+const NEEDS_CONFIRMATION = new Set(['notify_guardian'])
+
+/**
+ * 아직 실행되지 않고 취소를 기다리는 중인가.
+ *
+ * 자동 개입도 accepted 가 null 이라 그것만으로는 구분되지 않는다. 구분하지 않으면
+ * 아직 보내지도 않은 알림 옆에 "효과 측정 중"이라고 쓰게 된다 — 측정할 효과가
+ * 아직 없다.
+ */
+export function awaitsConfirmation(event: InterventionEvent): boolean {
+  return event.accepted === null && NEEDS_CONFIRMATION.has(event.action)
 }
 
 export interface Verdict {

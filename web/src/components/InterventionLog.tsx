@@ -1,5 +1,5 @@
 import { Lightbulb, Wind } from 'lucide-react'
-import { ACTION_LABEL } from '../metrics'
+import { ACTION_LABEL, awaitsConfirmation } from '../metrics'
 import type { InterventionEvent } from '../types'
 import { Deltas } from './Deltas'
 
@@ -51,8 +51,11 @@ function Row({ event }: { event: InterventionEvent }) {
       </div>
 
       <p className="kr text-[13px] leading-snug text-muted">{event.trigger}</p>
-      {/* 지금 도는 개입이라 평가 창이 아직 안 끝났을 수 있다. */}
-      <Deltas before={event.before} after={event.after} pending="효과 측정 중" />
+      <Deltas
+        before={event.before}
+        after={event.after}
+        pending={awaitsConfirmation(event) ? '취소 대기 중 · 아직 보내지 않았습니다' : '효과 측정 중'}
+      />
     </li>
   )
 }

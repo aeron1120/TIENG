@@ -7,6 +7,7 @@ import {
   UserRound,
 } from 'lucide-react'
 import { Link, NavLink, Route, Routes } from 'react-router-dom'
+import { PendingAlert } from './components/PendingAlert'
 import { Guardian } from './pages/Guardian'
 import { Home } from './pages/Home'
 import { Kiosk } from './pages/Kiosk'
@@ -92,6 +93,9 @@ export function App() {
     <SnapshotProvider>
       <div className="flex min-h-screen flex-col bg-ink font-sans text-fg">
         <TopBar />
+        {/* 취소 창은 어느 페이지에 있든 보여야 한다. 기록을 보던 중에 보호자에게
+            메일이 나가면 안 된다. */}
+        <PendingAlert />
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/live" element={<Kiosk />} />

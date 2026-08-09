@@ -157,3 +157,61 @@ def test_gate_comes_from_thresholds_yaml() -> None:
     active = thresholds.load(REPO_ROOT / "config" / "thresholds.yaml")
     assert active.profile == "demo"
     assert active.confidence_min == 0.4
+
+
+# --- 미리보기 ------------------------------------------------------------- #
+
+
+class _FakeCamera:
+    """프레임 몇 장을 준 뒤 멈추거나(stop) 고장 나는(fault) 카메라."""
+
+    def __init__(self, adapter: RppgAdapter, frames: int, *, then_fail: bool) -> None:
+        self.adapter = adapter
+        self.left = frames
+        self.then_fail = then_fail
+
+    def read(self) -> tuple[bool, np.ndarray | None]:
+        if self.left <= 0:
+            if not self.then_fail:
+                # 정상 종료. stop() 이 부른 것과 같은 상태로 루프를 빠져나간다.
+                self.adapter._stop.set()
+                return True, np.full((480, 640, 3), 160, dtype=np.uint8)
+            return False, None
+        self.left -= 1
+        return True, np.full((480, 640, 3), 160, dtype=np.uint8)
+
+    def release(self) -> None: ...
+
+
+def _capture(adapter: RppgAdapter, frames: int, *, then_fail: bool = False) -> None:
+    """캡처 루프를 스레드 없이 그 자리에서 돌린다."""
+    adapter._cap = _FakeCamera(adapter, frames, then_fail=then_fail)
+    adapter._capture_loop()
+
+
+def test_preview_is_not_encoded_until_someone_watches() -> None:
+    """아무도 안 보는데 매 프레임 JPEG 을 굽는 건 파이에서 그대로 FPS 손해다."""
+    adapter = RppgAdapter(id="cam", mode="live")
+    _capture(adapter, frames=5)
+
+    assert adapter.preview_jpeg() is None
+
+
+def test_preview_appears_once_requested() -> None:
+    adapter = RppgAdapter(id="cam", mode="live")
+    adapter.request_preview()
+    _capture(adapter, frames=5)
+
+    frame = adapter.preview_jpeg()
+    assert frame is not None
+    assert frame[:2] == b"\xff\xd8"  # JPEG SOI
+
+
+def test_dead_camera_drops_its_last_frame() -> None:
+    """카메라가 빠진 뒤 화면을 연 사람에게 죽은 프레임이 실시간인 척 나가면 안 된다."""
+    adapter = RppgAdapter(id="cam", mode="live")
+    adapter.request_preview()
+    _capture(adapter, frames=3, then_fail=True)
+
+    assert adapter._fault is not None
+    assert adapter.preview_jpeg() is None

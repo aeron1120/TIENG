@@ -179,6 +179,10 @@ class RppgAdapter(SensorAdapter):
                 if failures >= READ_FAIL_LIMIT:
                     with self._lock:
                         self._fault = "카메라 프레임을 연속으로 못 읽었다"
+                        # 마지막 프레임을 버린다. 안 버리면 카메라가 빠진 뒤에
+                        # 화면을 연 사람에게 죽은 프레임이 실시간 영상인 것처럼
+                        # 나간다. 값을 지어내지 않는 것과 같은 이유다 (README §0-4).
+                        self._preview = None
                     return
                 time.sleep(0.01)
                 continue

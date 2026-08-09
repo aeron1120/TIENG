@@ -43,7 +43,11 @@ export function CameraPanel() {
         )}
       </header>
 
-      <div className="relative aspect-[4/3] w-full bg-black">
+      {/* 두 칸을 차지할 때는 영상 옆에 설명을 세운다. 영상 자체를 16:9 로 늘리면
+          위아래가 잘리는데, 책상에 앉으면 얼굴이 화면 아래쪽에 오기 때문에 이마
+          ROI 가 먼저 날아간다. 미리보기는 그걸 확인하라고 있는 화면이다. */}
+      <div className="2xl:flex 2xl:items-stretch">
+        <div className="relative aspect-[4/3] w-full bg-black 2xl:w-[300px] 2xl:shrink-0">
         {!available ? (
           <Notice icon={CameraOff}>
             {status.loading ? '카메라 확인 중' : 'rPPG 어댑터가 올라오면 여기에 화면이 뜹니다'}
@@ -73,14 +77,15 @@ export function CameraPanel() {
         ) : (
           <Notice icon={CameraOff}>미리보기를 껐습니다</Notice>
         )}
-      </div>
+        </div>
 
-      {/* README §1 비목표. 화면에 적어 둔다 — 카메라가 보이는 순간 가장 먼저
-          드는 의문이고, 코드 주석은 쓰는 사람에게 보이지 않는다. */}
-      <p className="kr px-4 py-2 text-[12px] leading-snug text-faint">
-        측정에 쓰는 영역을 함께 표시합니다. 영상은 저장하지 않고 이 기기 밖으로
-        나가지 않습니다.
-      </p>
+        {/* README §1 비목표. 화면에 적어 둔다 — 카메라가 보이는 순간 가장 먼저
+            드는 의문이고, 코드 주석은 쓰는 사람에게 보이지 않는다. */}
+        <p className="kr px-4 py-2 text-[12px] leading-snug text-faint 2xl:flex-1 2xl:self-center 2xl:py-0">
+          측정에 쓰는 영역을 함께 표시합니다. 영상은 저장하지 않고 이 기기 밖으로
+          나가지 않습니다.
+        </p>
+      </div>
     </section>
   )
 }

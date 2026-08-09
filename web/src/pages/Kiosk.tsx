@@ -185,7 +185,9 @@ export function Kiosk() {
                 }}
               />
             ))}
-            <CameraPanel />
+            <div className="2xl:col-span-2">
+              <CameraPanel />
+            </div>
           </div>
 
           <div className="mt-1">

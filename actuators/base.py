@@ -32,6 +32,19 @@ class Actuator(ABC):
 
 
 @runtime_checkable
+class Notifier(Protocol):
+    """사람에게 알릴 수 있는 액추에이터. L4 정책이 이 모양만 알면 된다.
+
+    메일이든 메신저든 정책은 상관하지 않는다. 채널을 바꾸려면 파일 하나를
+    더 떨어뜨리고 config 에서 갈아 끼우면 된다 (README §0-2).
+    """
+
+    id: str
+
+    async def notify(self, subject: str, body: str) -> None: ...
+
+
+@runtime_checkable
 class Switch(Protocol):
     """켜고 끌 수 있는 액추에이터. L1 조명 정책이 이 모양만 알면 된다."""
 

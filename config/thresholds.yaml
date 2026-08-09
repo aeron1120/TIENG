@@ -11,6 +11,12 @@ demo:
       lux_min: 80          # 이보다 어두울 때만 조명이 원인이라고 본다
       cooldown_s: 300      # 껐다 켰다 반복하지 않도록
       evaluate_after_s: 20 # 켠 뒤 이만큼 지나 confidence 를 다시 잰다
+    l4_guardian:
+      # 개발 중에는 두 경로를 다 본다. 실사용 프로파일은 지표 이상만 켠다.
+      triggers: [abnormal_hr, measurement_lost]
+      lost_sustain_s: 60   # 사람은 있는데 심박수를 이만큼 못 잡으면
+      cancel_window_s: 30  # 보내기 전 취소할 수 있는 시간
+      cooldown_s: 600
 
 production:
   hr: { low: 45, high: 120, sustain_s: 120 }
@@ -21,3 +27,10 @@ production:
       lux_min: 60
       cooldown_s: 900
       evaluate_after_s: 30
+    l4_guardian:
+      # measurement_lost 는 뺀다. 센서를 가리거나 자세만 바꿔도 떠서 실사용에서는
+      # 보호자를 너무 자주 부른다. 지표가 실제로 대역을 벗어난 경우만 알린다.
+      triggers: [abnormal_hr]
+      lost_sustain_s: 180
+      cancel_window_s: 30
+      cooldown_s: 1800

@@ -55,6 +55,25 @@ class PolicyRunner:
         """평가를 못 마친 개입은 그대로 둔다. after 가 비어 있는 것도 기록이다."""
         self._pending.clear()
 
+    def cancel(self, event_id: str) -> bool:
+        """대기 중인 개입을 사람이 취소한다.
+
+        되돌릴 수 없는 개입(L4 보호자 알림)은 발화 즉시 실행되지 않고 평가 시각까지
+        기다린다. 그 사이에 이걸 부르면 accepted=False 가 되고, 정책의 evaluate 가
+        그걸 보고 실행하지 않는다.
+
+        이미 평가가 끝난 개입은 취소할 수 없다. 나간 메일은 못 되돌린다.
+        """
+        for i, (policy, event, due) in enumerate(self._pending):
+            if event.id != event_id:
+                continue
+            cancelled = event.model_copy(update={"accepted": False})
+            self._pending[i] = (policy, cancelled, due)
+            self._replace(cancelled)
+            log.info("policy.cancelled", level=policy.level, id=event_id)
+            return True
+        return False
+
     # --- 평가 --------------------------------------------------------------- #
 
     async def _settle(self, snapshot: Snapshot, now: float) -> None:

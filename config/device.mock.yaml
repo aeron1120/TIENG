@@ -39,8 +39,14 @@ actuators:
     module: actuators.tuya_plug
     mode: simulated            # 네트워크를 건드리지 않는다
     params: { simulated_lux_gain: 120 }
+  - id: guardian_email
+    module: actuators.notify_email
+    mode: simulated            # 시뮬레이션에서는 실제로 보내지 않고 로그만 남는다
 
 policies:
   - module: core.policy.l1_light
     enabled: true
     params: { switch_id: room_light }
+  - module: core.policy.l4_guardian
+    enabled: true
+    params: { notifier_id: guardian_email }

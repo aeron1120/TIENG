@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from api.auth import COOKIE, Users
 from api.schemas import Snapshot
 
 log = structlog.get_logger(__name__)
@@ -41,9 +44,20 @@ class Hub:
 
 @router.websocket("/ws")
 async def stream(ws: WebSocket) -> None:
+    # 지표가 실제로 흐르는 통로는 여기다. REST 만 막고 이걸 열어 두면 게이트가 없는
+    # 것과 같다. 라우터 의존성(api/main.py)을 쓰지 않는 이유는 HTTPException 이
+    # 핸드셰이크 중에는 응답으로 옮겨지지 않아서다 — 직접 닫는다.
+    users: Users = ws.app.state.users
+    token = ws.cookies.get(COOKIE)
+    who = await asyncio.to_thread(users.principal, token) if token else None
+    if who is None:
+        log.info("ws.rejected")
+        await ws.close(code=1008)  # policy violation
+        return
+
     hub: Hub = ws.app.state.hub
     await hub.connect(ws)
-    log.info("ws.connected")
+    log.info("ws.connected", role=who.role)
 
     # 최신 스냅샷을 즉시 밀어 첫 화면이 한 틱 동안 비어 있지 않게 한다.
     latest: Snapshot | None = ws.app.state.latest

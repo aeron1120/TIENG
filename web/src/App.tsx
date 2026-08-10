@@ -3,11 +3,16 @@ import {
   ClipboardList,
   FlaskConical,
   Gauge,
+  LogOut,
   Ruler,
+  ShieldCheck,
   UserRound,
 } from 'lucide-react'
-import { Link, NavLink, Route, Routes } from 'react-router-dom'
+import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom'
+import { atLeast, AuthProvider, useAuth, type Role } from './authContext'
 import { PendingAlert } from './components/PendingAlert'
+import { Accounts } from './pages/Accounts'
+import { Gate } from './pages/Gate'
 import { Guardian } from './pages/Guardian'
 import { Home } from './pages/Home'
 import { Kiosk } from './pages/Kiosk'
@@ -20,17 +25,32 @@ import { SnapshotProvider, useFeed } from './snapshotContext'
 // 상단 바 하나를 앱 전체가 공유한다. 어느 페이지에 있든 기기 이름과 수신 상태가
 // 같은 자리에 있어야, 화면을 옮겨 다녀도 "지금 살아 있나"를 다시 찾지 않는다.
 
-const NAV = [
-  { to: '/live', label: '실시간', icon: Gauge },
-  { to: '/guardian', label: '보호자', icon: UserRound },
-  { to: '/system', label: '시스템', icon: Activity },
-  { to: '/records', label: '기록', icon: ClipboardList },
-  { to: '/selftest', label: '자체검증', icon: FlaskConical },
-  { to: '/validation', label: '정량검증', icon: Ruler },
+// min 은 서버가 라우터에 건 등급(api/main.py)과 같아야 한다. 화면에서만 숨기면
+// 주소를 직접 치는 순간 빈 화면에 401 이 뜬다.
+const NAV: { to: string; label: string; icon: typeof Gauge; min: Role }[] = [
+  { to: '/live', label: '실시간', icon: Gauge, min: 'guest' },
+  { to: '/guardian', label: '보호자', icon: UserRound, min: 'member' },
+  { to: '/system', label: '시스템', icon: Activity, min: 'member' },
+  { to: '/records', label: '기록', icon: ClipboardList, min: 'member' },
+  { to: '/selftest', label: '자체검증', icon: FlaskConical, min: 'member' },
+  { to: '/validation', label: '정량검증', icon: Ruler, min: 'member' },
+  // 계정 화면은 누구나 자기 정보를 고치러 온다. 관리자 전용 목록은 그 안에서 나눈다.
+  { to: '/accounts', label: '계정', icon: ShieldCheck, min: 'member' },
 ]
 
-function TopBar() {
+const PAGES: Record<string, React.ReactElement> = {
+  '/live': <Kiosk />,
+  '/guardian': <Guardian />,
+  '/system': <System />,
+  '/records': <Records />,
+  '/selftest': <Selftest />,
+  '/validation': <Validation />,
+  '/accounts': <Accounts />,
+}
+
+function TopBar({ nav }: { nav: typeof NAV }) {
   const { snapshot, stale } = useFeed()
+  const { principal, logOut } = useAuth()
 
   return (
     <header className="border-b-[0.5px] border-gold/15">
@@ -49,7 +69,7 @@ function TopBar() {
         </Link>
 
         <nav className="flex flex-wrap items-center gap-1">
-          {NAV.map(({ to, label, icon: Icon }) => (
+          {nav.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -82,30 +102,60 @@ function TopBar() {
                 ? '수신 끊김'
                 : new Date(snapshot.ts).toLocaleTimeString('ko-KR')}
           </span>
+          {/* 비회원에게도 나가는 문은 보여야 한다. 태블릿을 여러 사람이 지나가며
+              쓰므로, 다음 사람이 앞사람 세션을 물려받지 않게 한다. */}
+          <button
+            onClick={logOut}
+            title={principal?.username ?? '비회원'}
+            className="kr flex items-center gap-1.5 rounded-md px-2 py-1 text-faint transition-colors hover:bg-white/[0.05] hover:text-muted"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            <span className="max-w-[10ch] truncate">{principal?.username ?? '비회원'}</span>
+          </button>
         </div>
       </div>
     </header>
   )
 }
 
-export function App() {
+function Shell() {
+  const { principal, checking } = useAuth()
+
+  // 첫 조회가 끝나기 전에는 아무것도 그리지 않는다. 여기서 관문을 먼저 띄우면
+  // 이미 로그인해 둔 사람도 새로고침할 때마다 관문이 한 번 번쩍인다.
+  if (checking) return null
+  if (principal === null) return <Gate />
+
+  const nav = NAV.filter((item) => atLeast(principal.role, item.min))
+  const home = principal.role === 'guest' ? <Navigate to="/live" replace /> : <Home />
+
   return (
+    // WebSocket 은 이 안에서만 열린다. 관문 뒤에 두지 않으면 로그인 화면을 띄운
+    // 채로 지표가 흐르고, 서버가 거절할 때마다 1초 간격으로 재연결을 시도한다.
     <SnapshotProvider>
       <div className="flex min-h-screen flex-col bg-ink font-sans text-fg">
-        <TopBar />
+        <TopBar nav={nav} />
         {/* 취소 창은 어느 페이지에 있든 보여야 한다. 기록을 보던 중에 보호자에게
             메일이 나가면 안 된다. */}
-        <PendingAlert />
+        {atLeast(principal.role, 'member') && <PendingAlert />}
         <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/live" element={<Kiosk />} />
-          <Route path="/guardian" element={<Guardian />} />
-          <Route path="/system" element={<System />} />
-          <Route path="/records" element={<Records />} />
-          <Route path="/selftest" element={<Selftest />} />
-          <Route path="/validation" element={<Validation />} />
+          <Route path="/" element={home} />
+          {nav.map(({ to }) => (
+            <Route key={to} path={to} element={PAGES[to]} />
+          ))}
+          {/* 권한 밖 주소를 직접 치면 볼 수 있는 화면으로 돌려보낸다. 빈 화면에
+              401 을 띄우는 것보다 낫다. */}
+          <Route path="*" element={<Navigate to="/live" replace />} />
         </Routes>
       </div>
     </SnapshotProvider>
+  )
+}
+
+export function App() {
+  return (
+    <AuthProvider>
+      <Shell />
+    </AuthProvider>
   )
 }

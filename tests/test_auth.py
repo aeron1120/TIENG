@@ -1,0 +1,253 @@
+"""계정·세션·권한.
+
+여기서 고정하려는 것은 "누가 무엇을 못 보는가"다. 통과하는 경로보다 막히는 경로가
+중요해서, 등급별로 거절되는 쪽을 먼저 적었다.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from api.auth import AuthError, Users
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture
+def users(tmp_path: Path) -> Users:
+    store = Users(tmp_path / "users.db")
+    store.init()
+    return store
+
+
+@pytest.fixture
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setenv("DEVICE_CONFIG", str(REPO_ROOT / "config" / "device.mock.yaml"))
+    monkeypatch.setenv("TFV_USERS_DB", str(tmp_path / "users.db"))
+    from api.main import app
+
+    return TestClient(app)
+
+
+# --- 저장소 ---
+
+
+def test_the_first_account_is_the_admin(users: Users) -> None:
+    """기기를 처음 켠 사람이 주인이다. 그 뒤로는 전부 member 다."""
+    owner = users.register("owner", "correct horse")
+    nurse = users.register("nurse", "battery staple")
+
+    assert (owner.role, nurse.role) == ("admin", "member")
+    assert owner.active and nurse.active
+
+
+def test_anyone_can_sign_up_and_use_it_at_once(users: Users) -> None:
+    """가입이 열려 있다. 승인을 기다리는 단계가 없다."""
+    users.register("owner", "correct horse")
+    account = users.register("nurse", "battery staple")
+
+    assert account.active is True
+    who = users.principal(users.login("nurse", "battery staple"))
+    assert who is not None and who.role == "member"
+
+
+def test_wrong_password_and_unknown_id_look_the_same(users: Users) -> None:
+    """어느 아이디가 존재하는지 응답으로 알려주지 않는다."""
+    users.register("owner", "correct horse")
+
+    errors = []
+    for name, password in (("owner", "wrong"), ("ghost", "wrong")):
+        with pytest.raises(AuthError) as exc:
+            users.login(name, password)
+        errors.append((exc.value.status, exc.value.detail))
+
+    assert errors[0] == errors[1]
+
+
+def test_blocking_closes_open_sessions(users: Users) -> None:
+    """차단하면 이미 들어와 있던 창도 같이 끊겨야 한다. 안 그러면 안 막힌 것과 같다."""
+    users.register("owner", "correct horse")
+    nurse = users.register("nurse", "battery staple")
+    token = users.login("nurse", "battery staple")
+    assert users.principal(token) is not None
+
+    users.set_active(nurse.id, False)
+    assert users.principal(token) is None
+    with pytest.raises(AuthError) as exc:
+        users.login("nurse", "battery staple")
+    assert exc.value.status == 403
+
+    users.set_active(nurse.id, True)
+    assert users.principal(users.login("nurse", "battery staple")) is not None
+
+
+def test_the_last_admin_cannot_be_blocked(users: Users) -> None:
+    owner = users.register("owner", "correct horse")
+    with pytest.raises(AuthError):
+        users.set_active(owner.id, False)
+
+
+def test_short_credentials_are_refused(users: Users) -> None:
+    with pytest.raises(AuthError):
+        users.register("ab", "correct horse")
+    with pytest.raises(AuthError):
+        users.register("owner", "short")
+
+
+def test_duplicate_id_is_refused(users: Users) -> None:
+    users.register("owner", "correct horse")
+    with pytest.raises(AuthError) as exc:
+        users.register("OWNER", "battery staple")  # 대소문자만 다른 것도 같은 아이디다
+    assert exc.value.status == 409
+
+
+# --- 엔드포인트 ---
+
+
+def test_without_a_session_nothing_opens(client: TestClient) -> None:
+    with client:
+        assert client.get("/api/snapshot").status_code == 401
+        assert client.get("/api/system").status_code == 401
+        assert client.get("/api/layout").status_code == 401
+
+
+def test_guest_sees_the_live_screen_only(client: TestClient) -> None:
+    with client:
+        assert client.post("/api/auth/guest").json() == {"username": None, "role": "guest"}
+
+        assert client.get("/api/snapshot").status_code == 200
+        assert client.get("/api/layout").status_code == 200
+        # 기록·시스템·검증은 계정이 있어야 한다.
+        assert client.get("/api/system").status_code == 403
+        assert client.get("/api/interventions").status_code == 403
+        assert client.get("/api/logs").status_code == 403
+
+
+def test_registering_logs_you_straight_in(client: TestClient) -> None:
+    """가입 응답이 곧 세션이다. 방금 정한 비밀번호를 다시 치게 하지 않는다."""
+    with client:
+        body = client.post(
+            "/api/auth/register", json={"username": "owner", "password": "correct horse"}
+        )
+        assert body.json() == {"username": "owner", "role": "admin"}
+
+        assert client.get("/api/system").status_code == 200
+        assert client.get("/api/interventions").status_code == 200
+
+
+def test_only_an_admin_manages_accounts(client: TestClient) -> None:
+    with client:
+        client.post("/api/auth/guest")
+        assert client.get("/api/auth/users").status_code == 403
+
+        client.post("/api/auth/register", json={"username": "owner", "password": "correct horse"})
+        assert [u["username"] for u in client.get("/api/auth/users").json()] == ["owner"]
+
+
+def test_blocking_flows_through_the_api(client: TestClient) -> None:
+    with client:
+        client.post("/api/auth/register", json={"username": "owner", "password": "correct horse"})
+        client.post("/api/auth/register", json={"username": "nurse", "password": "battery staple"})
+        # 가입이 곧 로그인이라 지금 클라이언트는 nurse 다. 관리자로 돌아간다.
+        client.post("/api/auth/login", json={"username": "owner", "password": "correct horse"})
+
+        nurse = next(u for u in client.get("/api/auth/users").json() if u["username"] == "nurse")
+        after = client.put(f"/api/auth/users/{nurse['id']}/active", json={"active": False}).json()
+        assert next(u for u in after if u["username"] == "nurse")["active"] is False
+
+        client.post("/api/auth/logout")
+        assert (
+            client.post(
+                "/api/auth/login", json={"username": "nurse", "password": "battery staple"}
+            ).status_code
+            == 403
+        )
+
+
+def test_an_admin_cannot_block_themselves_out(client: TestClient) -> None:
+    with client:
+        client.post("/api/auth/register", json={"username": "owner", "password": "correct horse"})
+        owner = client.get("/api/auth/users").json()[0]
+        assert (
+            client.put(f"/api/auth/users/{owner['id']}/active", json={"active": False}).status_code
+            == 400
+        )
+
+
+def test_logout_drops_the_session(client: TestClient) -> None:
+    with client:
+        client.post("/api/auth/guest")
+        assert client.get("/api/snapshot").status_code == 200
+
+        client.post("/api/auth/logout")
+        assert client.get("/api/auth/me").json() is None
+        assert client.get("/api/snapshot").status_code == 401
+
+
+# --- 프로필 ---
+
+
+def test_profile_starts_empty_and_survives_a_save(client: TestClient) -> None:
+    """아직 안 적은 사람에게는 빈 양식을 준다. 없는 값을 지어내지 않는다."""
+    with client:
+        client.post("/api/auth/register", json={"username": "owner", "password": "correct horse"})
+        assert client.get("/api/auth/profile").json()["display_name"] == ""
+
+        saved = client.put(
+            "/api/auth/profile",
+            json={"display_name": "김정민", "sex": "남성", "guardian_email": "mom@example.com"},
+        ).json()
+        assert saved["display_name"] == "김정민"
+        assert saved["updated_at"] is not None  # 서버가 시각을 채운다
+        assert saved["phone"] == ""  # 안 적은 칸은 빈 채로
+
+        assert client.get("/api/auth/profile").json()["guardian_email"] == "mom@example.com"
+
+
+def test_a_profile_belongs_to_the_session_not_the_body(client: TestClient) -> None:
+    """본문으로 남의 계정을 가리킬 수 없다. 어느 계정인지는 쿠키가 정한다."""
+    with client:
+        client.post("/api/auth/register", json={"username": "owner", "password": "correct horse"})
+        client.put("/api/auth/profile", json={"display_name": "주인"})
+
+        client.post("/api/auth/register", json={"username": "nurse", "password": "battery staple"})
+        client.put("/api/auth/profile", json={"display_name": "간호사", "username": "owner"})
+
+        assert client.get("/api/auth/profile").json()["display_name"] == "간호사"
+        client.post("/api/auth/login", json={"username": "owner", "password": "correct horse"})
+        assert client.get("/api/auth/profile").json()["display_name"] == "주인"
+
+
+def test_a_guest_has_no_profile(client: TestClient) -> None:
+    with client:
+        client.post("/api/auth/guest")
+        assert client.get("/api/auth/profile").status_code == 403
+        assert client.put("/api/auth/profile", json={"display_name": "x"}).status_code == 403
+
+
+def test_profile_caps_what_it_will_store(client: TestClient) -> None:
+    """클라이언트가 준 값을 그대로 디스크에 쓰는 경로다 (core/layout.py 와 같은 이유)."""
+    with client:
+        client.post("/api/auth/register", json={"username": "owner", "password": "correct horse"})
+        assert client.put("/api/auth/profile", json={"phone": "0" * 200}).status_code == 422
+        assert client.put("/api/auth/profile", json={"notes": "가" * 3000}).status_code == 422
+
+
+def test_websocket_refuses_a_session_less_client(client: TestClient) -> None:
+    """지표가 실제로 흐르는 통로. REST 만 막고 여기를 열어 두면 게이트가 없는 것과 같다."""
+    from starlette.websockets import WebSocketDisconnect
+
+    with client:
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/ws") as ws:
+                ws.receive_text()
+
+
+def test_websocket_accepts_a_guest(client: TestClient) -> None:
+    with client:
+        client.post("/api/auth/guest")
+        with client.websocket_connect("/ws") as ws:
+            assert "device_id" in ws.receive_json()

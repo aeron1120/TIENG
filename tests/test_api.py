@@ -8,17 +8,19 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from api.auth import Users
 from core.adapters.hr_mock import HeartRateMock
+from tests.conftest import sign_in
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def client(monkeypatch: pytest.MonkeyPatch, account_db: Users) -> TestClient:
     monkeypatch.setenv("DEVICE_CONFIG", str(REPO_ROOT / "config" / "device.mock.yaml"))
     from api.main import app
 
-    return TestClient(app)
+    return sign_in(TestClient(app), account_db)
 
 
 def snapshot_body(client: TestClient, timeout_s: float = 5.0) -> dict[str, Any]:

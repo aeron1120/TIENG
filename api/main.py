@@ -10,9 +10,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import structlog
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
+from api import auth
+from api.auth import Users, require
+from api.routes.auth import admin as auth_admin_router
+from api.routes.auth import router as auth_router
 from api.routes.camera import router as camera_router
 from api.routes.diagnostics import router as diagnostics_router
 from api.routes.export import router as export_router
@@ -34,6 +38,11 @@ DEFAULT_CONFIG = Path("config/device.yaml")
 
 def _config_path() -> Path:
     return Path(os.environ.get("DEVICE_CONFIG") or DEFAULT_CONFIG)
+
+
+def _users_path() -> Path:
+    # 기기 설정(config)이 아니라 사용 흔적이라 state/ 에 둔다 — layout.json 과 같은 자리.
+    return Path(os.environ.get("TFV_USERS_DB") or auth.DEFAULT_PATH)
 
 
 async def _sample_loop(app: FastAPI) -> None:
@@ -79,6 +88,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     registry = Registry.from_yaml(path)
     await registry.start()
 
+    users = Users(_users_path())
+    users.init()
+    app.state.users = users
+
     metrics_csv = _open_log(MetricCsvLogger, registry.config.metrics_csv, "metrics_csv")
     interventions_csv = _open_log(
         InterventionCsvLogger, registry.config.interventions_csv, "interventions_csv"
@@ -117,14 +130,25 @@ def _open_log(cls: type, path: str | None, name: str):  # type: ignore[no-untype
 
 
 app = FastAPI(title="TouchFree Vitals", lifespan=lifespan)
-app.include_router(snapshot_router)
-app.include_router(interventions_router)
-app.include_router(system_router)
-app.include_router(export_router)
-app.include_router(diagnostics_router)
-app.include_router(camera_router)
-app.include_router(layout_router)
-app.include_router(ws_router)
+
+# 어떤 화면이 어디까지 보는지를 한군데서 읽히게 한다. 엔드포인트마다 데코레이터를
+# 달면 권한이 여덟 파일에 흩어져서, 라우터를 하나 추가할 때 빠뜨려도 티가 안 난다.
+#
+# guest  비회원. 지금 이 방의 상태만 본다.
+# member 승인된 계정. 기록·설정·검증까지.
+guest = [Depends(require("guest"))]
+member = [Depends(require("member"))]
+
+app.include_router(auth_router)
+app.include_router(auth_admin_router)
+app.include_router(snapshot_router, dependencies=guest)
+app.include_router(camera_router, dependencies=guest)
+app.include_router(layout_router, dependencies=guest)
+app.include_router(interventions_router, dependencies=member)
+app.include_router(system_router, dependencies=member)
+app.include_router(export_router, dependencies=member)
+app.include_router(diagnostics_router, dependencies=member)
+app.include_router(ws_router)  # 세션 확인은 api/ws.py 안에서 한다
 
 # 빌드된 화면은 코드 옆에 있다. 서버를 어디서 띄우든 같은 곳을 봐야 하므로
 # cwd 가 아니라 이 파일 기준으로 잡는다 (config 경로와 달리 기기 설정이 아니다).

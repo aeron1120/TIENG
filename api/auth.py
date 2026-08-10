@@ -149,6 +149,18 @@ class AuthError(Exception):
         self.detail = detail
 
 
+def check_username(username: str) -> str:
+    """가입 규칙에 맞게 다듬은 아이디. 어긋나면 AuthError.
+
+    가입과 중복확인이 같은 규칙을 봐야 한다. 규칙을 두 군데 적어 두면 화면에서는
+    "쓸 수 있다"고 해 놓고 제출할 때 거절하는 일이 생긴다.
+    """
+    username = username.strip()
+    if not (3 <= len(username) <= 32):
+        raise AuthError(400, "아이디는 3~32자여야 한다")
+    return username
+
+
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
     digest = hashlib.scrypt(password.encode(), salt=salt, n=_N, r=_R, p=_P)
@@ -200,9 +212,7 @@ class Users:
         기기를 처음 켠 사람이 주인이라고 본다. 그 뒤로는 등급이 member 로 같고,
         관리자와의 차이는 계정을 차단할 수 있는지 하나뿐이다.
         """
-        username = username.strip()
-        if not (3 <= len(username) <= 32):
-            raise AuthError(400, "아이디는 3~32자여야 한다")
+        username = check_username(username)
         if len(password) < 8:
             raise AuthError(400, "비밀번호는 8자 이상이어야 한다")
 
@@ -228,6 +238,12 @@ class Users:
 
         log.info("auth.registered", username=username, role=role)
         return Account(id=user_id, username=username, role=role, active=True, created_at=now)
+
+    def taken(self, username: str) -> bool:
+        """이미 있는 아이디인가. 대소문자는 가리지 않는다 (users.username 이 NOCASE)."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone()
+        return row is not None
 
     def login(self, username: str, password: str) -> str:
         """세션 토큰. 아이디가 없어도 비밀번호가 틀려도 같은 말을 돌려준다."""

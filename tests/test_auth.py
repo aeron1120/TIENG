@@ -138,6 +138,22 @@ def test_registering_logs_you_straight_in(client: TestClient) -> None:
         assert client.get("/api/interventions").status_code == 200
 
 
+def test_availability_answers_before_the_form_is_submitted(client: TestClient) -> None:
+    """가입 화면이 치는 동안 묻는 경로. 가입할 때의 판정과 같은 답이어야 한다."""
+    with client:
+        assert client.get("/api/auth/available", params={"username": "owner"}).json() == {
+            "available": True,
+            "detail": "",
+        }
+        client.post("/api/auth/register", json={"username": "owner", "password": "correct horse"})
+
+        after = client.get("/api/auth/available", params={"username": "OWNER"}).json()
+        assert after["available"] is False  # 대소문자만 다른 것도 같은 아이디다
+        # 짧은 아이디는 여기서도 막힌다. 통과시켜 놓고 가입에서 거절하면 안 된다.
+        short = client.get("/api/auth/available", params={"username": "ab"}).json()
+        assert short["available"] is False
+
+
 def test_only_an_admin_manages_accounts(client: TestClient) -> None:
     with client:
         client.post("/api/auth/guest")

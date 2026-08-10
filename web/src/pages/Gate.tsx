@@ -1,5 +1,14 @@
-import { Activity, AlertCircle, ArrowLeft, ArrowRight, Eye, LogIn, UserPlus } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import {
+  Activity,
+  AlertCircle,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Eye,
+  LogIn,
+  UserPlus,
+} from 'lucide-react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useAuth } from '../authContext'
 
 // 앱을 처음 열면 나오는 관문. 여기를 지나기 전에는 WebSocket 도 열지 않는다 —
@@ -10,6 +19,12 @@ import { useAuth } from '../authContext'
 // 경우가 불편해지고, 아무나 다 보게 두면 뒤의 경우가 위험해진다.
 
 type Mode = 'choose' | 'login' | 'register'
+
+/** GET /api/auth/available 의 답. 못 쓰는 아이디면 detail 에 이유가 있다. */
+interface Availability {
+  available: boolean
+  detail: string
+}
 
 const CHOICES = [
   {
@@ -37,6 +52,30 @@ export function Gate() {
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [taken, setTaken] = useState<Availability | null>(null)
+
+  // 아이디가 겹치는지는 치는 동안 물어본다. 비밀번호 확인란과 같은 이유다 — 가입을
+  // 누른 뒤에 "이미 있는 아이디"를 알려 주면 비밀번호까지 다 채운 뒤다.
+  useEffect(() => {
+    const name = username.trim()
+    setTaken(null)
+    if (mode !== 'register' || !name) return
+
+    // 한 글자마다 보내면 아이디 하나 치는 데 열 번을 묻는다. 손이 멎은 뒤에 한 번만.
+    let alive = true
+    const timer = setTimeout(() => {
+      fetch(`/api/auth/available?username=${encodeURIComponent(name)}`)
+        .then((res) => (res.ok ? (res.json() as Promise<Availability>) : null))
+        .then((body) => alive && setTaken(body))
+        // 못 물어봤으면 아무 말도 하지 않는다. 최종 판정은 어차피 가입할 때 서버가 한다.
+        .catch(() => {})
+    }, 400)
+
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [mode, username])
 
   const go = (next: Mode) => {
     setMode(next)
@@ -120,14 +159,36 @@ export function Gate() {
             </div>
           ) : (
             <form onSubmit={submit} className="flex flex-col gap-2.5">
-              <input
-                className={FIELD}
-                placeholder="아이디"
-                autoComplete="username"
-                autoFocus
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-              />
+              <div>
+                <input
+                  className={`${FIELD} ${
+                    taken?.available === false ? 'border-alert/60 focus:border-alert' : ''
+                  }`}
+                  placeholder="아이디"
+                  autoComplete="username"
+                  autoFocus
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  aria-invalid={taken?.available === false}
+                  aria-describedby={taken ? 'username-check' : undefined}
+                />
+                {taken && (
+                  <p
+                    id="username-check"
+                    aria-live="polite"
+                    className={`kr mt-1.5 flex items-center gap-1.5 text-[12px] ${
+                      taken.available ? 'text-gold-soft' : 'text-alert'
+                    }`}
+                  >
+                    {taken.available ? (
+                      <Check className="h-3.5 w-3.5 shrink-0" />
+                    ) : (
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    {taken.available ? '쓸 수 있는 아이디입니다' : taken.detail}
+                  </p>
+                )}
+              </div>
               <input
                 className={FIELD}
                 type="password"
@@ -165,7 +226,7 @@ export function Gate() {
 
               <button
                 type="submit"
-                disabled={busy || incomplete || mismatch}
+                disabled={busy || incomplete || mismatch || taken?.available === false}
                 className="kr mt-1 rounded-md bg-gold px-3.5 py-2.5 text-[14px] font-medium text-ink transition-colors hover:bg-gold-soft disabled:opacity-40"
               >
                 {busy ? '확인 중…' : mode === 'login' ? '로그인' : '가입하고 시작'}

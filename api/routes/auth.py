@@ -22,6 +22,7 @@ from api.auth import (
     Principal,
     Profile,
     Users,
+    check_username,
     current,
     require,
 )
@@ -40,6 +41,11 @@ class Credentials(BaseModel):
 
 class Block(BaseModel):
     active: bool
+
+
+class Availability(BaseModel):
+    available: bool
+    detail: str  # 왜 못 쓰는지. 쓸 수 있으면 빈 문자열
 
 
 def _store(request: Request) -> Users:
@@ -74,6 +80,24 @@ async def enter_as_guest(request: Request, response: Response) -> Principal:
     token = await asyncio.to_thread(_store(request).login_as_guest)
     _set_cookie(response, token)
     return Principal(username=None, role="guest")
+
+
+@router.get("/available", response_model=Availability)
+async def available(request: Request, username: str) -> Availability:
+    """이 아이디를 쓸 수 있는가. 가입 화면이 치는 동안 물어본다.
+
+    있는 계정을 알려 주는 셈이지만 /register 가 이미 409 로 같은 말을 하고 있어서
+    새로 새는 것은 없다. 로그인이 존재 여부를 감추는 것(Users.login)과는 다른
+    얘기다 — 거기서 감추는 것은 "이 아이디의 비밀번호를 맞혀 볼 가치가 있는가"다.
+    """
+    try:
+        name = check_username(username)
+    except AuthError as exc:
+        return Availability(available=False, detail=exc.detail)
+
+    if await asyncio.to_thread(_store(request).taken, name):
+        return Availability(available=False, detail="이미 쓰고 있는 아이디다")
+    return Availability(available=True, detail="")
 
 
 @router.post("/register", response_model=Principal)

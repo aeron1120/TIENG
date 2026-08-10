@@ -26,6 +26,10 @@ dependencies = [
 # 설치도 import 도 실패한다. 어댑터가 이 라이브러리를 start() 안에서 늦게
 # import 하므로, 없으면 해당 카드만 no_adapter 로 뜨고 나머지는 그대로 돈다.
 #   Pi:  uv pip install -e ".[dev,pi]"
+#
+# picamera2(CSI 카메라)는 여기 없다. libcamera 파이썬 바인딩에 묶여 있어 pip 로는
+# 안 깔리고, 넣어 두면 pi extras 설치가 통째로 실패한다. apt 로 깔고 venv 를
+# --system-site-packages 로 만들어 가져온다 (docs/hardware.md §0).
 pi = [
     "smbus2>=0.4",       # BME680 / BH1750 (I2C)
     "bme680>=1.1",       # Pimoroni BME680 드라이버
@@ -66,7 +70,7 @@ exclude = ["legacy"]
 [[tool.mypy.overrides]]
 # scipy/cv2 는 스텁이 불완전하고, 나머지는 파이에서만 설치되는 하드웨어 드라이버라
 # 개발 PC 에는 아예 없다.
-module = ["scipy.*", "cv2.*", "bme680.*", "smbus2.*", "gpiozero.*", "tinytuya.*"]
+module = ["scipy.*", "cv2.*", "bme680.*", "smbus2.*", "gpiozero.*", "tinytuya.*", "picamera2.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

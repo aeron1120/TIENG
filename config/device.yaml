@@ -14,7 +14,8 @@ adapters:
     module: core.adapters.rppg
     mode: live
     # window_s 는 데모 v4 에서 검증된 12초를 쓴다. 10초 아래로 내리면 BPM 이 튄다.
-    params: { camera_index: 0, width: 640, height: 480, window_s: 12 }
+    # backend 는 CSI 리본 카메라라 picamera2. USB 웹캠으로 바꾸면 opencv 로 되돌린다.
+    params: { camera_index: 0, width: 640, height: 480, window_s: 12, backend: picamera2 }
   - id: bme680
     module: core.adapters.env_bme680
     mode: live

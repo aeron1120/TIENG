@@ -69,13 +69,20 @@ class RppgAdapter(SensorAdapter):
         width: int = 640,
         height: int = 480,
         window_s: float = WINDOW_SEC,
+        backend: str = "opencv",
         thresholds_path: str = str(thresholds.DEFAULT_PATH),
     ) -> None:
         super().__init__(id, mode)
+        # 자동 감지하지 않는다. USB 와 CSI 가 둘 다 꽂힌 기기에서 어느 쪽을 고를지
+        # 규칙이 지저분해지고, device.yaml 은 어차피 기기별 파일이라 적어 두는 편이
+        # 낫다. 오타가 조용히 opencv 로 떨어지면 엉뚱한 카메라가 열리므로 여기서 막는다.
+        if backend not in ("opencv", "picamera2"):
+            raise ValueError(f"backend 는 opencv 또는 picamera2 여야 한다: {backend!r}")
         self.camera_index = camera_index
         self.width = width
         self.height = height
         self.window_s = window_s
+        self.backend = backend
         self.thresholds_path = Path(thresholds_path)
 
         self._cap: Any = None
@@ -147,6 +154,9 @@ class RppgAdapter(SensorAdapter):
     # --- 캡처 스레드 ------------------------------------------------------ #
 
     def _open_camera(self) -> Any:
+        if self.backend == "picamera2":
+            return _open_picamera2(self.camera_index, self.width, self.height)
+
         backends: list[int] = []
         if platform.system().lower().startswith("win"):
             backends += [cv2.CAP_DSHOW, cv2.CAP_MSMF]
@@ -373,6 +383,61 @@ class RppgAdapter(SensorAdapter):
             progress=round(progress, 3),
             ts=server_now(),
         )
+
+
+# --------------------------------------------------------------------------- #
+# 카메라 백엔드
+# --------------------------------------------------------------------------- #
+class _Picamera2Capture:
+    """Picamera2 를 cv2.VideoCapture 처럼 보이게 감싼다.
+
+    캡처 루프와 stop() 은 read()/release() 만 쓴다. 그 두 개만 맞춰 주면 나머지
+    코드는 어느 백엔드로 열렸는지 몰라도 된다.
+    """
+
+    __slots__ = ("_camera",)
+
+    def __init__(self, camera: Any) -> None:
+        self._camera = camera
+
+    def read(self) -> tuple[bool, np.ndarray | None]:
+        # 여기서 예외가 새어 나가면 캡처 스레드가 조용히 죽는다. 그러면 _fault 가
+        # 안 잡혀 read() 는 멎은 창을 계속 내보낸다 — 실패는 실패로 보여야 한다.
+        try:
+            return True, self._camera.capture_array()
+        except Exception as exc:
+            log.warning("rppg.picamera2_read_failed", error=str(exc))
+            return False, None
+
+    def release(self) -> None:
+        self._camera.stop()
+        self._camera.close()
+
+
+def _open_picamera2(camera_index: int, width: int, height: int) -> _Picamera2Capture:
+    """CSI 리본 카메라 (Bookworm).
+
+    이 카메라도 /dev/video0 으로 잡히기는 하지만 그건 디베이어 전 raw 프레임이라
+    cv2.VideoCapture 로는 쓸 수 없다. libcamera 를 거치는 Picamera2 로 연다.
+
+    picamera2 는 libcamera 파이썬 바인딩에 묶여 있어 apt 로만 깔린다
+    (python3-picamera2). pi extras 에 넣으면 pip 설치가 통째로 깨지므로 넣지 않고,
+    venv 를 --system-site-packages 로 만들어 가져온다 (docs/hardware.md §0).
+    여기서 늦게 import 하는 것은 다른 드라이버와 같은 이유다 — 없으면 이 카드만
+    죽고 나머지는 그대로 돈다.
+    """
+    from picamera2 import Picamera2
+
+    camera = Picamera2(camera_index)
+    # 포맷 이름은 메모리에 담기는 순서와 반대다. "RGB888" 로 잡아야 실제 바이트가
+    # B,G,R 순으로 와서 cv2 가 기대하는 배열이 그대로 나온다. 뒤집히면 POS 도
+    # 피부 마스크도 조용히 틀리므로, 파이에서 미리보기를 열어 피부가 파랗게 보이지
+    # 않는지 눈으로 확인할 것.
+    camera.configure(
+        camera.create_video_configuration(main={"size": (width, height), "format": "RGB888"})
+    )
+    camera.start()
+    return _Picamera2Capture(camera)
 
 
 # --------------------------------------------------------------------------- #

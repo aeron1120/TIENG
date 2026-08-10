@@ -53,8 +53,9 @@ HINTS = {
         "Pi 5 는 lgpio 가 필요하다: pip install lgpio",
     ],
     "core.adapters.rppg": [
-        "libcamera 카메라면 camera_index 0 이 아닐 수 있다",
-        "v4l2-ctl --list-devices 로 확인",
+        "CSI 리본 카메라면 backend 를 picamera2 로 (opencv 로는 안 열린다)",
+        "rpicam-hello --list-cameras 에 카메라가 보이는지",
+        "USB 웹캠이면 backend 는 opencv, v4l2-ctl --list-devices 로 인덱스 확인",
     ],
     "actuators.tuya_plug": [
         "python -m tinytuya wizard 로 device_id / local_key 를 뽑는다",

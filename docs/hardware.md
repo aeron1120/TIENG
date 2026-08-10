@@ -15,14 +15,21 @@
 sudo raspi-config          # Interface Options → I2C → Enable
 sudo reboot
 
-sudo apt install -y i2c-tools
+sudo apt install -y i2c-tools python3-picamera2
 git clone <repo> && cd TIENG
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev,pi]"          # pi extras 가 드라이버를 깐다
+
+# --system-site-packages 를 빼면 안 된다. picamera2 는 apt 로만 깔리는데,
+# 평범한 venv 는 시스템 패키지를 가려서 CSI 카메라가 통째로 안 보인다.
+python -m venv --system-site-packages .venv && source .venv/bin/activate
+pip install -e ".[dev,pi]"          # pi extras 가 나머지 드라이버를 깐다
 ```
 
 `pi` extras 에 들어 있는 것: `smbus2`, `bme680`, `gpiozero`, `lgpio`, `tinytuya`.
 개발 PC 에서는 설치하지 않는다 (설치도 안 되고 import 도 안 된다).
+
+`picamera2` 는 extras 에 없다. libcamera 파이썬 바인딩에 묶여 있어 pip 로는 안 깔리고,
+넣어 두면 `pi` extras 설치가 통째로 실패한다. 그래서 위처럼 apt 로 깔고 venv 가
+그걸 들여다보게 한다.
 
 ---
 
@@ -47,7 +54,10 @@ pip install -e ".[dev,pi]"          # pi extras 가 드라이버를 깐다
 
 - I2C 는 **버스를 공유**한다. BME680(0x76)과 BH1750(0x23)을 같은 SDA/SCL 에 물린다.
 - PIR 만 5V 다. OUT 신호는 3.3V 라 GPIO 에 바로 넣어도 된다.
-- 카메라(rPPG)는 CSI 또는 USB. `camera_index` 는 보통 0.
+- 카메라(rPPG)는 CSI 또는 USB. `camera_index` 는 보통 0. **어느 쪽인지는
+  `backend` 로 적어 준다** — CSI 리본이면 `picamera2`, USB 웹캠이면 `opencv`.
+  CSI 는 `opencv` 로 안 열린다. `/dev/video0` 으로 잡히긴 하지만 그건 디베이어 전
+  raw 프레임이다. 꽂았으면 `rpicam-hello --list-cameras` 에 보이는지부터 확인한다.
 
 배선 후 주소가 보이는지 먼저 확인한다:
 

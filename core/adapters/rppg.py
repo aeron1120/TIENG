@@ -428,6 +428,15 @@ def _open_picamera2(camera_index: int, width: int, height: int) -> _Picamera2Cap
     """
     from picamera2 import Picamera2
 
+    # 카메라가 없으면 Picamera2 는 "list index out of range" 로 죽는다. 그 메시지만
+    # 보고는 리본이 안 꽂힌 건지 인덱스가 틀린 건지 알 수 없으므로 먼저 세어 본다.
+    found = Picamera2.global_camera_info()
+    if camera_index >= len(found):
+        raise RuntimeError(
+            f"libcamera 가 잡은 카메라는 {len(found)}대인데 camera_index={camera_index} 를 찾는다. "
+            "리본이 제대로 꽂혔는지, rpicam-hello --list-cameras 에 보이는지 확인할 것"
+        )
+
     camera = Picamera2(camera_index)
     # 포맷 이름은 메모리에 담기는 순서와 반대다. "RGB888" 로 잡아야 실제 바이트가
     # B,G,R 순으로 와서 cv2 가 기대하는 배열이 그대로 나온다. 뒤집히면 POS 도

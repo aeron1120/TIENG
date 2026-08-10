@@ -76,9 +76,13 @@ def synthetic_rgb(bpm: float, seconds: float = 14.0) -> tuple[np.ndarray, np.nda
 
 def test_signal_core() -> None:
     section("[1] rPPG 신호 코어 — 합성 신호로 BPM 복원")
-    adapter = RppgAdapter(id="rppg", mode="live")
-    adapter._gate = thresholds.load(ROOT / "config" / "thresholds.yaml").confidence_min
+    gate = thresholds.load(ROOT / "config" / "thresholds.yaml").confidence_min
     for bpm in (55, 72, 90, 120, 150):
+        # 어댑터를 매번 새로 만든다. 하나를 돌려 쓰면 55 를 받아들인 직후 72 가
+        # 들어오고, jump guard 는 그걸 밀리초 만에 17bpm 뛴 것으로 본다 — 여기서
+        # 재려는 것은 신호 코어의 복원 정확도지 궤적 연속성이 아니다.
+        adapter = RppgAdapter(id="rppg", mode="live")
+        adapter._gate = gate
         t, rgb = synthetic_rgb(bpm)
         m = adapter._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
         err = abs(float(m.value) - bpm) if m.value is not None else float("inf")

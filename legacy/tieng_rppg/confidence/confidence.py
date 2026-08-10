@@ -4,8 +4,10 @@ TouchFree Vitals — confidence (신호 품질) 모듈  v3
 설계 원칙
 ---------
 1. 센서 중립: 입력은 "1차원 시계열 + fps"일 뿐이다. POS rPPG 맥파든, 상체 움직임
-   신호든, 나중에 붙을 열화상 콧구멍 온도든 동일한 인터페이스로 처리한다.
+   신호든, 열화상 콧구멍 온도든 동일한 인터페이스로 처리한다.
    새 센서를 추가한다 == (추정값, 신뢰도) 한 쌍을 더 넣는다.
+   유일한 예외가 1층 게이트다 — 원시 센서 관측치를 봐야 하므로 모달리티마다
+   GateContext 를 따로 구현한다 (FrameContext=가시광, ThermalContext=열화상).
 2. 4층 구조: 전제조건 게이트 → 신호품질지수(SQI) → 시간적 일관성 → 캘리브레이션
 3. "왜 나쁜지"를 보존한다. 실패는 항상 사유 코드(GateReason)와 함께 반환된다.
 4. confidence 값의 계산과, 그 값으로 무엇을 할지(표시/보류/알림)는 분리한다.
@@ -24,6 +26,7 @@ from __future__ import annotations
 
 import json
 import math
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Optional, Sequence
@@ -75,6 +78,10 @@ class GateReason(str, Enum):
     WARMING_UP      = "insufficient_data"  # 윈도우 미충족
     UNSTABLE_FPS    = "unstable_fps"       # 프레임 간격 지터 과다
     FLAT_SIGNAL     = "flat_signal"        # 분산 거의 0 (정지영상/렌즈 가림)
+    # --- 열화상 전용 ---
+    FFC_ACTIVE      = "ffc_active"         # 플랫필드 보정(셔터) 진행 중
+    LOW_THERMAL_CONTRAST = "low_thermal_contrast"  # 실온이 체온에 근접
+    ROI_TOO_SMALL   = "roi_too_small"      # 콧구멍 ROI 픽셀 수 부족 (너무 멀다)
 
     @property
     def message_ko(self) -> str:
@@ -87,12 +94,48 @@ class GateReason(str, Enum):
             "insufficient_data": "측정 준비 중입니다",
             "unstable_fps":      "카메라 프레임이 불안정합니다",
             "flat_signal":       "신호가 잡히지 않습니다",
+            "ffc_active":        "센서 보정 중입니다",
+            "low_thermal_contrast": "주변 온도가 체온과 비슷합니다",
+            "roi_too_small":     "너무 멀리 있습니다",
         }[self.value]
 
 
+class GateContext(ABC):
+    """게이트 판정에 필요한 관측치. 센서 종류마다 다른 것을 본다.
+
+    ★ 4층 중에서 모달리티를 아는 층은 여기 하나뿐이다. 게이트만 원시 센서
+      관측치(밝기, 온도 대비, 셔터 상태)를 먹기 때문이다. 2~4층(SQI/시간
+      일관성/캘리브레이션)은 "1차원 시계열 + fps"만 보므로 전 센서가 공유한다.
+      새 센서를 붙인다 == 이 클래스를 하나 더 구현한다.
+    """
+    # 하위 클래스가 dataclass 필드로 다시 선언한다. 여기 값은 안전망일 뿐이다.
+    roi_found = True
+    fps_jitter = 0.0
+
+    T_FPS_JITTER = 0.35   # 센서 무관 — 프레임 간격이 흔들리면 주파수가 번진다
+
+    def _common(self, n_samples: int, fps: float, band: Band) -> GateReason:
+        """모달리티와 무관한 판정. 하위 클래스가 자기 판정 앞에 먼저 부른다."""
+        if not self.roi_found:
+            return GateReason.NO_ROI
+
+        need = int(band.min_window_sec * fps)
+        if n_samples < need:
+            return GateReason.WARMING_UP
+
+        if self.fps_jitter > self.T_FPS_JITTER:
+            return GateReason.UNSTABLE_FPS
+
+        return GateReason.OK
+
+    @abstractmethod
+    def check(self, n_samples: int, fps: float, band: Band) -> GateReason:
+        """1층. 계산을 시작할 가치가 있는지 판정한다. 싸고 해석 가능한 것부터."""
+
+
 @dataclass
-class FrameContext:
-    """게이트 판정에 필요한 프레임 단위 관측치.
+class FrameContext(GateContext):
+    """가시광 카메라의 프레임 단위 관측치.
 
     영상 파이프라인이 채워서 넘겨준다. confidence 모듈은 영상을 직접 보지 않는다.
     """
@@ -109,33 +152,66 @@ class FrameContext:
     T_SATURATED_FRAC = 0.20
     T_DARK_FRAC      = 0.40
     T_MOTION         = 4.0
-    T_FPS_JITTER     = 0.35
+
+    def check(self, n_samples: int, fps: float, band: Band) -> GateReason:
+        reason = self._common(n_samples, fps, band)
+        if reason is not GateReason.OK:
+            return reason
+
+        if (self.roi_mean_intensity < self.T_DARK_MEAN
+                or self.roi_dark_frac > self.T_DARK_FRAC):
+            return GateReason.TOO_DARK
+
+        if (self.roi_mean_intensity > self.T_BRIGHT_MEAN
+                or self.roi_saturated_frac > self.T_SATURATED_FRAC):
+            return GateReason.TOO_BRIGHT
+
+        if self.motion_magnitude > self.T_MOTION:
+            return GateReason.MOTION
+
+        return GateReason.OK
 
 
-def gate_check(ctx: FrameContext, n_samples: int, fps: float, band: Band) -> GateReason:
-    """1층. 계산을 시작할 가치가 있는지 판정한다. 싸고 해석 가능한 것부터."""
-    if not ctx.roi_found:
-        return GateReason.NO_ROI
+@dataclass
+class ThermalContext(GateContext):
+    """열화상 카메라의 프레임 단위 관측치.
 
-    need = int(band.min_window_sec * fps)
-    if n_samples < need:
-        return GateReason.WARMING_UP
+    밝기/포화 대신 온도 대비와 센서 상태를 본다. 가시광의 TOO_DARK 에 해당하는
+    것이 LOW_THERMAL_CONTRAST 다 — 실온이 체온에 가까워지면 날숨과 주변의 온도차가
+    줄어 신호가 묻힌다.
 
-    if ctx.fps_jitter > FrameContext.T_FPS_JITTER:
-        return GateReason.UNSTABLE_FPS
+    ffc_active 를 반드시 채울 것. Lepton/TC001 계열은 주기적으로 플랫필드 보정을
+    하며 영상이 잠깐 멈추고 오프셋이 계단처럼 튄다. 이 계단이 하필 호흡 대역
+    (0.1~0.5Hz) 한복판에 들어와서, 걸러내지 않으면 호흡으로 오인된다.
+    """
+    roi_found: bool = True
+    roi_pixels: int = 64                # 콧구멍/코 주변 ROI 픽셀 수
+    delta_t_contrast: float = 5.0       # ROI 내 최대-최소 온도차 (°C)
+    ffc_active: bool = False            # 플랫필드 보정(셔터) 진행 중인가
+    fps_jitter: float = 0.0
 
-    if (ctx.roi_mean_intensity < FrameContext.T_DARK_MEAN
-            or ctx.roi_dark_frac > FrameContext.T_DARK_FRAC):
-        return GateReason.TOO_DARK
+    # --- 임계값 ---
+    # ※ 실제 열화상 하드웨어가 없어 잠정값이다. 카메라를 붙이면 재측정할 것.
+    #    delta_t 하한은 MLX90640 의 NETD(~0.1°C) 를 여러 배 웃도는 선으로 잡았다.
+    T_MIN_ROI_PIXELS = 4
+    T_MIN_DELTA_T    = 0.5
 
-    if (ctx.roi_mean_intensity > FrameContext.T_BRIGHT_MEAN
-            or ctx.roi_saturated_frac > FrameContext.T_SATURATED_FRAC):
-        return GateReason.TOO_BRIGHT
+    def check(self, n_samples: int, fps: float, band: Band) -> GateReason:
+        # 셔터 보정은 ROI 유무보다 먼저 본다 — 보정 중에는 화면 자체가 못 믿을 값이다
+        if self.ffc_active:
+            return GateReason.FFC_ACTIVE
 
-    if ctx.motion_magnitude > FrameContext.T_MOTION:
-        return GateReason.MOTION
+        reason = self._common(n_samples, fps, band)
+        if reason is not GateReason.OK:
+            return reason
 
-    return GateReason.OK
+        if self.roi_pixels < self.T_MIN_ROI_PIXELS:
+            return GateReason.ROI_TOO_SMALL
+
+        if self.delta_t_contrast < self.T_MIN_DELTA_T:
+            return GateReason.LOW_THERMAL_CONTRAST
+
+        return GateReason.OK
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +222,7 @@ def gate_check(ctx: FrameContext, n_samples: int, fps: float, band: Band) -> Gat
 class SpectralResult:
     bpm: float
     snr_db: float           # 대역 내 주피크+배음 대 나머지
-    harmonic_ratio: float   # P(2f) / P(f)
+    harmonic_ratio: float   # P(2f) / P(f). 2f가 대역 밖이면 nan (측정 불가)
     peak_ratio: float       # P(2등 피크) / P(주피크)
     band_power_frac: float  # 대역 내 파워 / 전체 파워
 
@@ -203,10 +279,17 @@ def spectral_analysis(x: np.ndarray, fps: float, band: Band) -> SpectralResult:
     snr_db = 10.0 * math.log10(max(p_sig, 1e-20) / p_noise)
 
     # 배음 일관성: 진짜 맥파는 2f에 에너지가 있고, 백색잡음은 없다.
-    harm_mask = _mask_around(2 * f_peak, 0.10)
-    p_harm = float(np.sum(psd[harm_mask]) * df)
+    #
+    # 단, 2f가 대역 밖이면 앞단 대역통과가 이미 지워버린 뒤다. 남은 잔재로 비율을
+    # 재면 신호 품질이 아니라 필터 감쇠를 재게 되고, 부호까지 뒤집힌다 — 잡음이
+    # 많을수록 2f 부근에 에너지가 남아 비율이 커지기 때문이다. 측정 불가로 둔다.
+    # (RR 대역 0.1–0.5Hz 에서는 12rpm 이상이면 전부 여기 해당한다)
     p_fund = float(np.sum(psd[_mask_around(f_peak, 0.10)]) * df)
-    harmonic_ratio = p_harm / max(p_fund, 1e-20)
+    if 2 * f_peak + 0.10 <= band.f_hi:
+        p_harm = float(np.sum(psd[_mask_around(2 * f_peak, 0.10)]) * df)
+        harmonic_ratio = p_harm / max(p_fund, 1e-20)
+    else:
+        harmonic_ratio = float("nan")
 
     # 피크 모호성: 2등 피크가 주피크에 가까우면 FFT가 헷갈리고 있다는 뜻.
     masked = band_psd.copy()
@@ -251,7 +334,11 @@ def score_snr(snr_db: float) -> float:
 
 
 def score_harmonic(ratio: float) -> float:
-    """배음비가 0.05~0.6이면 생리학적으로 그럴듯하다. 너무 크면 주파수 오검출."""
+    """배음비가 0.05~0.6이면 생리학적으로 그럴듯하다. 너무 크면 주파수 오검출.
+
+    2f가 대역 밖이라 배음비를 잴 수 없는 경우에는 이 함수를 부르지 않는다 —
+    scores 에서 키 자체를 빼고, combine 이 가중치 합에서도 제외한다.
+    """
     if ratio <= 0:
         return 0.15
     lo, hi = 0.05, 0.60
@@ -309,13 +396,20 @@ WEIGHTS = {
 
 
 def combine(scores: dict) -> float:
+    """없는 키는 '측정 불가'로 보고 가중치 합에서도 뺀다.
+
+    기본값 0.5를 채워 넣으면 '해당 없음'과 '품질이 그저 그럼'이 같아진다.
+    잴 수 없는 성분 때문에 confidence 가 깎이면 안 된다.
+    """
     num = 0.0
     den = 0.0
     for k, w in WEIGHTS.items():
-        s = float(np.clip(scores.get(k, 0.5), 1e-6, 1.0))
+        if k not in scores:
+            continue
+        s = float(np.clip(scores[k], 1e-6, 1.0))
         num += w * math.log(s)
         den += w
-    return float(math.exp(num / den))
+    return float(math.exp(num / den)) if den > 0 else 0.0
 
 
 @dataclass
@@ -354,11 +448,11 @@ class VitalEstimator:
         self._prev_bpm: Optional[float] = None
         self._prev_t: Optional[float] = None
 
-    def update(self, window: Sequence[float], ctx: FrameContext,
+    def update(self, window: Sequence[float], ctx: GateContext,
                t_now: Optional[float] = None) -> VitalReading:
         x = np.asarray(window, dtype=float)
 
-        reason = gate_check(ctx, len(x), self.fps, self.band)
+        reason = ctx.check(len(x), self.fps, self.band)
         if reason is not GateReason.OK:
             return VitalReading(self.band.name, False, reason)
 
@@ -373,11 +467,12 @@ class VitalEstimator:
 
         scores = {
             "snr":         score_snr(sr.snr_db),
-            "harmonic":    score_harmonic(sr.harmonic_ratio),
             "unambiguity": score_unambiguity(sr.peak_ratio),
             "agreement":   score_agreement(sr.bpm, bpm_td, tol),
             "temporal":    score_temporal(sr.bpm, self._prev_bpm, dt, self.band),
         }
+        if np.isfinite(sr.harmonic_ratio):
+            scores["harmonic"] = score_harmonic(sr.harmonic_ratio)
         conf = combine(scores)
 
         self._prev_bpm = sr.bpm

@@ -114,7 +114,6 @@ export function System() {
   return (
     <Page
       title="시스템 상태"
-      description="지금 돌고 있는 서버가 무엇을 올렸고 무엇이 왜 안 올라왔는지"
       actions={
         <button
           onClick={run}

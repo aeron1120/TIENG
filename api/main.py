@@ -161,7 +161,7 @@ def _serve_web(dist: Path) -> None:
     파이에 올릴 때 vite dev 서버를 띄우지 않기 위해서다. 포트가 하나면 프록시
     설정도, CORS 도, systemd 유닛을 둘로 나눌 일도 없다.
 
-    라우팅은 react-router 가 브라우저에서 한다. 그래서 /live 같은 경로를 주소창에
+    라우팅은 react-router 가 브라우저에서 한다. 그래서 /records 같은 경로를 주소창에
     직접 치면 서버에는 그런 파일이 없다 — 실제 파일이면 그 파일을, 아니면
     index.html 을 돌려주고 나머지는 화면이 알아서 판단하게 한다.
 

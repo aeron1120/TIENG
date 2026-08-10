@@ -23,7 +23,7 @@ export function Guardian() {
   const held = snapshot.metrics.filter((m) => m.state === 'low_quality')
   const offline = snapshot.metrics.filter((m) => m.state === 'no_adapter' || m.state === 'error')
 
-  // 홈 화면과 같은 판단을 써야 한다. 판정 기준은 metrics.ts 한 곳에만 있다.
+  // 판정 기준은 metrics.ts 한 곳에만 있다. 여기서 따로 판단하지 않는다.
   const summary = verdict(measured.length, stale)
 
   return (

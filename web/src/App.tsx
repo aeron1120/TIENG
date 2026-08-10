@@ -2,19 +2,19 @@ import {
   Activity,
   ClipboardList,
   FlaskConical,
-  Gauge,
   LogOut,
+  type LucideIcon,
   Ruler,
   ShieldCheck,
   UserRound,
 } from 'lucide-react'
-import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom'
+import { Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { atLeast, AuthProvider, useAuth, type Role } from './authContext'
 import { PendingAlert } from './components/PendingAlert'
+import { ICON, LABEL, displayValue, effectiveState } from './metrics'
 import { Accounts } from './pages/Accounts'
 import { Gate } from './pages/Gate'
 import { Guardian } from './pages/Guardian'
-import { Home } from './pages/Home'
 import { Kiosk } from './pages/Kiosk'
 import { Records } from './pages/Records'
 import { Selftest } from './pages/Selftest'
@@ -27,8 +27,10 @@ import { SnapshotProvider, useFeed } from './snapshotContext'
 
 // min 은 서버가 라우터에 건 등급(api/main.py)과 같아야 한다. 화면에서만 숨기면
 // 주소를 직접 치는 순간 빈 화면에 401 이 뜬다.
-const NAV: { to: string; label: string; icon: typeof Gauge; min: Role }[] = [
-  { to: '/live', label: '실시간', icon: Gauge, min: 'guest' },
+//
+// 실시간은 여기 없다. 첫 화면이 곧 실시간이라 탭으로 한 번 더 걸면 지금 보고 있는
+// 곳으로 가는 버튼이 하나 더 생길 뿐이다. 돌아오는 문은 왼쪽 위 로고다.
+const NAV: { to: string; label: string; icon: LucideIcon; min: Role }[] = [
   { to: '/guardian', label: '보호자', icon: UserRound, min: 'member' },
   { to: '/system', label: '시스템', icon: Activity, min: 'member' },
   { to: '/records', label: '기록', icon: ClipboardList, min: 'member' },
@@ -39,7 +41,6 @@ const NAV: { to: string; label: string; icon: typeof Gauge; min: Role }[] = [
 ]
 
 const PAGES: Record<string, React.ReactElement> = {
-  '/live': <Kiosk />,
   '/guardian': <Guardian />,
   '/system': <System />,
   '/records': <Records />,
@@ -48,9 +49,14 @@ const PAGES: Record<string, React.ReactElement> = {
   '/accounts': <Accounts />,
 }
 
+// 홈(실시간)을 떠나 있을 때만 맨 위에 남기는 지표. 실시간 화면에는 같은 값이 이미
+// 크게 떠 있어서 두 번 쓸 자리가 없고, 다른 화면에서는 여기 말고 볼 곳이 없다.
+const VITALS = ['temp', 'hr']
+
 function TopBar({ nav }: { nav: typeof NAV }) {
   const { snapshot, stale } = useFeed()
   const { principal, logOut } = useAuth()
+  const away = useLocation().pathname !== '/'
 
   return (
     <header className="border-b-[0.5px] border-gold/15">
@@ -102,6 +108,29 @@ function TopBar({ nav }: { nav: typeof NAV }) {
                 ? '수신 끊김'
                 : new Date(snapshot.ts).toLocaleTimeString('ko-KR')}
           </span>
+
+          {away &&
+            snapshot &&
+            VITALS.map((key) => {
+              const metric = snapshot.metrics.find((m) => m.key === key)
+              if (!metric) return null
+              const Icon = ICON[key]
+              // 품질 미달인 값은 여기에 뱃지를 붙일 자리가 없다. 상태를 못 적을
+              // 바에는 숫자를 안 적는다 (README §2).
+              const ok = effectiveState(metric, stale) === 'ok'
+              const shown = ok ? displayValue(metric, stale) : null
+              return (
+                <span key={key} className="flex items-center gap-1" title={LABEL[key]}>
+                  <Icon className={`h-3.5 w-3.5 ${shown === null ? 'text-faint' : 'text-gold'}`} />
+                  {shown === null ? (
+                    <span className="text-faint">—</span>
+                  ) : (
+                    <span className="tnum font-mono text-fg">{shown + (metric.unit ?? '')}</span>
+                  )}
+                </span>
+              )
+            })}
+
           {/* 비회원에게도 나가는 문은 보여야 한다. 태블릿을 여러 사람이 지나가며
               쓰므로, 다음 사람이 앞사람 세션을 물려받지 않게 한다. */}
           <button
@@ -127,7 +156,6 @@ function Shell() {
   if (principal === null) return <Gate />
 
   const nav = NAV.filter((item) => atLeast(principal.role, item.min))
-  const home = principal.role === 'guest' ? <Navigate to="/live" replace /> : <Home />
 
   return (
     // WebSocket 은 이 안에서만 열린다. 관문 뒤에 두지 않으면 로그인 화면을 띄운
@@ -139,13 +167,14 @@ function Shell() {
             메일이 나가면 안 된다. */}
         {atLeast(principal.role, 'member') && <PendingAlert />}
         <Routes>
-          <Route path="/" element={home} />
+          {/* 첫 화면이 실시간이다. 등급을 가리지 않으므로 비회원도 여기까지는 온다. */}
+          <Route path="/" element={<Kiosk />} />
           {nav.map(({ to }) => (
             <Route key={to} path={to} element={PAGES[to]} />
           ))}
           {/* 권한 밖 주소를 직접 치면 볼 수 있는 화면으로 돌려보낸다. 빈 화면에
               401 을 띄우는 것보다 낫다. */}
-          <Route path="*" element={<Navigate to="/live" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
     </SnapshotProvider>

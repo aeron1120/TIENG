@@ -70,7 +70,11 @@ exclude = ["legacy"]
 [[tool.mypy.overrides]]
 # scipy/cv2 는 스텁이 불완전하고, 나머지는 파이에서만 설치되는 하드웨어 드라이버라
 # 개발 PC 에는 아예 없다.
-module = ["scipy.*", "cv2.*", "bme680.*", "smbus2.*", "gpiozero.*", "tinytuya.*", "picamera2.*"]
+module = [
+    "scipy.*", "cv2.*", "bme680.*", "smbus2.*", "gpiozero.*", "tinytuya.*", "picamera2.*",
+    # MLX90640 열화상. board/busio 는 blinka 가 깔아 주는 I2C 바인딩이다.
+    "adafruit_mlx90640.*", "board.*", "busio.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

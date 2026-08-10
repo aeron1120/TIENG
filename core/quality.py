@@ -258,15 +258,24 @@ def spectral_analysis(x: np.ndarray, fs: float, band: Band) -> Spectral:
     return Spectral(f_peak * 60.0, snr_db, harmonic_ratio, peak_ratio)
 
 
+def bandpass(x: np.ndarray, fs: float, band: Band) -> np.ndarray:
+    """대역 밖을 지운다.
+
+    필터와 탐색 범위가 같은 Band 를 보게 하려고 여기 둔다. 둘이 어긋나면 필터가
+    지운 곳에서 피크를 찾는 일이 생기고, 그러면 품질이 아니라 필터 감쇠를 재게
+    된다 (spectral_analysis 의 배음비 주석과 같은 함정이다).
+    """
+    sos = butter(3, [band.f_lo, band.f_hi], btype="band", fs=fs, output="sos")
+    return np.asarray(sosfiltfilt(sos, np.asarray(x, dtype=np.float64)), dtype=np.float64)
+
+
 def time_domain_bpm(x: np.ndarray, fs: float, band: Band) -> float:
     """시간영역 피크 검출로 독립적인 2차 추정값을 만든다.
 
     표시용이 아니다. FFT 와 원리가 달라서, 둘이 같은 답을 내면 그 일치 자체가
     품질의 증거가 된다 (score_agreement).
     """
-    detrended = detrend(np.asarray(x, dtype=np.float64), type="linear")
-    sos = butter(3, [band.f_lo, band.f_hi], btype="band", fs=fs, output="sos")
-    filtered = sosfiltfilt(sos, detrended)
+    filtered = bandpass(detrend(np.asarray(x, dtype=np.float64), type="linear"), fs, band)
     spread = float(np.std(filtered))
     if spread < 1e-12:
         return float("nan")

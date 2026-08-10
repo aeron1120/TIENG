@@ -57,6 +57,12 @@ HINTS = {
         "rpicam-hello --list-cameras 에 카메라가 보이는지",
         "USB 웹캠이면 backend 는 opencv, v4l2-ctl --list-devices 로 인덱스 확인",
     ],
+    "core.adapters.thermal_mlx90640": [
+        "i2cdetect -y 1 에 0x33 이 보이는지",
+        "32x24 라 코가 몇 픽셀 안 남는다. nostril_roi 를 화면 보고 맞춘 뒤 실측할 것",
+        "refresh_hz 는 2~8 을 쓴다. 더 올리면 프레임당 잡음이 커진다",
+        "라이브러리: pip install adafruit-circuitpython-mlx90640 (pi extras 에 있다)",
+    ],
     "actuators.tuya_plug": [
         "python -m tinytuya wizard 로 device_id / local_key 를 뽑는다",
         "플러그와 파이가 같은 네트워크(대역)에 있어야 한다",

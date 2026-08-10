@@ -174,3 +174,37 @@ async def test_simulated_mode_needs_no_hardware() -> None:
 def test_bad_roi_config_fails_loudly() -> None:
     with pytest.raises(ValueError, match="nostril_roi"):
         ThermalRespiration(id="thermal", mode="simulated", nostril_roi=[1, 2, 3])
+
+
+def test_ingest_timestamps_come_from_the_frame() -> None:
+    """캡처 경로가 프레임의 시계를 쓰는지.
+
+    여기서 time.monotonic() 을 다시 읽으면 합성 카메라의 사인파 위상과 타임스탬프가
+    어긋나서, 루프가 드리프트한 만큼 rpm 이 틀리게 나온다. 캡처 루프는 실시간으로
+    쉬기 때문에 20초를 기다릴 수 없어 _ingest 를 직접 먹인다 — 루프가 프레임마다
+    하는 일이 이것뿐이다.
+    """
+    adapter = _adapter(rpm=15.0)
+    camera = SyntheticThermalCamera(rpm=15.0, seed=15, roi=ROI, dt=CAPTURE_DT)
+    for _ in range(int(30.0 / CAPTURE_DT)):
+        adapter._ingest(camera.read())
+
+    assert adapter._times[0] == pytest.approx(CAPTURE_DT)  # 실시간이 아니라 합성 시계
+    metric = adapter._estimate(
+        np.asarray(adapter._times), np.asarray(adapter._temps),
+        adapter._roi_pixels, adapter._delta_t,
+    )
+    assert metric.state == "ok", f"보류됨 (confidence={metric.confidence})"
+    assert metric.value is not None and abs(float(metric.value) - 15.0) <= 2.0
+
+
+def test_ingest_drops_frames_older_than_the_window() -> None:
+    """창 밖으로 나간 표본은 버린다. 안 버리면 메모리가 계속 자란다."""
+    adapter = _adapter()
+    camera = SyntheticThermalCamera(rpm=15.0, roi=ROI, dt=CAPTURE_DT)
+    for _ in range(int(3 * adapter.window_s / CAPTURE_DT)):
+        adapter._ingest(camera.read())
+
+    span = adapter._times[-1] - adapter._times[0]
+    assert span <= adapter.window_s
+    assert len(adapter._times) == len(adapter._temps)

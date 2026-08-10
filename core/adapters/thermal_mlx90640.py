@@ -151,7 +151,11 @@ class ThermalRespiration(SensorAdapter):
 
     def _open_camera(self) -> Any:
         if self.mode == "simulated":
-            return SyntheticThermalCamera(rpm=self.synthetic_rpm, roi=self.nostril_roi)
+            # dt 를 refresh_hz 에 맞춘다. 합성 시계가 캡처 주기보다 빠르거나 느리면
+            # 같은 신호를 다른 샘플링으로 읽는 셈이 되어 rpm 이 어긋난다.
+            return SyntheticThermalCamera(
+                rpm=self.synthetic_rpm, roi=self.nostril_roi, dt=1.0 / self.refresh_hz
+            )
         return MLX90640Capture(refresh_hz=self.refresh_hz)
 
     # --- 캡처 스레드 ------------------------------------------------------ #
@@ -171,21 +175,28 @@ class ThermalRespiration(SensorAdapter):
                 self._stop.wait(interval)
                 continue
 
-            mean_c, pixels, delta_t = roi_stats(frame, self.nostril_roi)
-            now = time.monotonic()  # 신호 타이밍은 벽시계가 아니라 단조시계를 쓴다
-
-            with self._lock:
-                self._roi_pixels = pixels
-                self._delta_t = delta_t
-                if pixels > 0 and np.isfinite(mean_c):
-                    self._times.append(now)
-                    self._temps.append(mean_c)
-                while self._times and (now - self._times[0]) > self.window_s:
-                    self._times.popleft()
-                    self._temps.popleft()
-
+            self._ingest(frame)
             del frame  # 온도 그리드는 여기서 끝. 저장하지 않는다.
             self._stop.wait(max(0.0, interval - (time.monotonic() - started)))
+
+    def _ingest(self, frame: ThermalFrame) -> None:
+        """프레임 한 장을 ROI 평균 하나로 줄여 창에 넣는다.
+
+        시각은 프레임이 들고 온 것을 쓴다. 여기서 time.monotonic() 을 다시 읽으면
+        합성 카메라의 사인파 위상(자기 시계)과 타임스탬프(실시간)가 어긋나서 루프가
+        드리프트한 만큼 rpm 이 틀리게 나온다. 실 하드웨어는 read() 안에서 단조시계를
+        찍으므로 어느 쪽이든 같은 값이다.
+        """
+        mean_c, pixels, delta_t = roi_stats(frame, self.nostril_roi)
+        with self._lock:
+            self._roi_pixels = pixels
+            self._delta_t = delta_t
+            if pixels > 0 and np.isfinite(mean_c):
+                self._times.append(frame.t)
+                self._temps.append(mean_c)
+            while self._times and (frame.t - self._times[0]) > self.window_s:
+                self._times.popleft()
+                self._temps.popleft()
 
     # --- 추정 ------------------------------------------------------------- #
 

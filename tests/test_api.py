@@ -1,7 +1,9 @@
 """mock 설정으로 서버를 띄웠을 때 스냅샷이 실제로 흐르는지."""
 
 import json
+import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,9 +21,28 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(app)
 
 
+def snapshot_body(client: TestClient, timeout_s: float = 5.0) -> dict[str, Any]:
+    """첫 스냅샷이 나올 때까지 기다린 뒤 본문을 준다.
+
+    /api/snapshot 은 배경 루프가 첫 틱을 돌기 전에는 503 을 낸다. 그건 계약이다 —
+    스냅샷이 없으면 없다고 답하고 빈 값을 지어내지 않는다 (README §0-4). 창이 열려
+    있는 시간은 어댑터가 얼마나 무거운지에 달렸으므로(열화상은 캡처 스레드를 띄운다)
+    바로 GET 하면 어느 쪽이 올지 알 수 없다.
+    """
+    deadline = time.monotonic() + timeout_s
+    while True:
+        response = client.get("/api/snapshot")
+        if response.status_code == 200:
+            body: dict[str, Any] = response.json()
+            return body
+        assert response.status_code == 503, f"뜻밖의 상태 {response.status_code}"
+        assert time.monotonic() < deadline, f"{timeout_s}초 안에 첫 스냅샷이 안 나왔다"
+        time.sleep(0.05)
+
+
 def test_snapshot_endpoint_serves_the_contract(client: TestClient) -> None:
     with client:
-        body = client.get("/api/snapshot").json()
+        body = snapshot_body(client)
 
     assert body["device_id"] == "tfv-mock-01"
     assert [m["key"] for m in body["metrics"]] == [
@@ -55,7 +76,7 @@ def test_interventions_endpoint_serves_the_contract(client: TestClient) -> None:
 def test_every_metric_carries_the_progress_field(client: TestClient) -> None:
     """계약에 필드가 늘었으면 전 지표가 그 모양으로 나가야 한다 (README §0-1)."""
     with client:
-        body = client.get("/api/snapshot").json()
+        body = snapshot_body(client)
 
     for metric in body["metrics"]:
         assert "progress" in metric, metric["key"]

@@ -29,9 +29,13 @@ adapters:
     mode: live
     params: { pin: 4, hold_s: 30 }
   - id: rr_estimator
-    module: core.adapters.rr_mock
-    mode: simulated
-    params: { base_rpm: 15, noise: 1.2 }
+    module: core.adapters.thermal_mlx90640
+    mode: live
+    # nostril_roi 는 32x24 프레임 좌표계의 (x, y, w, h) 다. 코가 몇 픽셀에 잡히는지는
+    # 카메라-얼굴 거리에 달렸으므로 화면을 보고 맞춘 뒤 실측해서 다시 적을 것.
+    # refresh_hz 는 2~8 을 쓴다 — 더 올리면 프레임당 잡음이 커지고, 호흡 대역
+    # (0.1~0.5Hz)에는 4Hz 로도 나이퀴스트 여유가 충분하다.
+    params: { nostril_roi: [13, 9, 6, 5], refresh_hz: 4 }
   - id: posture
     module: core.adapters.posture_mock
     mode: unavailable

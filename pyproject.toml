@@ -36,6 +36,8 @@ pi = [
     "gpiozero>=2.0",     # PIR (GPIO)
     "lgpio>=0.2",        # Pi 5 의 gpiozero 백엔드
     "tinytuya>=1.13",    # Tuya 플러그/전구 (LAN 제어)
+    # MLX90640 열화상 (I2C 0x33). blinka 가 board/busio 를 같이 깐다.
+    "adafruit-circuitpython-mlx90640>=1.3",
 ]
 dev = [
     "pytest>=8.0",

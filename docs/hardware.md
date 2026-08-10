@@ -59,6 +59,32 @@ pip install -e ".[dev,pi]"          # pi extras 가 나머지 드라이버를 �
   CSI 는 `opencv` 로 안 열린다. `/dev/video0` 으로 잡히긴 하지만 그건 디베이어 전
   raw 프레임이다. 꽂았으면 `rpicam-hello --list-cameras` 에 보이는지부터 확인한다.
 
+### 카메라가 "No cameras available" 일 때
+
+`camera_auto_detect=1` 이 항상 잡아 주지는 않는다. tfv-pi-01(Camera Module 3)이
+그랬다. 이때 **오버레이를 명시**하면 뜬다:
+
+```
+camera_auto_detect=0
+dtoverlay=imx708,cam0      # 모듈에 맞게. v2 는 imx219, HQ 는 imx477, v1 은 ov5647
+```
+
+모델을 모르면 추측하지 말고 센서에게 직접 물어본다. 함정은 **Pi 5 가 오버레이를
+로드해야 카메라 커넥터의 전원 레귤레이터를 켠다**는 점이다 — 그 전에는 센서가
+꺼져 있어서 `i2cdetect` 가 비어 있고, 그걸 보고 "안 꽂혔다"고 오판하기 쉽다.
+레귤레이터를 손으로 켜면 모듈 전체가 보인다:
+
+```bash
+# cam0_reg 를 켜는 GPIO 번호를 디바이스트리에서 읽는다 (tfv-pi-01 은 34였다)
+od -An -tx4 /proc/device-tree/cam0_reg/gpio     # 두 번째 값이 GPIO 번호
+sudo pinctrl set 34 op dh                       # 카메라 전원 ON
+
+# 카메라 버스는 i2c-1 이 아니라 i2c-10(CAM0) / i2c-11(CAM1) 이다
+sudo i2cdetect -y 10          # 센서 0x1a, AF 모터 0x0c, EEPROM 0x50 이 보인다
+sudo i2ctransfer -y 10 w2@0x1a 0x00 0x16 r2     # 칩 ID → 0x07 0x08 이면 IMX708
+```
+
+
 배선 후 주소가 보이는지 먼저 확인한다:
 
 ```bash

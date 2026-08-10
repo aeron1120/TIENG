@@ -49,6 +49,15 @@ JITTER_SCALE_PX = 6.0  # 이만큼 흔들리면 jitter_norm = 1
 FACE_DETECT_SEC = 0.5  # 매 프레임 검출은 Pi에서 FPS를 깎는다
 READ_FAIL_LIMIT = 30  # 연속 실패가 이만큼이면 카메라가 빠진 것으로 본다
 
+# --- 안정화 -------------------------------------------------------------- #
+# legacy 데모(rppg_demo_v4.py)에는 SQI 게이트 말고도 jump guard / 출력 EMA /
+# 라벨 히스테리시스가 있었는데 Phase 2 이식에서 신호 코어만 가져왔다. 그게 없으면
+# 12초 창을 1초마다 다시 풀 때 나오는 흔들림이 그대로 화면에 나간다.
+EMA_ALPHA = 0.3  # 프레임 단위 관측치용. jitter 와 같은 값 (30fps 에서 시간상수 ~0.3초)
+BPM_SMOOTH_ALPHA = 0.3  # 표시 BPM 용. legacy 의 --smooth-alpha 와 같은 자리
+GATE_HYSTERESIS = 0.08  # 게이트 진입/이탈 dead-band. legacy hysteresis_label 과 같은 값
+JUMP_RELEASE_S = 10.0  # 점프 거부가 이만큼 이어지면 기준값이 틀린 것으로 보고 풀어 준다
+
 PREVIEW_WIDTH = 320  # 얼굴이 ROI 안에 들어왔는지 보는 용도라 이 이상 필요 없다
 PREVIEW_FPS = 10.0
 PREVIEW_QUALITY = 70
@@ -95,13 +104,21 @@ class RppgAdapter(SensorAdapter):
         self._times: deque[float] = deque()
         self._rgbs: deque[tuple[float, float, float]] = deque()
         self._jitter_ema = 0.0
-        self._skin_ratio = 0.0
-        self._brightness = 0.0
+        # None 은 "아직 표본이 없다". 0.0 으로 시작하면 ROI 를 되찾은 뒤에도 한동안
+        # 낮은 값이 남아 멀쩡한 창이 보류된다.
+        self._skin_ratio: float | None = None
+        self._brightness: float | None = None
         self._fault: str | None = None
         self._preview: bytes | None = None
         self._preview_until = 0.0  # 이 시각까지는 보는 사람이 있다고 본다
 
         self._gate = 0.4
+        # 안정화 상태. read() 가 순차로만 불리므로 lock 을 걸지 않는다.
+        self._prev_bpm: float | None = None  # 받아들인 궤적. 거부된 후보는 넣지 않는다
+        self._prev_t: float | None = None
+        self._display_bpm: float | None = None
+        self._reject_since: float | None = None
+        self._emitting = False  # 게이트를 통과한 상태인가 (히스테리시스용)
 
     # --- 수명주기 --------------------------------------------------------- #
 
@@ -142,8 +159,9 @@ class RppgAdapter(SensorAdapter):
             times = np.asarray(self._times, dtype=np.float64)
             rgbs = np.asarray(self._rgbs, dtype=np.float64)
             jitter = self._jitter_ema
-            skin_ratio = self._skin_ratio
-            brightness = self._brightness
+            # 표본이 아직 없으면 0 으로 본다. 그 상태는 MIN_SAMPLES 게이트가 먼저 잡는다.
+            skin_ratio = self._skin_ratio or 0.0
+            brightness = self._brightness or 0.0
 
         loop = asyncio.get_running_loop()
         metric = await loop.run_in_executor(
@@ -221,8 +239,14 @@ class RppgAdapter(SensorAdapter):
                 if roi.rgb is not None:
                     self._times.append(now)
                     self._rgbs.append(roi.rgb)
-                    self._skin_ratio = roi.skin_ratio
-                    self._brightness = roi.brightness
+                    # skin_ratio 와 brightness 도 같은 이유로 누른다. 얼굴 검출이
+                    # FACE_DETECT_SEC 마다만 도니 그 사이 박스가 흔들리면 ROI 가
+                    # 움직이고, read() 가 1Hz 로 집어 가는 것은 마지막 한 프레임의
+                    # 값이다. skin_ratio 에는 하드 플로어가 걸려 있어서 0.100 ->
+                    # 0.099 한 번에 confidence 가 0.89 에서 0 으로 떨어진다 —
+                    # 12초 창은 멀쩡한데 한 프레임 때문에 보류되는 것이다.
+                    self._skin_ratio = _ema(self._skin_ratio, roi.skin_ratio)
+                    self._brightness = _ema(self._brightness, roi.brightness)
                 while self._times and (now - self._times[0]) > self.window_s:
                     self._times.popleft()
                     self._rgbs.popleft()
@@ -354,9 +378,65 @@ class RppgAdapter(SensorAdapter):
             brightness=brightness,
             jitter_norm=jitter_norm,
         )
-        if q.confidence < self._gate:
+        if not self._passes_gate(q.confidence):
             return self._hold(q.confidence, q.hold_reason(), progress)
-        return self._metric(round(bpm, 1), q.confidence, "ok", progress)
+
+        accepted = self._guard(bpm, time.monotonic())
+        if accepted is None:
+            return self._hold(q.confidence, f"생리학적으로 불가능한 점프 ({bpm:.0f}bpm)", progress)
+        return self._metric(round(accepted, 1), q.confidence, "ok", progress)
+
+    # --- 안정화 ----------------------------------------------------------- #
+
+    def _passes_gate(self, confidence: float) -> bool:
+        """게이트에 dead-band 를 둔다.
+
+        임계값 하나로 자르면 경계 근처를 오가는 confidence 때문에 표시와 보류가 매 틱
+        깜빡인다. 데모에서 이러면 고장난 것처럼 보인다. 내보내는 값을 정하는 데만
+        쓰고 confidence 숫자 자체는 건드리지 않는다 — L1 은 원래 값을 봐야 한다.
+        """
+        need = self._gate - GATE_HYSTERESIS if self._emitting else self._gate + GATE_HYSTERESIS
+        self._emitting = confidence >= need
+        return self._emitting
+
+    def _guard(self, bpm: float, now: float) -> float | None:
+        """생리학적으로 불가능한 점프를 막고, 통과한 값을 눌러 표시값으로 만든다.
+
+        점수로 벌하는 것과 다르다. 점프를 confidence 성분으로만 다루면 그 창 하나만
+        벌하고 그 뒤로는 바뀐 값이 기준이 되어, 움직임 배음에 락온한 뒤에는 틀린 값이
+        '일관된' 값이 된다 (합성 실측: 73 -> 100bpm 락온 뒤 confidence 0.95). guard 는
+        애초에 그 값으로 가지 않는다.
+
+        거부가 오래 이어지면 풀어 준다. 사람이 나갔다 왔거나 우리 기준값이 애초에
+        틀렸을 수 있고, 그때 영구히 멎으면 그게 더 나쁘다.
+        """
+        if self._prev_bpm is None or self._prev_t is None:
+            return self._smooth(bpm, now)
+
+        allowed = quality.BAND_HR.max_delta_per_sec * max(now - self._prev_t, 1e-3)
+        if abs(bpm - self._prev_bpm) <= allowed:
+            self._reject_since = None
+            return self._smooth(bpm, now)
+
+        if self._reject_since is None:
+            self._reject_since = now
+        elif now - self._reject_since >= JUMP_RELEASE_S:
+            log.info("rppg.jump_released", adapter=self.id, bpm=round(bpm, 1))
+            self._reject_since = None
+            self._display_bpm = None  # 새 수준으로 갈아탄다. 옛 값에서 끌고 오지 않는다
+            return self._smooth(bpm, now)
+        return None
+
+    def _smooth(self, bpm: float, now: float) -> float:
+        """표시값 EMA. 12초 창을 1초마다 다시 풀면 나오는 잔떨림을 없앤다."""
+        self._prev_bpm = bpm
+        self._prev_t = now
+        self._display_bpm = (
+            bpm
+            if self._display_bpm is None
+            else (1.0 - BPM_SMOOTH_ALPHA) * self._display_bpm + BPM_SMOOTH_ALPHA * bpm
+        )
+        return self._display_bpm
 
     def _hold(self, confidence: float | None, reason: str, progress: float) -> Metric:
         """값을 지어내지 않고 보류한다 (README §0-4). 사유는 로그로 남긴다.
@@ -452,6 +532,17 @@ def _open_picamera2(camera_index: int, width: int, height: int) -> _Picamera2Cap
 # --------------------------------------------------------------------------- #
 # 신호 처리 (rppg_demo_v4.py 에서 이식)
 # --------------------------------------------------------------------------- #
+def _ema(previous: float | None, sample: float) -> float:
+    """첫 표본은 그대로 받는다.
+
+    0 에서 시작하면 ROI 를 되찾은 뒤에도 한동안 낮은 값이 남아, 멀쩡한 창이 하드
+    플로어에 걸려 보류된다.
+    """
+    if previous is None:
+        return sample
+    return (1.0 - EMA_ALPHA) * previous + EMA_ALPHA * sample
+
+
 def _pos(rgb: np.ndarray) -> np.ndarray:
     """POS. RGB 시계열에서 맥파 후보를 뽑는다."""
     mean = np.mean(rgb, axis=0)

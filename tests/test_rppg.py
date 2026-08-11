@@ -91,37 +91,33 @@ async def test_camera_fault_surfaces_as_exception() -> None:
         await adapter.read()
 
 
-# --- 카메라 소스 ------------------------------------------------------------ #
+# --- 카메라 백엔드 ---------------------------------------------------------- #
 # 파이의 CSI 카메라는 libcamera 전용이라 cv2 로 열리지 않는다. 어느 쪽을 물릴지는
-# config 가 정한다. 노출 고정 자체는 실기에서만 확인된다 — 여기서는 백엔드를
-# 고르는 경로와 실패 사유가 올라오는지까지만 본다.
+# config 가 정한다 — 자동 감지하지 않는다. 노출 고정은 실제 카메라가 있어야 확인되므로
+# 여기서는 백엔드를 고르는 경로와 실패 사유가 올라오는지까지만 본다.
 
 
-def _without_picamera2(monkeypatch: pytest.MonkeyPatch) -> None:
-    """개발 PC 상태를 강제한다. 파이에서 돌려도 결과가 같아야 한다."""
-
-    def boom(*_args: object, **_kwargs: object) -> None:
-        raise ImportError("No module named 'picamera2'")
-
-    monkeypatch.setattr(rppg_module, "_Picamera2Source", boom)
+def test_unknown_backend_fails_at_construction() -> None:
+    """오타가 조용히 opencv 로 떨어지면 엉뚱한 카메라가 열린다. 생성 시점에 막는다."""
+    with pytest.raises(ValueError, match="picamera2"):
+        RppgAdapter(id="cam", mode="live", backend="picamera")
 
 
 def test_picamera2_backend_surfaces_the_reason(monkeypatch: pytest.MonkeyPatch) -> None:
-    """hwcheck 가 이 문자열을 그대로 찍는다. '카메라를 열 수 없다'로 뭉개면 안 된다."""
-    _without_picamera2(monkeypatch)
+    """열지 못한 사유가 그대로 올라와야 한다.
+
+    Registry 가 이 문자열을 카드에 그대로 싣는다 (core/registry.py 의 _failures).
+    '카메라를 열 수 없다'로 뭉개면 배선을 고칠 단서가 사라진다.
+    """
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("libcamera 가 잡은 카메라는 0대인데 camera_index=0 를 찾는다")
+
+    monkeypatch.setattr(rppg_module, "_open_picamera2", boom)
     adapter = RppgAdapter(id="cam", mode="live", backend="picamera2")
 
-    with pytest.raises(RuntimeError, match="picamera2"):
+    with pytest.raises(RuntimeError, match="camera_index=0"):
         adapter._open_camera()
-
-
-def test_auto_backend_falls_back_to_webcam(monkeypatch: pytest.MonkeyPatch) -> None:
-    """개발 PC 에는 picamera2 가 없다. 같은 코드가 웹캠으로 돌아야 한다."""
-    _without_picamera2(monkeypatch)
-    adapter = RppgAdapter(id="cam", mode="live")
-    monkeypatch.setattr(adapter, "_open_opencv", lambda: "webcam")
-
-    assert adapter._open_camera() == "webcam"
 
 
 def test_opencv_backend_does_not_touch_picamera2(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,11 +126,26 @@ def test_opencv_backend_does_not_touch_picamera2(monkeypatch: pytest.MonkeyPatch
     def fail(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("backend=opencv 인데 picamera2 를 열려고 했다")
 
-    monkeypatch.setattr(rppg_module, "_Picamera2Source", fail)
+    monkeypatch.setattr(rppg_module, "_open_picamera2", fail)
     adapter = RppgAdapter(id="cam", mode="live", backend="opencv")
     monkeypatch.setattr(adapter, "_open_opencv", lambda: "webcam")
 
     assert adapter._open_camera() == "webcam"
+
+
+def test_settle_reaches_the_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    """노출 고정 자체는 실기에서만 보이지만, settle_s 가 거기까지 가는지는 여기서 본다."""
+    seen: dict[str, object] = {}
+
+    def spy(camera_index: int, width: int, height: int, settle_s: float) -> str:
+        seen.update(camera_index=camera_index, settle_s=settle_s)
+        return "csi"
+
+    monkeypatch.setattr(rppg_module, "_open_picamera2", spy)
+    adapter = RppgAdapter(id="cam", mode="live", backend="picamera2", settle_s=0.5)
+
+    assert adapter._open_camera() == "csi"
+    assert seen == {"camera_index": 0, "settle_s": 0.5}
 
 
 # --- quality.py -------------------------------------------------------------- #

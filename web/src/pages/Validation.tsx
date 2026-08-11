@@ -28,7 +28,6 @@ export function Validation() {
   return (
     <Page
       title="정량 검증"
-      description="펄스옥시미터 기준으로 MAE·RMSE·보류율을 낸다. 못 믿을 구간을 걸러서 정확해진 것과 원래 정확한 것은 다르다"
     >
       <div className="flex flex-col gap-4">
         <Panel>

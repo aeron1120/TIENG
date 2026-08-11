@@ -31,6 +31,7 @@ from actuators.tuya_plug import TuyaPlug  # noqa: E402
 from api.schemas import Metric, Snapshot, server_now  # noqa: E402
 from core import quality, sim_room, thresholds  # noqa: E402
 from core.adapters.rppg import RppgAdapter  # noqa: E402
+from core.adapters.thermal_mlx90640 import ThermalRespiration  # noqa: E402
 from core.policy.l1_light import L1Light  # noqa: E402
 from core.policy.runner import PolicyRunner  # noqa: E402
 from core.registry import Registry  # noqa: E402
@@ -75,9 +76,13 @@ def synthetic_rgb(bpm: float, seconds: float = 14.0) -> tuple[np.ndarray, np.nda
 
 def test_signal_core() -> None:
     section("[1] rPPG 신호 코어 — 합성 신호로 BPM 복원")
-    adapter = RppgAdapter(id="rppg", mode="live")
-    adapter._gate = thresholds.load(ROOT / "config" / "thresholds.yaml").confidence_min
+    gate = thresholds.load(ROOT / "config" / "thresholds.yaml").confidence_min
     for bpm in (55, 72, 90, 120, 150):
+        # 어댑터를 매번 새로 만든다. 하나를 돌려 쓰면 55 를 받아들인 직후 72 가
+        # 들어오고, jump guard 는 그걸 밀리초 만에 17bpm 뛴 것으로 본다 — 여기서
+        # 재려는 것은 신호 코어의 복원 정확도지 궤적 연속성이 아니다.
+        adapter = RppgAdapter(id="rppg", mode="live")
+        adapter._gate = gate
         t, rgb = synthetic_rgb(bpm)
         m = adapter._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
         err = abs(float(m.value) - bpm) if m.value is not None else float("inf")
@@ -101,8 +106,51 @@ def test_quality_gating() -> None:
     check("얼굴을 놓치면 confidence 0", lost.confidence == 0.0, lost.hold_reason())
 
 
+def thermal_run(rpm: float, seconds: float) -> Metric:
+    """합성 열화상 프레임을 seconds 만큼 먹인 뒤 한 번 추정한다.
+
+    어댑터가 자기 카메라를 열게 둔다 — 합성 시계와 캡처 주기를 맞추는 것도
+    어댑터 몫이라, 여기서 카메라를 따로 만들면 그 배선을 안 태운다.
+    """
+    adapter = ThermalRespiration(
+        id="thermal", mode="simulated", nostril_roi=[13, 9, 6, 5], synthetic_rpm=rpm
+    )
+    adapter._gate = thresholds.load(ROOT / "config" / "thresholds.yaml").confidence_min
+    camera = adapter._open_camera()
+    for _ in range(int(seconds * adapter.refresh_hz)):
+        adapter._ingest(camera.read())
+    return adapter._estimate(
+        np.asarray(adapter._times, dtype=np.float64),
+        np.asarray(adapter._temps, dtype=np.float64),
+        adapter._roi_pixels,
+        adapter._delta_t,
+    )
+
+
+def test_thermal_rr() -> None:
+    section("[3] 열화상 호흡 — 합성 프레임으로 RR 복원 (카메라 불필요)")
+    for rpm in (10, 15, 22):
+        m = thermal_run(rpm, seconds=30.0)
+        err = abs(float(m.value) - rpm) if m.value is not None else float("inf")
+        check(f"{rpm} rpm 복원 (오차 2 이내)", err <= 2.0, f"추정 {m.value} / 오차 {err:.1f}")
+
+    # RR 최소 창은 20초다. 그 구간과 "온도 대비가 없어서 못 낸다"가 둘 다
+    # low_quality 라, progress 없이는 화면에서 구분이 안 된다 (README §2).
+    warming = thermal_run(15, seconds=10.0)
+    check(
+        "창 채우는 중에는 보류",
+        warming.value is None and warming.state == "low_quality",
+        f"state={warming.state}",
+    )
+    check(
+        "기다리면 되는지를 진행률로 알린다",
+        warming.progress is not None and 0.0 < warming.progress < 1.0,
+        f"progress={warming.progress}",
+    )
+
+
 def test_thresholds() -> None:
-    section("[3] 임계값 — 코드가 아니라 thresholds.yaml 이 정한다")
+    section("[4] 임계값 — 코드가 아니라 thresholds.yaml 이 정한다")
     active = thresholds.load(ROOT / "config" / "thresholds.yaml")
     check("프로파일 로드", bool(active.profile), f"profile={active.profile}")
     check("L1 임계값 존재", "lux_min" in active.policy("l1_light"), str(active.policy("l1_light")))
@@ -126,7 +174,7 @@ def snapshot(confidence: float, lux: float, at: datetime) -> Snapshot:
 
 
 async def test_l1_policy() -> None:
-    section("[4] L1 조명 개입 — 어두울 때만, 야간은 제외")
+    section("[5] L1 조명 개입 — 어두울 때만, 야간은 제외")
     sim_room.reset()
     active = thresholds.load(ROOT / "config" / "thresholds.yaml")
     switch = TuyaPlug(id="room_light", mode="simulated")
@@ -144,7 +192,7 @@ async def test_l1_policy() -> None:
 
 
 async def test_l1_loop() -> None:
-    section("[5] L1 폐루프 — 개입하면 효과가 측정된다")
+    section("[6] L1 폐루프 — 개입하면 효과가 측정된다")
     sim_room.reset()
     active = thresholds.load(ROOT / "config" / "thresholds.yaml")
     switch = TuyaPlug(id="room_light", mode="simulated", simulated_lux_gain=120.0)
@@ -169,7 +217,7 @@ async def test_l1_loop() -> None:
 
 
 async def test_mock_pipeline() -> None:
-    section("[6] mock 설정 — 하드웨어 0개로 전체 파이프라인")
+    section("[7] mock 설정 — 하드웨어 0개로 전체 파이프라인")
     sim_room.reset()
     registry = Registry.from_yaml(ROOT / "config" / "device.mock.yaml")
     await registry.start()
@@ -201,6 +249,7 @@ async def main() -> int:
         print("TouchFree Vitals — 자체 검증 (하드웨어 불필요)")
     test_signal_core()
     test_quality_gating()
+    test_thermal_rr()
     test_thresholds()
     await test_l1_policy()
     await test_l1_loop()

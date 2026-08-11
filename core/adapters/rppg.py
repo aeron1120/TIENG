@@ -54,6 +54,15 @@ FACE_DETECT_SEC = 0.5  # 매 프레임 검출은 Pi에서 FPS를 깎는다
 READ_FAIL_LIMIT = 30  # 연속 실패가 이만큼이면 카메라가 빠진 것으로 본다
 SETTLE_SEC = 2.0  # 자동 노출/화벨이 수렴할 때까지 기다렸다가 잠근다
 
+# --- 안정화 -------------------------------------------------------------- #
+# legacy 데모(rppg_demo_v4.py)에는 SQI 게이트 말고도 jump guard / 출력 EMA /
+# 라벨 히스테리시스가 있었는데 Phase 2 이식에서 신호 코어만 가져왔다. 그게 없으면
+# 12초 창을 1초마다 다시 풀 때 나오는 흔들림이 그대로 화면에 나간다.
+EMA_ALPHA = 0.3  # 프레임 단위 관측치용. jitter 와 같은 값 (30fps 에서 시간상수 ~0.3초)
+BPM_SMOOTH_ALPHA = 0.3  # 표시 BPM 용. legacy 의 --smooth-alpha 와 같은 자리
+GATE_HYSTERESIS = 0.08  # 게이트 진입/이탈 dead-band. legacy hysteresis_label 과 같은 값
+JUMP_RELEASE_S = 10.0  # 점프 거부가 이만큼 이어지면 기준값이 틀린 것으로 보고 풀어 준다
+
 PREVIEW_WIDTH = 320  # 얼굴이 ROI 안에 들어왔는지 보는 용도라 이 이상 필요 없다
 PREVIEW_FPS = 10.0
 PREVIEW_QUALITY = 70
@@ -74,17 +83,20 @@ class RppgAdapter(SensorAdapter):
         width: int = 640,
         height: int = 480,
         window_s: float = WINDOW_SEC,
-        backend: str = "auto",
+        backend: str = "opencv",
         settle_s: float = SETTLE_SEC,
         thresholds_path: str = str(thresholds.DEFAULT_PATH),
     ) -> None:
         super().__init__(id, mode)
+        # 자동 감지하지 않는다. USB 와 CSI 가 둘 다 꽂힌 기기에서 어느 쪽을 고를지
+        # 규칙이 지저분해지고, device.yaml 은 어차피 기기별 파일이라 적어 두는 편이
+        # 낫다. 오타가 조용히 opencv 로 떨어지면 엉뚱한 카메라가 열리므로 여기서 막는다.
+        if backend not in ("opencv", "picamera2"):
+            raise ValueError(f"backend 는 opencv 또는 picamera2 여야 한다: {backend!r}")
         self.camera_index = camera_index
         self.width = width
         self.height = height
         self.window_s = window_s
-        # "auto" 는 picamera2 를 먼저 보고 없으면 cv2 로 내려간다. 파이 config 는
-        # "picamera2" 로 못 박는다 — 조용히 웹캠 경로로 새면 왜 안 되는지 찾기 어렵다.
         self.backend = backend
         self.settle_s = settle_s
         self.thresholds_path = Path(thresholds_path)
@@ -99,13 +111,21 @@ class RppgAdapter(SensorAdapter):
         self._times: deque[float] = deque()
         self._rgbs: deque[tuple[float, float, float]] = deque()
         self._jitter_ema = 0.0
-        self._skin_ratio = 0.0
-        self._brightness = 0.0
+        # None 은 "아직 표본이 없다". 0.0 으로 시작하면 ROI 를 되찾은 뒤에도 한동안
+        # 낮은 값이 남아 멀쩡한 창이 보류된다.
+        self._skin_ratio: float | None = None
+        self._brightness: float | None = None
         self._fault: str | None = None
         self._preview: bytes | None = None
         self._preview_until = 0.0  # 이 시각까지는 보는 사람이 있다고 본다
 
         self._gate = 0.4
+        # 안정화 상태. read() 가 순차로만 불리므로 lock 을 걸지 않는다.
+        self._prev_bpm: float | None = None  # 받아들인 궤적. 거부된 후보는 넣지 않는다
+        self._prev_t: float | None = None
+        self._display_bpm: float | None = None
+        self._reject_since: float | None = None
+        self._emitting = False  # 게이트를 통과한 상태인가 (히스테리시스용)
 
     # --- 수명주기 --------------------------------------------------------- #
 
@@ -146,8 +166,9 @@ class RppgAdapter(SensorAdapter):
             times = np.asarray(self._times, dtype=np.float64)
             rgbs = np.asarray(self._rgbs, dtype=np.float64)
             jitter = self._jitter_ema
-            skin_ratio = self._skin_ratio
-            brightness = self._brightness
+            # 표본이 아직 없으면 0 으로 본다. 그 상태는 MIN_SAMPLES 게이트가 먼저 잡는다.
+            skin_ratio = self._skin_ratio or 0.0
+            brightness = self._brightness or 0.0
 
         loop = asyncio.get_running_loop()
         metric = await loop.run_in_executor(
@@ -159,15 +180,8 @@ class RppgAdapter(SensorAdapter):
 
     def _open_camera(self) -> Any:
         """프레임 소스를 연다. 어느 쪽이든 read()/release() 만 내준다."""
-        if self.backend == "opencv":
-            return self._open_opencv()
-        try:
-            return _Picamera2Source(self.camera_index, self.width, self.height, self.settle_s)
-        except Exception as exc:
-            if self.backend == "picamera2":
-                # 사유를 그대로 올린다. hwcheck 가 이걸 그대로 찍어야 쓸모가 있다.
-                raise RuntimeError(f"picamera2 를 열 수 없다: {exc}") from exc
-            log.info("rppg.picamera2_unavailable", adapter=self.id, error=str(exc))
+        if self.backend == "picamera2":
+            return _open_picamera2(self.camera_index, self.width, self.height, self.settle_s)
         return self._open_opencv()
 
     def _open_opencv(self) -> Any:
@@ -235,8 +249,14 @@ class RppgAdapter(SensorAdapter):
                 if roi.rgb is not None:
                     self._times.append(now)
                     self._rgbs.append(roi.rgb)
-                    self._skin_ratio = roi.skin_ratio
-                    self._brightness = roi.brightness
+                    # skin_ratio 와 brightness 도 같은 이유로 누른다. 얼굴 검출이
+                    # FACE_DETECT_SEC 마다만 도니 그 사이 박스가 흔들리면 ROI 가
+                    # 움직이고, read() 가 1Hz 로 집어 가는 것은 마지막 한 프레임의
+                    # 값이다. skin_ratio 에는 하드 플로어가 걸려 있어서 0.100 ->
+                    # 0.099 한 번에 confidence 가 0.89 에서 0 으로 떨어진다 —
+                    # 12초 창은 멀쩡한데 한 프레임 때문에 보류되는 것이다.
+                    self._skin_ratio = _ema(self._skin_ratio, roi.skin_ratio)
+                    self._brightness = _ema(self._brightness, roi.brightness)
                 while self._times and (now - self._times[0]) > self.window_s:
                     self._times.popleft()
                     self._rgbs.popleft()
@@ -368,9 +388,65 @@ class RppgAdapter(SensorAdapter):
             brightness=brightness,
             jitter_norm=jitter_norm,
         )
-        if q.confidence < self._gate:
+        if not self._passes_gate(q.confidence):
             return self._hold(q.confidence, q.hold_reason(), progress)
-        return self._metric(round(bpm, 1), q.confidence, "ok", progress)
+
+        accepted = self._guard(bpm, time.monotonic())
+        if accepted is None:
+            return self._hold(q.confidence, f"생리학적으로 불가능한 점프 ({bpm:.0f}bpm)", progress)
+        return self._metric(round(accepted, 1), q.confidence, "ok", progress)
+
+    # --- 안정화 ----------------------------------------------------------- #
+
+    def _passes_gate(self, confidence: float) -> bool:
+        """게이트에 dead-band 를 둔다.
+
+        임계값 하나로 자르면 경계 근처를 오가는 confidence 때문에 표시와 보류가 매 틱
+        깜빡인다. 데모에서 이러면 고장난 것처럼 보인다. 내보내는 값을 정하는 데만
+        쓰고 confidence 숫자 자체는 건드리지 않는다 — L1 은 원래 값을 봐야 한다.
+        """
+        need = self._gate - GATE_HYSTERESIS if self._emitting else self._gate + GATE_HYSTERESIS
+        self._emitting = confidence >= need
+        return self._emitting
+
+    def _guard(self, bpm: float, now: float) -> float | None:
+        """생리학적으로 불가능한 점프를 막고, 통과한 값을 눌러 표시값으로 만든다.
+
+        점수로 벌하는 것과 다르다. 점프를 confidence 성분으로만 다루면 그 창 하나만
+        벌하고 그 뒤로는 바뀐 값이 기준이 되어, 움직임 배음에 락온한 뒤에는 틀린 값이
+        '일관된' 값이 된다 (합성 실측: 73 -> 100bpm 락온 뒤 confidence 0.95). guard 는
+        애초에 그 값으로 가지 않는다.
+
+        거부가 오래 이어지면 풀어 준다. 사람이 나갔다 왔거나 우리 기준값이 애초에
+        틀렸을 수 있고, 그때 영구히 멎으면 그게 더 나쁘다.
+        """
+        if self._prev_bpm is None or self._prev_t is None:
+            return self._smooth(bpm, now)
+
+        allowed = quality.BAND_HR.max_delta_per_sec * max(now - self._prev_t, 1e-3)
+        if abs(bpm - self._prev_bpm) <= allowed:
+            self._reject_since = None
+            return self._smooth(bpm, now)
+
+        if self._reject_since is None:
+            self._reject_since = now
+        elif now - self._reject_since >= JUMP_RELEASE_S:
+            log.info("rppg.jump_released", adapter=self.id, bpm=round(bpm, 1))
+            self._reject_since = None
+            self._display_bpm = None  # 새 수준으로 갈아탄다. 옛 값에서 끌고 오지 않는다
+            return self._smooth(bpm, now)
+        return None
+
+    def _smooth(self, bpm: float, now: float) -> float:
+        """표시값 EMA. 12초 창을 1초마다 다시 풀면 나오는 잔떨림을 없앤다."""
+        self._prev_bpm = bpm
+        self._prev_t = now
+        self._display_bpm = (
+            bpm
+            if self._display_bpm is None
+            else (1.0 - BPM_SMOOTH_ALPHA) * self._display_bpm + BPM_SMOOTH_ALPHA * bpm
+        )
+        return self._display_bpm
 
     def _hold(self, confidence: float | None, reason: str, progress: float) -> Metric:
         """값을 지어내지 않고 보류한다 (README §0-4). 사유는 로그로 남긴다.
@@ -400,88 +476,133 @@ class RppgAdapter(SensorAdapter):
 
 
 # --------------------------------------------------------------------------- #
-# 카메라 소스
+# 카메라 백엔드
 # --------------------------------------------------------------------------- #
-class _Picamera2Source:
-    """CSI 카메라(libcamera) 프레임 소스.
+class _Picamera2Capture:
+    """Picamera2 를 cv2.VideoCapture 처럼 보이게 감싼다.
 
-    카메라 모듈 3 은 Bookworm 에서 libcamera 전용이라 cv2.VideoCapture 로 열리지
-    않는다. cv2 와 같은 read()/release() 를 내주므로 캡처 루프는 그대로 쓴다.
-
-    여는 즉시 노출·화이트밸런스·초점을 고정한다. rPPG 가 보는 건 피부 RGB 의
-    0.1~1% 변동이라 자동 보정이 매 프레임 개입하면 신호보다 큰 잡음이 얹힌다
-    (legacy/tieng_rppg/confidence/example_wiring.py 가 웹캠에서 첫 번째로 꼽던 것).
-    고정값을 코드에 박지 않고 settle_s 동안 수렴시킨 뒤 그 값을 읽어 잠그므로 방
-    밝기가 달라도 따라간다. 웹캠에서는 이게 드라이버마다 먹거나 안 먹었지만
-    (rppg_demo_v4 의 --force-lock-exposure) 여기서는 확정적이다.
+    캡처 루프와 stop() 은 read()/release() 만 쓴다. 그 두 개만 맞춰 주면 나머지
+    코드는 어느 백엔드로 열렸는지 몰라도 된다.
     """
 
-    def __init__(self, camera_index: int, width: int, height: int, settle_s: float) -> None:
-        from picamera2 import Picamera2  # 파이에서만 있다 (apt python3-picamera2)
+    __slots__ = ("_camera",)
 
-        self._picam = Picamera2(camera_index)
-        # "RGB888" 을 달라고 하면 넘어오는 배열의 채널 순서는 B,G,R 이다. libcamera
-        # 포맷 이름이 바이트 역순이라 그렇다. cv2 가 기대하는 순서와 같아서 아래
-        # 피부마스크·POS 를 그대로 쓴다. 뒤집으면 피부가 안 잡혀 값이 영영 안 나온다.
-        self._picam.configure(
-            self._picam.create_video_configuration(
-                main={"size": (width, height), "format": "RGB888"},
-                # 추정은 어차피 30Hz 격자로 다시 샘플링한다(FS_RESAMPLE). 그보다 빨리
-                # 받아 봐야 파이에서 CPU 만 먹는다.
-                controls={"FrameDurationLimits": (33333, 33333)},
-            )
-        )
-        self._picam.start()
-        self._freeze(settle_s)
-
-    def _freeze(self, settle_s: float) -> None:
-        from libcamera import controls as libcontrols  # picamera2 가 딸고 온다
-
-        available = self._picam.camera_controls
-
-        # 초점부터. AF 가 계속 초점을 찾으면 ROI 선명도가 프레임마다 달라져 그대로
-        # 신호에 들어온다. 한 번 맞추고 그 자리에 세운다.
-        if "AfMode" in available:
-            self._picam.set_controls({"AfMode": libcontrols.AfModeEnum.Auto})
-            self._picam.autofocus_cycle()
-
-        time.sleep(settle_s)
-        md = self._picam.capture_metadata()
-
-        locked: dict[str, Any] = {"AeEnable": False, "AwbEnable": False}
-        for key in ("ExposureTime", "AnalogueGain", "ColourGains"):
-            if key in md:
-                locked[key] = md[key]
-        if "AfMode" in available:
-            locked["AfMode"] = libcontrols.AfModeEnum.Manual
-            if "LensPosition" in md:
-                locked["LensPosition"] = md["LensPosition"]
-        self._picam.set_controls(locked)
-
-        log.info(
-            "rppg.camera_locked",
-            exposure_us=md.get("ExposureTime"),
-            gain=md.get("AnalogueGain"),
-            lens=md.get("LensPosition"),
-        )
+    def __init__(self, camera: Any) -> None:
+        self._camera = camera
 
     def read(self) -> tuple[bool, np.ndarray | None]:
-        # 예외를 삼키고 False 를 주는 건 cv2 와 계약을 맞추기 위해서다. 연속 실패는
-        # 캡처 루프가 READ_FAIL_LIMIT 로 세어 카메라가 빠진 것으로 처리한다.
+        # 여기서 예외가 새어 나가면 캡처 스레드가 조용히 죽는다. 그러면 _fault 가
+        # 안 잡혀 read() 는 멎은 창을 계속 내보낸다 — 실패는 실패로 보여야 한다.
         try:
-            return True, self._picam.capture_array("main")
+            return True, self._camera.capture_array()
         except Exception as exc:
-            log.debug("rppg.capture_failed", error=str(exc))
+            log.warning("rppg.picamera2_read_failed", error=str(exc))
             return False, None
 
     def release(self) -> None:
-        self._picam.stop()
-        self._picam.close()
+        self._camera.stop()
+        self._camera.close()
+
+
+def _open_picamera2(
+    camera_index: int, width: int, height: int, settle_s: float
+) -> _Picamera2Capture:
+    """CSI 리본 카메라 (Bookworm).
+
+    이 카메라도 /dev/video0 으로 잡히기는 하지만 그건 디베이어 전 raw 프레임이라
+    cv2.VideoCapture 로는 쓸 수 없다. libcamera 를 거치는 Picamera2 로 연다.
+
+    picamera2 는 libcamera 파이썬 바인딩에 묶여 있어 apt 로만 깔린다
+    (python3-picamera2). pi extras 에 넣으면 pip 설치가 통째로 깨지므로 넣지 않고,
+    venv 를 --system-site-packages 로 만들어 가져온다 (docs/hardware.md §0).
+    여기서 늦게 import 하는 것은 다른 드라이버와 같은 이유다 — 없으면 이 카드만
+    죽고 나머지는 그대로 돈다.
+    """
+    from picamera2 import Picamera2
+
+    # 카메라가 없으면 Picamera2 는 "list index out of range" 로 죽는다. 그 메시지만
+    # 보고는 리본이 안 꽂힌 건지 인덱스가 틀린 건지 알 수 없으므로 먼저 세어 본다.
+    found = Picamera2.global_camera_info()
+    if camera_index >= len(found):
+        raise RuntimeError(
+            f"libcamera 가 잡은 카메라는 {len(found)}대인데 camera_index={camera_index} 를 찾는다. "
+            "리본이 제대로 꽂혔는지, rpicam-hello --list-cameras 에 보이는지 확인할 것"
+        )
+
+    camera = Picamera2(camera_index)
+    # 포맷 이름은 메모리에 담기는 순서와 반대다. "RGB888" 로 잡아야 실제 바이트가
+    # B,G,R 순으로 와서 cv2 가 기대하는 배열이 그대로 나온다. 뒤집히면 POS 도
+    # 피부 마스크도 조용히 틀리므로, 파이에서 미리보기를 열어 피부가 파랗게 보이지
+    # 않는지 눈으로 확인할 것.
+    camera.configure(
+        camera.create_video_configuration(
+            main={"size": (width, height), "format": "RGB888"},
+            # 추정은 어차피 30Hz 격자로 다시 샘플링한다(FS_RESAMPLE). 그보다 빨리
+            # 받아 봐야 파이에서 CPU 만 먹는다.
+            controls={"FrameDurationLimits": (33333, 33333)},
+        )
+    )
+    camera.start()
+    _freeze(camera, settle_s)
+    return _Picamera2Capture(camera)
+
+
+def _freeze(camera: Any, settle_s: float) -> None:
+    """노출·화이트밸런스·초점을 고정한다.
+
+    rPPG 가 보는 건 피부 RGB 의 0.1~1% 변동이라, 자동 보정이 매 프레임 개입하면
+    신호보다 큰 잡음이 얹힌다 (legacy/tieng_rppg/confidence/example_wiring.py 가
+    웹캠에서 조심할 것 첫 번째로 꼽던 항목이다).
+
+    고정값을 코드에 박지 않고 settle_s 동안 수렴시킨 뒤 그 값을 읽어 잠근다. 그래야
+    방 밝기가 달라도 따라간다. 웹캠에서는 이게 드라이버마다 먹거나 안 먹었지만
+    (rppg_demo_v4 의 --force-lock-exposure) picamera2 에서는 확정적이다.
+    """
+    from libcamera import controls as libcontrols  # picamera2 가 딸고 온다
+
+    available = camera.camera_controls
+
+    # 초점부터. AF 가 계속 초점을 찾으면 ROI 선명도가 프레임마다 달라져 그대로
+    # 신호에 들어온다. 한 번 맞추고 그 자리에 세운다.
+    if "AfMode" in available:
+        camera.set_controls({"AfMode": libcontrols.AfModeEnum.Auto})
+        camera.autofocus_cycle()
+
+    time.sleep(settle_s)
+    md = camera.capture_metadata()
+
+    locked: dict[str, Any] = {"AeEnable": False, "AwbEnable": False}
+    for key in ("ExposureTime", "AnalogueGain", "ColourGains"):
+        if key in md:
+            locked[key] = md[key]
+    if "AfMode" in available:
+        locked["AfMode"] = libcontrols.AfModeEnum.Manual
+        if "LensPosition" in md:
+            locked["LensPosition"] = md["LensPosition"]
+    camera.set_controls(locked)
+
+    log.info(
+        "rppg.camera_locked",
+        exposure_us=md.get("ExposureTime"),
+        gain=md.get("AnalogueGain"),
+        lens=md.get("LensPosition"),
+    )
 
 
 # --------------------------------------------------------------------------- #
 # 신호 처리 (rppg_demo_v4.py 에서 이식)
 # --------------------------------------------------------------------------- #
+def _ema(previous: float | None, sample: float) -> float:
+    """첫 표본은 그대로 받는다.
+
+    0 에서 시작하면 ROI 를 되찾은 뒤에도 한동안 낮은 값이 남아, 멀쩡한 창이 하드
+    플로어에 걸려 보류된다.
+    """
+    if previous is None:
+        return sample
+    return (1.0 - EMA_ALPHA) * previous + EMA_ALPHA * sample
+
+
 def _pos(rgb: np.ndarray) -> np.ndarray:
     """POS. RGB 시계열에서 맥파 후보를 뽑는다."""
     mean = np.mean(rgb, axis=0)

@@ -29,9 +29,13 @@ adapters:
     params: { base_bpm: 68, noise: 1.5, warmup_s: 8,
               excursion_bpm: 108, excursion_every_s: 120, excursion_for_s: 40 }
   - id: rr_estimator
-    module: core.adapters.rr_mock
+    module: core.adapters.thermal_mlx90640
     mode: simulated
-    params: { base_rpm: 15, noise: 1.2 }
+    # 열화상 카메라 없이 합성 프레임으로 돈다. rr_mock 대신 이걸 쓰는 이유는 실제
+    # 신호처리 경로(캡처 → 콧구멍 ROI → 리샘플 → 대역통과 → SQI)를 그대로 태우기
+    # 때문이다. rr_mock 은 정현파를 바로 내보내 그 경로를 건너뛴다.
+    # 켠 뒤 20초 동안 progress 막대가 도는지 확인할 것 — RR 최소 창이 그만큼이다.
+    params: { nostril_roi: [13, 9, 6, 5], refresh_hz: 4, synthetic_rpm: 15 }
   - id: posture
     module: core.adapters.posture_mock
     mode: simulated

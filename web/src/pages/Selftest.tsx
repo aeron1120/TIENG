@@ -31,7 +31,6 @@ export function Selftest() {
   return (
     <Page
       title="자체 검증"
-      description="카메라도 센서도 없이 신호처리부터 개입 정책까지 확인한다. 파이에 올리기 전과 시연 직전에 돌려 볼 것"
       actions={
         <button
           onClick={() => send()}

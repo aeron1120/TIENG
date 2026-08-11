@@ -43,7 +43,6 @@ export function Records() {
   return (
     <Page
       title="기록"
-      description="개입 이력과 로그 파일. 발화하지 않은 순간도 사유와 함께 남는다"
       actions={
         <button
           onClick={rows.run}

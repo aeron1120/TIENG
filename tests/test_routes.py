@@ -11,15 +11,18 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from api.auth import Users
+from tests.conftest import sign_in
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def client(monkeypatch: pytest.MonkeyPatch, account_db: Users) -> TestClient:
     monkeypatch.setenv("DEVICE_CONFIG", str(REPO_ROOT / "config" / "device.mock.yaml"))
     from api.main import app
 
-    return TestClient(app)
+    return sign_in(TestClient(app), account_db)
 
 
 def test_system_reports_every_component(client: TestClient) -> None:
@@ -35,12 +38,14 @@ def test_system_reports_every_component(client: TestClient) -> None:
     assert body["thresholds"]["profile"] == "demo"
 
 
-def test_system_explains_why_a_component_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_system_explains_why_a_component_failed(
+    monkeypatch: pytest.MonkeyPatch, account_db: Users
+) -> None:
     """실패 사유가 화면까지 와야 배선을 고칠 수 있다."""
     monkeypatch.setenv("DEVICE_CONFIG", str(REPO_ROOT / "config" / "device.yaml"))
     from api.main import app
 
-    with TestClient(app) as client:
+    with sign_in(TestClient(app), account_db) as client:
         body = client.get("/api/system").json()
 
     failed = [a for a in body["adapters"] if a["state"] == "failed"]

@@ -6,12 +6,16 @@
 
 셋으로 나눈다:
   guest   비회원. 실시간 화면 하나만 본다.
-  member  가입한 계정. 기록·시스템·검증까지 본다.
-  admin   첫 가입자. 계정을 차단할 수 있다.
+  member  승인된 계정. 기록·시스템·검증까지 본다.
+  admin   첫 가입자. 가입을 승인하고 계정을 차단할 수 있다.
 
-가입은 열려 있다. 승인을 거치지 않는 대신 active 플래그로 나중에 차단한다 — 막을
-일이 생겼을 때 쓸 손잡이는 있어야 하고, 그게 없으면 계정을 지우는 것 말고 방법이
-없다.
+첫 가입자는 관리자로 바로 들어오고, 그 뒤로는 관리자 승인을 기다린다. 화면이 공개
+주소로도 열리게 되면서 열어 둘 수 없게 됐다 — 주소를 아는 누구나 방의 지표와 기록을
+보게 된다.
+
+계정 상태를 approved 와 active 두 값으로 나눠 둔다. "아직 승인 안 됨"과 "쓰다가
+막힘"은 관리자가 보는 목록도, 당사자에게 할 말도 다르다. 하나로 묶으면 로그인 실패
+사유가 "차단됐다" 하나로 뭉개져서, 기다리면 되는 사람이 사람을 찾아 나선다.
 
 비회원도 세션을 발급받는다. "쿠키 없음"과 "비회원으로 들어옴"이 서버에서 구분돼야
 비회원에게 열어 줄 경로만 골라 열 수 있다.
@@ -61,7 +65,11 @@ CREATE TABLE IF NOT EXISTS users (
     username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
     password_hash TEXT NOT NULL,
     role          TEXT NOT NULL,
-    active        INTEGER NOT NULL,  -- 0 이면 차단됐다
+    -- 두 값을 나누는 이유는 "아직 승인 안 됨"과 "쓰다가 막힘"이 다른 일이기 때문이다.
+    -- 하나로 묶으면 화면이 대기자와 차단자를 같은 목록에 섞어 보여 주게 되고,
+    -- 로그인 실패 사유도 "차단됐다" 하나로 뭉개진다.
+    approved      INTEGER NOT NULL DEFAULT 1,  -- 0 이면 관리자 승인을 기다린다
+    active        INTEGER NOT NULL,            -- 0 이면 차단됐다
     created_at    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -109,7 +117,8 @@ class Account(BaseModel):
     id: int
     username: str
     role: Role
-    active: bool
+    approved: bool  # False 면 관리자 승인을 기다린다
+    active: bool  # False 면 차단됐다
     created_at: datetime
 
 
@@ -203,14 +212,23 @@ class Users:
     def init(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            # 승인 대기가 생기기 전에 만들어진 DB 에는 approved 가 없다. 기본값 1 이라
+            # 기존 계정은 전부 승인된 것으로 남는다 — 쓰던 사람이 갑자기 잠기면 안 된다.
+            columns = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+            if "approved" not in columns:
+                conn.execute("ALTER TABLE users ADD COLUMN approved INTEGER NOT NULL DEFAULT 1")
+                log.info("auth.migrated", added="users.approved")
 
     # --- 가입 / 로그인 ---
 
     def register(self, username: str, password: str) -> Account:
-        """가입하면 바로 쓸 수 있다. 첫 가입자만 관리자가 된다.
+        """첫 가입자는 관리자로 바로 들어오고, 그 뒤로는 승인을 기다린다.
 
-        기기를 처음 켠 사람이 주인이라고 본다. 그 뒤로는 등급이 member 로 같고,
-        관리자와의 차이는 계정을 차단할 수 있는지 하나뿐이다.
+        기기를 처음 켠 사람이 주인이라고 본다. 그 사람을 대기시키면 승인해 줄 사람이
+        아무도 없어서 기기가 잠긴다.
+
+        두 번째부터 대기를 두는 이유는 이 화면이 공개 주소로도 열리기 때문이다.
+        열어 두면 주소를 아는 누구나 방의 지표와 기록을 보게 된다.
         """
         username = check_username(username)
         if len(password) < 8:
@@ -224,11 +242,13 @@ class Users:
             conn.execute("BEGIN IMMEDIATE")
             first = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
             role: Role = "admin" if first else "member"
+            approved = first
             try:
                 cur = conn.execute(
-                    "INSERT INTO users (username, password_hash, role, active, created_at)"
-                    " VALUES (?, ?, ?, 1, ?)",
-                    (username, digest, role, now.isoformat()),
+                    "INSERT INTO users"
+                    " (username, password_hash, role, approved, active, created_at)"
+                    " VALUES (?, ?, ?, ?, 1, ?)",
+                    (username, digest, role, int(approved), now.isoformat()),
                 )
             except sqlite3.IntegrityError:
                 conn.execute("ROLLBACK")
@@ -236,8 +256,15 @@ class Users:
             user_id = int(cur.lastrowid or 0)
             conn.execute("COMMIT")
 
-        log.info("auth.registered", username=username, role=role)
-        return Account(id=user_id, username=username, role=role, active=True, created_at=now)
+        log.info("auth.registered", username=username, role=role, approved=approved)
+        return Account(
+            id=user_id,
+            username=username,
+            role=role,
+            approved=approved,
+            active=True,
+            created_at=now,
+        )
 
     def taken(self, username: str) -> bool:
         """이미 있는 아이디인가. 대소문자는 가리지 않는다 (users.username 이 NOCASE)."""
@@ -249,7 +276,7 @@ class Users:
         """세션 토큰. 아이디가 없어도 비밀번호가 틀려도 같은 말을 돌려준다."""
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, password_hash, role, active FROM users WHERE username = ?",
+                "SELECT id, password_hash, role, approved, active FROM users WHERE username = ?",
                 (username.strip(),),
             ).fetchone()
 
@@ -258,6 +285,9 @@ class Users:
             stored = row["password_hash"] if row else hash_password(password)
             if not check_password(password, stored) or row is None:
                 raise AuthError(401, "아이디 또는 비밀번호가 맞지 않다")
+            # 사유를 나눈다. 기다리면 되는 것과 사람에게 말해야 하는 것은 다르다.
+            if not row["approved"]:
+                raise AuthError(403, "관리자 승인을 기다리는 중이다")
             if not row["active"]:
                 raise AuthError(403, "차단된 계정이다")
 
@@ -292,7 +322,7 @@ class Users:
             now = datetime.now(UTC).isoformat()
             conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
             row = conn.execute(
-                "SELECT u.username, u.role, u.active FROM sessions s"
+                "SELECT u.username, u.role, u.approved, u.active FROM sessions s"
                 " LEFT JOIN users u ON u.id = s.user_id WHERE s.token = ?",
                 (token,),
             ).fetchone()
@@ -301,21 +331,22 @@ class Users:
             return None
         if row["username"] is None:
             return Principal(username=None, role="guest")
-        # 차단된 계정의 옛 세션이 살아 있으면 안 된다.
-        if not row["active"]:
+        # 차단됐거나 승인이 철회된 계정의 옛 세션이 살아 있으면 안 된다.
+        if not row["active"] or not row["approved"]:
             return None
         return Principal(username=str(row["username"]), role=str(row["role"]))  # type: ignore[arg-type]
 
     def accounts(self) -> list[Account]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, username, role, active, created_at FROM users ORDER BY id"
+                "SELECT id, username, role, approved, active, created_at FROM users ORDER BY id"
             ).fetchall()
         return [
             Account(
                 id=int(r["id"]),
                 username=str(r["username"]),
                 role=str(r["role"]),  # type: ignore[arg-type]
+                approved=bool(r["approved"]),
                 active=bool(r["active"]),
                 created_at=datetime.fromisoformat(str(r["created_at"])),
             )
@@ -364,6 +395,27 @@ class Users:
 
         # 언제 적었는지는 서버 시계로 정한다. 본문에 실려 온 값은 버린다.
         return profile.model_copy(update={"updated_at": now})
+
+    def set_approved(self, user_id: int, approved: bool) -> None:
+        """가입 승인을 내주거나 거둔다. 거두면 열려 있던 세션도 같이 닫는다.
+
+        차단(set_active)과 나눠 둔 이유는 관리자가 보는 목록이 다르기 때문이다.
+        대기자는 "아직 아무것도 못 한 사람"이고 차단자는 "쓰다가 막힌 사람"이라,
+        한 버튼으로 묶으면 승인 목록에 차단자가 섞여 들어온다.
+
+        관리자에게서는 거둘 수 없다. set_active 와 같은 이유다 — 마지막 관리자를
+        잠그면 되돌릴 사람이 없다.
+        """
+        with self._connect() as conn:
+            row = conn.execute("SELECT role FROM users WHERE id = ?", (user_id,)).fetchone()
+            if row is None:
+                raise AuthError(404, "그런 계정이 없다")
+            if row["role"] == "admin" and not approved:
+                raise AuthError(400, "관리자 계정의 승인은 거둘 수 없다")
+            conn.execute("UPDATE users SET approved = ? WHERE id = ?", (int(approved), user_id))
+            if not approved:
+                conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        log.info("auth.set_approved", user_id=user_id, approved=approved)
 
     def set_active(self, user_id: int, active: bool) -> None:
         """계정을 차단하거나 되돌린다. 차단하면 열려 있던 세션도 같이 닫는다.

@@ -44,14 +44,55 @@ def test_the_first_account_is_the_admin(users: Users) -> None:
     assert owner.active and nurse.active
 
 
-def test_anyone_can_sign_up_and_use_it_at_once(users: Users) -> None:
-    """가입이 열려 있다. 승인을 기다리는 단계가 없다."""
-    users.register("owner", "correct horse")
-    account = users.register("nurse", "battery staple")
+def test_the_first_account_does_not_wait_for_approval(users: Users) -> None:
+    """첫 사람을 대기시키면 승인해 줄 사람이 없어 기기가 잠긴다."""
+    owner = users.register("owner", "correct horse")
 
-    assert account.active is True
+    assert owner.approved is True
+    assert users.principal(users.login("owner", "correct horse")) is not None
+
+
+def test_later_signups_wait_for_approval(users: Users) -> None:
+    """공개 주소에서는 주소를 아는 누구나 들어오게 두면 안 된다."""
+    users.register("owner", "correct horse")
+    nurse = users.register("nurse", "battery staple")
+
+    assert nurse.approved is False
+    with pytest.raises(AuthError) as exc:
+        users.login("nurse", "battery staple")
+    assert exc.value.status == 403
+
+    users.set_approved(nurse.id, True)
     who = users.principal(users.login("nurse", "battery staple"))
     assert who is not None and who.role == "member"
+
+
+def test_waiting_and_blocked_do_not_read_the_same(users: Users) -> None:
+    """기다리면 되는 사람과 사람을 찾아가야 하는 사람에게 같은 말을 하면 안 된다."""
+    users.register("owner", "correct horse")
+    nurse = users.register("nurse", "battery staple")
+
+    with pytest.raises(AuthError) as waiting:
+        users.login("nurse", "battery staple")
+
+    users.set_approved(nurse.id, True)
+    users.set_active(nurse.id, False)
+    with pytest.raises(AuthError) as blocked:
+        users.login("nurse", "battery staple")
+
+    assert waiting.value.detail != blocked.value.detail
+
+
+def test_withdrawing_approval_closes_open_sessions(users: Users) -> None:
+    """승인을 거뒀는데 열려 있던 창이 살아 있으면 거둔 것이 아니다."""
+    users.register("owner", "correct horse")
+    nurse = users.register("nurse", "battery staple")
+    users.set_approved(nurse.id, True)
+    token = users.login("nurse", "battery staple")
+    assert users.principal(token) is not None
+
+    users.set_approved(nurse.id, False)
+    assert users.principal(token) is None
 
 
 def test_wrong_password_and_unknown_id_look_the_same(users: Users) -> None:
@@ -71,6 +112,7 @@ def test_blocking_closes_open_sessions(users: Users) -> None:
     """차단하면 이미 들어와 있던 창도 같이 끊겨야 한다. 안 그러면 안 막힌 것과 같다."""
     users.register("owner", "correct horse")
     nurse = users.register("nurse", "battery staple")
+    users.set_approved(nurse.id, True)
     token = users.login("nurse", "battery staple")
     assert users.principal(token) is not None
 
@@ -126,16 +168,34 @@ def test_guest_sees_the_live_screen_only(client: TestClient) -> None:
         assert client.get("/api/logs").status_code == 403
 
 
-def test_registering_logs_you_straight_in(client: TestClient) -> None:
-    """가입 응답이 곧 세션이다. 방금 정한 비밀번호를 다시 치게 하지 않는다."""
+def test_the_first_registration_logs_you_straight_in(client: TestClient) -> None:
+    """첫 사람은 승인할 사람이 없으므로 그 자리에서 들어온다."""
     with client:
         body = client.post(
             "/api/auth/register", json={"username": "owner", "password": "correct horse"}
         )
-        assert body.json() == {"username": "owner", "role": "admin"}
+        assert body.json() == {
+            "pending": False,
+            "principal": {"username": "owner", "role": "admin"},
+        }
 
         assert client.get("/api/system").status_code == 200
         assert client.get("/api/interventions").status_code == 200
+
+
+def test_a_pending_registration_gets_no_session(client: TestClient) -> None:
+    """쿠키를 내주고 화면만 가리면 대기 중에도 API 가 열려 있는 셈이다."""
+    with client:
+        client.post("/api/auth/register", json={"username": "owner", "password": "correct horse"})
+        client.post("/api/auth/logout")
+
+        body = client.post(
+            "/api/auth/register", json={"username": "nurse", "password": "battery staple"}
+        )
+        assert body.json() == {"pending": True, "principal": None}
+
+        # 세션이 없으니 회원 경로가 열리면 안 된다.
+        assert client.get("/api/system").status_code in (401, 403)
 
 
 def test_availability_answers_before_the_form_is_submitted(client: TestClient) -> None:
@@ -229,7 +289,12 @@ def test_a_profile_belongs_to_the_session_not_the_body(client: TestClient) -> No
         client.post("/api/auth/register", json={"username": "owner", "password": "correct horse"})
         client.put("/api/auth/profile", json={"display_name": "주인"})
 
+        # 가입만으로는 세션이 안 생긴다. 관리자로 있는 동안 승인해 두고 갈아탄다.
         client.post("/api/auth/register", json={"username": "nurse", "password": "battery staple"})
+        nurse = next(a for a in client.get("/api/auth/users").json() if a["username"] == "nurse")
+        client.put(f"/api/auth/users/{nurse['id']}/approved", json={"approved": True})
+
+        client.post("/api/auth/login", json={"username": "nurse", "password": "battery staple"})
         client.put("/api/auth/profile", json={"display_name": "간호사", "username": "owner"})
 
         assert client.get("/api/auth/profile").json()["display_name"] == "간호사"

@@ -20,14 +20,20 @@ export function atLeast(role: Role | undefined, minimum: Role): boolean {
   return role !== undefined && RANK[role] >= RANK[minimum]
 }
 
+/** 가입 결과. 승인이 필요하면 세션이 없으므로 principal 도 없다 (api/routes/auth.py). */
+export interface Registration {
+  pending: boolean
+  principal: Principal | null
+}
+
 export interface Auth {
   principal: Principal | null
   /** 첫 조회가 끝나기 전. 이 동안은 관문도 본문도 띄우지 않는다. */
   checking: boolean
   enterAsGuest: () => Promise<void>
   logIn: (username: string, password: string) => Promise<void>
-  /** 가입하면 그 자리에서 들어온다. 승인을 기다리지 않는다. */
-  register: (username: string, password: string) => Promise<void>
+  /** 첫 가입자만 그 자리에서 들어온다. 그 뒤로는 pending 이 true 로 돌아온다. */
+  register: (username: string, password: string) => Promise<Registration>
   logOut: () => Promise<void>
 }
 
@@ -36,7 +42,7 @@ const Ctx = createContext<Auth>({
   checking: true,
   enterAsGuest: async () => {},
   logIn: async () => {},
-  register: async () => {},
+  register: async () => ({ pending: false, principal: null }),
   logOut: async () => {},
 })
 
@@ -76,7 +82,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const register = useCallback(async (username: string, password: string) => {
-    setPrincipal(await post<Principal>('/api/auth/register', { username, password }))
+    const result = await post<Registration>('/api/auth/register', { username, password })
+    // 승인 대기면 세션이 없다. principal 을 세우면 화면만 열리고 API 는 전부 막혀서
+    // 어디가 고장났는지 알 수 없는 상태가 된다.
+    if (result.principal) setPrincipal(result.principal)
+    return result
   }, [])
 
   const logOut = useCallback(async () => {

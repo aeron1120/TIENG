@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
+  Clock,
   Eye,
   LogIn,
   UserPlus,
@@ -53,6 +54,9 @@ export function Gate() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [taken, setTaken] = useState<Availability | null>(null)
+  // 가입은 됐는데 아직 못 들어온 상태. 관문에 그대로 두면 방금 가입한 사람이
+  // 비밀번호를 잘못 쳤다고 생각하고 계속 다시 시도한다.
+  const [waiting, setWaiting] = useState<string | null>(null)
 
   // 아이디가 겹치는지는 치는 동안 물어본다. 비밀번호 확인란과 같은 이유다 — 가입을
   // 누른 뒤에 "이미 있는 아이디"를 알려 주면 비밀번호까지 다 채운 뒤다.
@@ -97,8 +101,14 @@ export function Gate() {
     setBusy(true)
     setError(null)
     try {
-      if (mode === 'login') await logIn(username, password)
-      else await register(username, password)
+      if (mode === 'login') {
+        await logIn(username, password)
+      } else {
+        const { pending } = await register(username, password)
+        // pending 이면 AuthProvider 가 principal 을 안 세운다. 관문이 그대로 남으므로
+        // 여기서 무슨 일이 벌어졌는지 말해 줘야 한다.
+        if (pending) setWaiting(username.trim())
+      }
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -133,7 +143,36 @@ export function Gate() {
             </p>
           </div>
 
-          {mode === 'choose' ? (
+          {waiting ? (
+            <div className="flex flex-col gap-3">
+              <div className="rounded-lg border-[0.5px] border-gold/25 bg-panel px-4 py-4">
+                <p className="kr flex items-center gap-2 text-[14px] font-medium text-gold">
+                  <Clock className="h-4 w-4 shrink-0" />
+                  승인을 기다리는 중입니다
+                </p>
+                <p className="kr mt-2 text-[12px] leading-relaxed text-faint">
+                  <span className="text-muted">{waiting}</span> 계정이 만들어졌습니다. 관리자가
+                  승인하면 로그인할 수 있습니다. 방의 생체지표와 기록을 보는 화면이라 가입만으로
+                  열어 두지 않습니다.
+                </p>
+                <p className="kr mt-2 text-[12px] leading-relaxed text-faint">
+                  기다리는 동안 <span className="text-muted">비회원 접속</span>으로 실시간 화면은
+                  볼 수 있습니다.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setWaiting(null)
+                  go('choose')
+                }}
+                className={LINK}
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                처음으로
+              </button>
+            </div>
+          ) : mode === 'choose' ? (
             <div className="flex flex-col gap-2.5">
               <button onClick={guest} disabled={busy} className={CARD}>
                 <Eye className="h-4 w-4 shrink-0 text-gold" />

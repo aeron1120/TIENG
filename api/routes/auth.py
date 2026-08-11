@@ -43,6 +43,21 @@ class Block(BaseModel):
     active: bool
 
 
+class Approval(BaseModel):
+    approved: bool
+
+
+class Registration(BaseModel):
+    """가입 결과.
+
+    승인이 필요하면 세션이 없으므로 principal 도 없다. 화면은 pending 을 보고
+    "기다리라"고 말한다 — Principal 하나로 돌려주면 그 구분을 못 한다.
+    """
+
+    pending: bool
+    principal: Principal | None = None
+
+
 class Availability(BaseModel):
     available: bool
     detail: str  # 왜 못 쓰는지. 쓸 수 있으면 빈 문자열
@@ -100,22 +115,28 @@ async def available(request: Request, username: str) -> Availability:
     return Availability(available=True, detail="")
 
 
-@router.post("/register", response_model=Principal)
-async def register(request: Request, response: Response, body: Credentials) -> Principal:
-    """가입하면 그 자리에서 들어온다. 승인을 기다리지 않는다.
+@router.post("/register", response_model=Registration)
+async def register(request: Request, response: Response, body: Credentials) -> Registration:
+    """첫 가입자는 그 자리에서 들어오고, 그 뒤로는 승인을 기다린다.
 
-    가입 직후에 로그인 화면으로 한 번 더 보내지 않는 이유: 방금 정한 비밀번호를
-    바로 다시 치게 만들 뿐이고, 그 사이에 얻는 것이 없다.
+    첫 사람을 대기시키면 승인해 줄 사람이 없어 기기가 잠긴다 (api/auth.py).
+
+    승인이 필요한 경우에는 세션을 만들지 않는다. 쿠키를 내주고 화면만 가리면 서버는
+    이미 들어온 것으로 아는 셈이라, 대기 중에도 API 가 열려 있게 된다.
     """
     store = _store(request)
     try:
         account = await asyncio.to_thread(store.register, body.username, body.password)
+        if not account.approved:
+            return Registration(pending=True)
         token = await asyncio.to_thread(store.login, body.username, body.password)
     except AuthError as exc:
         raise HTTPException(exc.status, exc.detail) from None
 
     _set_cookie(response, token)
-    return Principal(username=account.username, role=account.role)
+    return Registration(
+        pending=False, principal=Principal(username=account.username, role=account.role)
+    )
 
 
 @router.post("/login", response_model=Principal)
@@ -163,6 +184,17 @@ admin = APIRouter(prefix="/api/auth", dependencies=[Depends(require("admin"))])
 @admin.get("/users", response_model=list[Account])
 async def list_users(request: Request) -> list[Account]:
     return await asyncio.to_thread(_store(request).accounts)
+
+
+@admin.put("/users/{user_id}/approved", response_model=list[Account])
+async def set_approved(user_id: int, body: Approval, request: Request) -> list[Account]:
+    """가입을 승인하거나 거두고, 갱신된 목록을 돌려준다."""
+    store = _store(request)
+    try:
+        await asyncio.to_thread(store.set_approved, user_id, body.approved)
+    except AuthError as exc:
+        raise HTTPException(exc.status, exc.detail) from None
+    return await asyncio.to_thread(store.accounts)
 
 
 @admin.put("/users/{user_id}/active", response_model=list[Account])

@@ -11,8 +11,18 @@
 
 ## 0. 파이 준비
 
-이미지는 **Pi OS Bookworm 64-bit**. numpy·scipy·opencv-python 이 aarch64 휠로 바로
-깔린다 — 32비트는 공식 휠이 없어 OpenCV 를 몇 시간 걸려 소스 빌드하게 된다.
+이미지는 **64비트**를 쓴다. numpy·scipy·opencv-python 이 aarch64 휠로 바로 깔린다 —
+32비트는 공식 휠이 없어 OpenCV 를 몇 시간 걸려 소스 빌드하게 된다.
+
+tfv-pi-01 은 **Pi 5 + Pi OS Trixie(Debian 13, Python 3.13)** 로 올렸고 위 패키지가
+전부 cp313 aarch64 휠로 깔렸다. `pyproject.toml` 의 `requires-python = ">=3.11"` 이라
+Bookworm(3.11)과 Trixie(3.13) 어느 쪽이든 그대로 돈다.
+
+Imager 의 OS 커스터마이즈(톱니바퀴)에서 **SSH·계정·Wi-Fi·국가코드**를 채운 뒤 굽는다.
+빼먹으면 헤드리스로는 붙을 방법이 없다. 요즘 Imager 는 이 설정을 부트 파티션의
+**cloud-init 파일**(`user-data`·`network-config`·`meta-data`)로 쓴다 — 예전 문서가
+말하는 `custom.toml`·`firstrun.sh`·빈 `ssh` 파일을 찾으면 없다. 잘 구워졌는지는 SD 를
+PC 에 꽂아 그 세 파일이 있는지로 확인한다.
 
 ```bash
 sudo raspi-config          # Interface Options → I2C → Enable
@@ -27,6 +37,9 @@ python -m venv --system-site-packages .venv && source .venv/bin/activate
 pip install -e ".[dev,pi]"          # pi extras 가 나머지 드라이버를 깐다
 ```
 
+데스크톱 이미지에는 `python3-picamera2` 가 이미 들어 있어 위 apt 는 대개 할 일이
+없다. Lite 이미지면 이때 깔린다.
+
 `pi` extras 에 들어 있는 것: `smbus2`, `bme680`, `gpiozero`, `lgpio`, `tinytuya`,
 `adafruit-circuitpython-mlx90640`(열화상, blinka 가 `board`/`busio` 를 같이 깐다).
 개발 PC 에서는 설치하지 않는다 (설치도 안 되고 import 도 안 된다).
@@ -36,8 +49,8 @@ pip install -e ".[dev,pi]"          # pi extras 가 나머지 드라이버를 �
 그걸 들여다보게 한다.
 
 **Legacy Camera 는 켜지 말 것.** 오래된 문서들이 카메라를 쓰려면 raspi-config 에서
-활성화하라고 하는데, 켜면 libcamera 스택이 죽어 picamera2 가 아예 못 돈다. Bookworm 은
-카메라를 자동 인식하므로 여기서 켤 것은 I2C 뿐이다.
+활성화하라고 하는데, 켜면 libcamera 스택이 죽어 picamera2 가 아예 못 돈다. 요즘
+이미지는 카메라를 자동 인식하므로 여기서 켤 것은 I2C 뿐이다.
 
 ---
 
@@ -83,6 +96,31 @@ pip install -e ".[dev,pi]"          # pi extras 가 나머지 드라이버를 �
   raw 프레임이다. 꽂았으면 `rpicam-hello --list-cameras` 에 보이는지부터 확인한다.
   - Pi 5 는 카메라 커넥터가 22핀이므로 **15핀↔22핀 변환 케이블**이 필요하다.
   - USB 웹캠이면 노출·화벨 고정이 드라이버 마음이라 신호가 나빠진다.
+
+### 카메라가 보이는데 프레임이 안 올 때
+
+`rpicam-hello --list-cameras` 에는 멀쩡히 뜨는데 실제 캡처가 이렇게 죽는 경우:
+
+```
+Camera frontend has timed out!
+Please check that your camera sensor connector is attached securely.
+```
+
+**커넥터를 반대쪽 CAM/DISP 로 옮기면 살아난다.** tfv-pi-01 이 그랬다 — 리본을 몇 번
+다시 꽂아도 안 되다가 옆 커넥터로 바꾸니 바로 됐다.
+
+증상을 읽는 법이 있다. 목록에 뜬다는 것은 **I2C 제어선은 통했다**는 뜻이고, 프레임이
+안 온다는 것은 **CSI 데이터선만 불통**이라는 뜻이다. 둘은 같은 커넥터를 지나므로
+"인식되니까 케이블은 괜찮다"는 판단이 틀린다. 리본이 살짝 비뚤어도 제어 핀은 닿고
+데이터 레인은 안 닿는다.
+
+순서대로 해 볼 것 — **전원을 뽑고** 만진다 (인가 상태에서 CSI 를 만지면 모듈이 죽는다):
+
+1. 양쪽 끝 리본 재장착. 접점이 커넥터 안으로 완전히 들어가야 한다
+2. **다른 CAM/DISP 커넥터로 이동** (Pi 5 는 두 개다)
+3. 리본 교체. Pi 5 는 22핀이라 15↔22핀 변환 케이블을 쓰는데 이게 범인인 경우가 많다
+
+`rpicam-hello --timeout 3000 --nopreview` 가 에러 없이 끝나면 해결된 것이다.
 
 ### 카메라가 "No cameras available" 일 때
 
@@ -159,19 +197,32 @@ python scripts/hwcheck.py
 알고리즘 쪽은 하드웨어 없이 따로 본다:
 
 ```bash
-python scripts/selftest.py      # 신호처리 + 품질 게이팅 + L1 정책, 23개 항목
+python scripts/selftest.py      # 신호처리 + 품질 게이팅 + L1 정책, 28개 항목
 ```
 
 ---
 
 ## 4. 띄우고 눈으로 확인
 
+파이에서는 화면을 **빌드해서** 내보낸다. vite dev 서버를 띄우지 않는 이유는 포트가
+하나면 프록시도 CORS 도 필요 없기 때문이다 — `api/main.py` 가 `web/dist` 가 있으면
+알아서 같은 포트로 서빙한다. 노드는 이미지에 없으므로 한 번 깔아야 한다.
+
 ```bash
+sudo apt install -y nodejs npm      # 처음 한 번만
+cd web && npm install && npm run build && cd ..
+
 DEVICE_CONFIG=config/device.yaml uvicorn api.main:app --host 0.0.0.0 --port 8000
-cd web && npm run dev
 ```
 
-같은 LAN 의 다른 기기에서 `http://<파이 IP>:5173/` 으로 접속된다.
+같은 LAN 의 다른 기기에서 `http://<파이 IP>:8000/` 으로 접속된다. 폰으로 열어도 된다.
+`--host 0.0.0.0` 을 빼면 파이 자신에서만 열린다.
+
+화면 코드를 고치는 중이라면 개발 PC 에서 `npm run dev` 를 띄우는 편이 빠르다. 대신
+`web/vite.config.ts` 의 프록시 대상이 `127.0.0.1:8000` 이라 파이를 보게 바꿔야 한다.
+
+접속하면 첫 화면이 로그인 관문이다. **회원가입**부터 하면 첫 계정이 관리자가 된다.
+비회원 접속은 실시간 화면만 열려서 시스템 상태·기록은 보이지 않는다.
 
 확인할 것:
 

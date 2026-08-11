@@ -27,7 +27,14 @@ REM Child processes inherit this, so nothing has to be chained inside start.
 REM Chaining with && inside a quoted cmd /k argument is fragile.
 set "DEVICE_CONFIG=%CFG%"
 
-start "TFV backend" /d "%ROOT%" cmd /k .venv\Scripts\uvicorn.exe api.main:app --port 8000
+REM --reload watches our packages only. Plain --reload walks the whole tree,
+REM so .venv and web\node_modules get watched too and a pip/npm install would
+REM restart the server. Config files are not watched either way (uvicorn only
+REM looks at .py), so a device.yaml edit still needs a manual restart.
+REM
+REM In live mode each reload re-opens the camera, which costs a few seconds on
+REM picamera2 -- it settles auto-exposure before locking it (core/adapters/rppg.py).
+start "TFV backend" /d "%ROOT%" cmd /k .venv\Scripts\uvicorn.exe api.main:app --port 8000 --reload --reload-dir api --reload-dir core --reload-dir actuators
 start "TFV web" /d "%ROOT%\web" cmd /k npm run dev
 
 echo.

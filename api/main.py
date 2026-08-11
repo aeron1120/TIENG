@@ -27,6 +27,7 @@ from api.routes.system import router as system_router
 from api.schemas import Snapshot, server_now
 from api.ws import Hub
 from api.ws import router as ws_router
+from core import overrides
 from core.csv_logs import InterventionCsvLogger, MetricCsvLogger
 from core.policy.runner import PolicyRunner
 from core.registry import Registry
@@ -85,7 +86,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     path = _config_path()
     log.info("startup", config=str(path))
 
-    registry = Registry.from_yaml(path)
+    # 화면에서 바꾼 값이 재시작 후에도 남아야 한다. device.yaml 은 손으로 적는
+    # 기본값이고, 그 위에 덮는다 (core/overrides.py).
+    registry = Registry.from_yaml(path, overrides.load())
     await registry.start()
 
     users = Users(_users_path())

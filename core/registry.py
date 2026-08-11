@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ from pydantic import BaseModel, Field
 from actuators.base import Actuator
 from api.schemas import Metric, Mode, State
 from core.adapters.base import PreviewSource, SensorAdapter
+from core.overrides import Overrides
 from core.policy.base import InterventionPolicy
 from core.thresholds import Thresholds
 from core.thresholds import load as load_thresholds
@@ -27,6 +29,13 @@ from core.thresholds import load as load_thresholds
 log = structlog.get_logger(__name__)
 
 T = TypeVar("T")
+
+# backend 를 고를 수 있는 어댑터. 모듈로 찾는 이유는 id 가 config 마다 다르기
+# 때문이다 (device.mock.yaml 에는 아예 없다).
+CAMERA_MODULE = "core.adapters.rppg"
+# 이 어댑터의 기본값과 같아야 한다. registry 가 rppg 를 import 하면 개발 PC 에서도
+# cv2 가 딸려 오므로 (importlib 로 늦게 여는 이유가 그것이다) 값만 옮겨 적는다.
+DEFAULT_CAMERA_BACKEND = "opencv"
 
 
 class AdapterEntry(BaseModel):
@@ -73,11 +82,18 @@ class Registry:
         self._provides: dict[str, list[str]] = {}
         # 왜 못 올라왔는지. 화면에서 바로 읽을 수 있어야 배선을 고칠 수 있다.
         self._failures: dict[str, str] = {}
+        # 카드 하나를 다시 여는 동안 또 열라는 요청이 오면 카메라를 두 번 잡는다.
+        # 두 번째가 "device busy" 로 실패해서, 고친 사람 눈에는 방금 고른 값이
+        # 안 먹은 것처럼 보인다.
+        self._restart_lock = asyncio.Lock()
 
     @classmethod
-    def from_yaml(cls, path: Path) -> Registry:
+    def from_yaml(cls, path: Path, overrides: Overrides | None = None) -> Registry:
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-        return cls(DeviceConfig.model_validate(raw))
+        registry = cls(DeviceConfig.model_validate(raw))
+        if overrides is not None and overrides.camera_backend is not None:
+            registry.set_camera_backend(overrides.camera_backend)
+        return registry
 
     # --- 수명주기 ----------------------------------------------------------- #
 
@@ -85,6 +101,32 @@ class Registry:
         await self._start_adapters()
         await self._start_actuators()
         self._build_policies()
+
+    async def restart_adapter(self, adapter_id: str) -> None:
+        """어댑터 하나만 다시 연다.
+
+        샘플 루프는 계속 돈다. read_all 이 매 틱 _adapters 를 새로 들여다보므로,
+        비어 있는 동안에는 그 카드만 no_adapter 로 나가고 나머지 지표는 그대로다.
+
+        실패해도 예외를 올리지 않는다. 카메라가 안 열리는 것은 여기서 흔한 결과이고
+        (그걸 확인하려고 바꿔 보는 것이다), 사유는 _failures 를 거쳐 화면에 그대로
+        실린다 — start() 때와 같은 자리다.
+        """
+        entry = next((e for e in self.config.adapters if e.id == adapter_id), None)
+        if entry is None:
+            raise LookupError(f"{adapter_id} 는 config 에 없는 어댑터다")
+
+        async with self._restart_lock:
+            old = self._adapters.pop(adapter_id, None)
+            if old is not None:
+                try:
+                    await old.stop()
+                except Exception as exc:
+                    # 못 닫아도 새로 여는 것은 시도한다. 여기서 멈추면 카드가
+                    # 영영 안 돌아온다.
+                    log.warning("adapter.stop_failed", adapter=adapter_id, error=str(exc))
+            self._failures.pop(adapter_id, None)
+            await self._start_one(entry)
 
     async def stop(self) -> None:
         for adapter in self._adapters.values():
@@ -187,10 +229,35 @@ class Registry:
             "sample_rate_hz": self.config.sample_rate_hz,
             "thresholds_path": self.config.thresholds,
             "thresholds": thresholds,
+            # 카메라 어댑터가 없는 구성(mock)에서는 None 이다.
+            "camera_backend": self.camera_backend(),
+            "camera_adapter": getattr(self.camera_entry(), "id", None),
             "adapters": adapters,
             "actuators": actuators,
             "policies": policies,
         }
+
+    # --- 카메라 백엔드 ------------------------------------------------------- #
+    # CSI 리본이 안 열릴 때 화면에서 opencv 로 바꿔 볼 수 있어야 한다. 파이에 ssh 로
+    # 붙어 device.yaml 을 고치고 서비스를 재시작하는 것이 원래 절차인데, 카메라가
+    # 왜 안 잡히는지 찾는 중에 그 왕복은 비싸다.
+
+    def camera_entry(self) -> AdapterEntry | None:
+        """backend 를 고를 수 있는 어댑터. 없으면 화면이 선택칸을 감춘다."""
+        return next((e for e in self.config.adapters if e.module == CAMERA_MODULE), None)
+
+    def camera_backend(self) -> str | None:
+        entry = self.camera_entry()
+        if entry is None:
+            return None
+        return str(entry.params.get("backend", DEFAULT_CAMERA_BACKEND))
+
+    def set_camera_backend(self, backend: str) -> None:
+        """다음에 여는 것부터 적용된다. 지금 돌고 있는 것은 restart_adapter 가 갈아 끼운다."""
+        entry = self.camera_entry()
+        if entry is None:
+            raise LookupError(f"{CAMERA_MODULE} 어댑터가 config 에 없다")
+        entry.params["backend"] = backend
 
     def preview_sources(self) -> dict[str, PreviewSource]:
         """카메라 화면을 내보낼 수 있는 어댑터.
@@ -208,19 +275,22 @@ class Registry:
 
     async def _start_adapters(self) -> None:
         for entry in self.config.adapters:
-            adapter, provides = self._build_adapter(entry)
-            self._provides[entry.id] = provides
-            if adapter is None:
-                continue
-            try:
-                await adapter.start()
-            except Exception as exc:
-                # 하드웨어가 아직 안 붙은 흔한 경우다. 카드는 no_adapter 로 뜬다.
-                log.warning("adapter.start_failed", adapter=entry.id, error=str(exc))
-                self._failures[entry.id] = str(exc)
-                continue
-            self._adapters[entry.id] = adapter
-            log.info("adapter.started", adapter=entry.id, mode=entry.mode, provides=provides)
+            await self._start_one(entry)
+
+    async def _start_one(self, entry: AdapterEntry) -> None:
+        adapter, provides = self._build_adapter(entry)
+        self._provides[entry.id] = provides
+        if adapter is None:
+            return
+        try:
+            await adapter.start()
+        except Exception as exc:
+            # 하드웨어가 아직 안 붙은 흔한 경우다. 카드는 no_adapter 로 뜬다.
+            log.warning("adapter.start_failed", adapter=entry.id, error=str(exc))
+            self._failures[entry.id] = str(exc)
+            return
+        self._adapters[entry.id] = adapter
+        log.info("adapter.started", adapter=entry.id, mode=entry.mode, provides=provides)
 
     def _build_adapter(self, entry: AdapterEntry) -> tuple[SensorAdapter | None, list[str]]:
         """(어댑터, provides). 어댑터가 None 이면 값 없는 카드만 띄운다."""

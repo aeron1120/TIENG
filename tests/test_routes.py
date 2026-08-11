@@ -143,6 +143,82 @@ def test_layout_caps_how_much_it_will_store(
         assert client.put("/api/layout", json={"hero": "x" * 200, "order": []}).status_code == 422
 
 
+# --- 카메라 backend 선택 ------------------------------------------------------ #
+# 파이에 ssh 로 붙어 device.yaml 을 고치고 서비스를 재시작하는 대신 화면에서 바꾼다.
+# 진짜 rppg 대신 가짜 어댑터를 쓰는 이유는 tests/fixture_camera.py 에 적어 뒀다.
+
+CAMERA_YAML = """
+device_id: tfv-cam-01
+adapters:
+  - id: rppg
+    module: tests.fixture_camera
+    mode: live
+    params: { backend: picamera2 }
+"""
+
+
+@pytest.fixture
+def camera_client(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, account_db: Users
+) -> TestClient:
+    config = tmp_path / "device.yaml"
+    config.write_text(CAMERA_YAML, encoding="utf-8")
+    monkeypatch.setenv("DEVICE_CONFIG", str(config))
+    monkeypatch.setattr("core.registry.CAMERA_MODULE", "tests.fixture_camera")
+    # 실기의 state/overrides.json 에 쓰지 않는다.
+    monkeypatch.setattr("core.overrides.DEFAULT_PATH", tmp_path / "overrides.json")
+    from api.main import app
+
+    return sign_in(TestClient(app), account_db)
+
+
+def test_switching_backend_reopens_only_that_adapter(camera_client: TestClient) -> None:
+    """CSI 가 안 열릴 때 화면에서 opencv 로 바꾸면 카드가 바로 살아난다."""
+    with camera_client as client:
+        before = client.get("/api/system").json()
+        assert before["camera_backend"] == "picamera2"
+        assert before["camera_adapter"] == "rppg"
+        assert before["adapters"][0]["state"] == "failed"
+
+        body = client.put("/api/system/camera-backend", json={"backend": "opencv"}).json()
+
+    assert body["camera_backend"] == "opencv"
+    assert body["adapters"][0]["state"] == "running"
+
+
+def test_the_chosen_backend_survives_a_restart(
+    camera_client: TestClient, tmp_path: Path
+) -> None:
+    """device.yaml 은 그대로 두고 state/ 에 남긴다 (core/overrides.py)."""
+    with camera_client as client:
+        client.put("/api/system/camera-backend", json={"backend": "opencv"})
+
+    config = tmp_path / "device.yaml"
+    assert "backend: picamera2" in config.read_text(encoding="utf-8")  # 파일은 안 건드린다
+
+    with camera_client as client:  # lifespan 을 다시 태운다 = 서버 재시작
+        body = client.get("/api/system").json()
+
+    assert body["camera_backend"] == "opencv"
+    assert body["adapters"][0]["state"] == "running"
+
+
+def test_unknown_backend_never_reaches_the_adapter(camera_client: TestClient) -> None:
+    """오타가 조용히 엉뚱한 카메라를 열면 안 된다."""
+    with camera_client as client:
+        res = client.put("/api/system/camera-backend", json={"backend": "picamera"})
+        assert res.status_code == 422
+        assert client.get("/api/system").json()["camera_backend"] == "picamera2"
+
+
+def test_no_camera_adapter_means_nothing_to_switch(client: TestClient) -> None:
+    """mock 구성에는 rppg 카메라가 없다. 화면은 선택칸을 감춘다."""
+    with client:
+        assert client.get("/api/system").json()["camera_backend"] is None
+        res = client.put("/api/system/camera-backend", json={"backend": "opencv"})
+        assert res.status_code == 404
+
+
 def test_cancel_rejects_unknown_intervention(client: TestClient) -> None:
     """이미 나간 알림은 취소되지 않는다. 없는 것도 마찬가지다."""
     with client:

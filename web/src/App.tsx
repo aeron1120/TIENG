@@ -15,6 +15,7 @@ import { ICON, LABEL, displayValue, effectiveState } from './metrics'
 import { Accounts } from './pages/Accounts'
 import { Gate } from './pages/Gate'
 import { Guardian } from './pages/Guardian'
+import { Intro } from './pages/Intro'
 import { Kiosk } from './pages/Kiosk'
 import { Records } from './pages/Records'
 import { Selftest } from './pages/Selftest'
@@ -167,8 +168,12 @@ function Shell() {
             메일이 나가면 안 된다. */}
         {atLeast(principal.role, 'member') && <PendingAlert />}
         <Routes>
-          {/* 첫 화면이 실시간이다. 등급을 가리지 않으므로 비회원도 여기까지는 온다. */}
-          <Route path="/" element={<Kiosk />} />
+          {/* 첫 화면이 등급에 따라 갈린다. 로그인한 사람은 매일 보는 사람이라 곧장
+              실시간으로 보내고, 비회원은 이 기기가 뭘 하는 물건인지부터 본다 —
+              공개 주소로 처음 들어온 사람에게는 숫자만으로는 아무 말도 안 된다. */}
+          <Route path="/" element={atLeast(principal.role, 'member') ? <Kiosk /> : <Intro />} />
+          {/* 소개 화면에서 넘어오는 자리. 비회원도 실시간까지는 본다. */}
+          <Route path="/live" element={<Kiosk />} />
           {nav.map(({ to }) => (
             <Route key={to} path={to} element={PAGES[to]} />
           ))}

@@ -27,7 +27,8 @@ python -m venv --system-site-packages .venv && source .venv/bin/activate
 pip install -e ".[dev,pi]"          # pi extras 가 나머지 드라이버를 깐다
 ```
 
-`pi` extras 에 들어 있는 것: `smbus2`, `bme680`, `gpiozero`, `lgpio`, `tinytuya`.
+`pi` extras 에 들어 있는 것: `smbus2`, `bme680`, `gpiozero`, `lgpio`, `tinytuya`,
+`adafruit-circuitpython-mlx90640`(열화상, blinka 가 `board`/`busio` 를 같이 깐다).
 개발 PC 에서는 설치하지 않는다 (설치도 안 되고 import 도 안 된다).
 
 `picamera2` 는 extras 에 없다. libcamera 파이썬 바인딩에 묶여 있어 pip 로는 안 깔리고,
@@ -58,8 +59,23 @@ pip install -e ".[dev,pi]"          # pi extras 가 나머지 드라이버를 �
 | PIR HC-SR501 | VCC | **5V** | 2 |
 | | GND | GND | 14 |
 | | OUT | GPIO4 | 7 |
+| MLX90640 (열화상) | VIN | 3.3V | 1 (공유) |
+| | GND | GND | 20 |
+| | SDA | GPIO2 | 3 (공유) |
+| | SCL | GPIO3 | 5 (공유) |
 
-- I2C 는 **버스를 공유**한다. BME680(0x76)과 BH1750(0x23)을 같은 SDA/SCL 에 물린다.
+- I2C 는 **버스를 공유**한다. BME680(0x76), BH1750(0x23), MLX90640(0x33)을 같은
+  SDA/SCL 에 물린다. 3.3V 핀은 헤더에 1·17 둘뿐이라 셋을 다 꽂으려면 브레드보드로
+  레일을 나눠 써야 한다.
+- **MLX90640 은 I2C 를 400kHz 로 올려야 한다.** 32x24=768 픽셀을 4Hz 로 받기에
+  기본 100kHz 로는 모자라서 프레임이 깨진다. 어댑터가 busio 에 400000 을 넘기지만
+  파이에서 실제 버스 속도를 정하는 것은 커널 파라미터다:
+
+  ```
+  # /boot/firmware/config.txt — 고치고 재부팅
+  dtparam=i2c_arm_baudrate=400000
+  ```
+
 - PIR 만 5V 다. OUT 신호는 3.3V 라 GPIO 에 바로 넣어도 된다.
 - 카메라(rPPG)는 CSI 또는 USB. `camera_index` 는 보통 0. **어느 쪽인지는
   `backend` 로 적어 준다** — CSI 리본이면 `picamera2`, USB 웹캠이면 `opencv`.
@@ -99,6 +115,7 @@ sudo i2ctransfer -y 10 w2@0x1a 0x00 0x16 r2     # 칩 ID → 0x07 0x08 이면 IM
 i2cdetect -y 1
 #      0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
 # 20:  -- -- -- 23 -- -- -- -- ...      ← BH1750
+# 30:  -- -- -- 33 -- -- -- -- ...      ← MLX90640
 # 70:  -- -- -- -- -- -- 76 --          ← BME680
 ```
 

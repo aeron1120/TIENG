@@ -9,7 +9,11 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 Mode = Literal["live", "simulated", "unavailable"]
-State = Literal["ok", "low_quality", "stale", "error", "no_adapter"]
+# rejected 는 low_quality 와 다르다. 신호는 기준을 넘었는데 값이 생리학적으로
+# 불가능해서 버린 것이다 — 실기에서 신뢰도 0.91 인데 124bpm 이 나오는 경우가 있었다.
+# 둘을 한 상태로 묶으면 화면이 "품질 미달"이라고 말하면서 옆에 높은 신뢰도를 같이
+# 띄우게 되어, 보는 사람이 어느 쪽을 믿어야 할지 알 수 없다.
+State = Literal["ok", "low_quality", "rejected", "stale", "error", "no_adapter"]
 Level = Literal["L0", "L1", "L2", "L3", "L4"]  # 개입 단계
 
 # 0.0~1.0 범위 밖 confidence는 게이팅 판단을 조용히 망가뜨리므로 스키마에서 막는다.

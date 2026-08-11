@@ -4,6 +4,7 @@ legacy/tieng_rppg 의 selftest 2·3 을 옮겨온 것으로, 이식 과정에서
 망가지지 않았는지가 핵심이다.
 """
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -310,6 +311,41 @@ def test_bad_signal_is_full_progress_not_warming_up() -> None:
     assert metric.state == "low_quality"
     assert metric.value is None
     assert metric.progress == 1.0  # 기다린다고 나아지지 않는다
+
+
+# --- 점프 거부 ------------------------------------------------------------- #
+# 신호가 나쁜 것과 값만 버린 것은 다르다. 실기에서 신뢰도 0.91 인데 124bpm 후보가
+# 올라온 적이 있는데, 둘을 한 상태로 묶으면 화면이 "품질 미달"이라고 말하면서 옆에
+# 높은 신뢰도를 같이 띄우게 된다.
+
+
+def test_jump_rejection_reports_rejected_not_low_quality() -> None:
+    adapter = _adapter()
+    t, rgb = _synthetic_rgb(72)
+    # 1초 전에 130bpm 을 받아들인 것으로 둔다. 72 로 내려오려면 8bpm/s 를 훌쩍 넘는다.
+    adapter._prev_bpm = 130.0
+    adapter._prev_t = time.monotonic() - 1.0
+
+    metric = adapter._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+
+    assert metric.state == "rejected"
+    assert metric.value is None  # 지어내지 않는다 (README §0-4)
+    assert metric.progress == 1.0  # 기다린다고 나아지는 상태가 아니다
+    # 게이트를 통과한 신호다. 이 값이 낮으면 애초에 low_quality 로 갔어야 한다.
+    assert metric.confidence is not None and metric.confidence >= adapter._gate
+
+
+def test_plausible_change_still_comes_out() -> None:
+    """가드가 정상 변화까지 막으면 값이 영영 안 나온다. 8bpm/s 안쪽은 통과한다."""
+    adapter = _adapter()
+    t, rgb = _synthetic_rgb(72)
+    adapter._prev_bpm = 70.0
+    adapter._prev_t = time.monotonic() - 1.0
+
+    metric = adapter._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+
+    assert metric.state == "ok"
+    assert metric.value is not None
 
 
 def test_progress_needs_both_gates() -> None:

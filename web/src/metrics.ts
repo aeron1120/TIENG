@@ -42,6 +42,7 @@ export const MODE_LABEL: Record<Mode, string> = {
 export const STATE_LABEL: Record<State, string> = {
   ok: '정상',
   low_quality: '품질 미달',
+  rejected: '급변 보류',
   stale: '수신 끊김',
   error: '오류',
   no_adapter: '어댑터 없음',

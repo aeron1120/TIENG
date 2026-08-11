@@ -4,6 +4,9 @@ import type { State } from '../types'
 // upstream 배너에는 "Fix Signal" / "Recalibrate" 버튼이 있었지만 가져오지 않았다.
 // 눌러서 신호가 좋아지는 장치가 없는데 버튼만 두면 거짓말이 된다. 상태만 알린다.
 
+// rejected 는 일부러 넣지 않았다. 점프 거부는 한두 틱 만에 다시 ok 로 돌아오는
+// 일이 잦아서 (실기에서 초 단위로 오갔다) 배너를 걸면 화면 위쪽이 계속 깜빡인다.
+// 카드의 '급변 보류' 뱃지로 충분하고, 배너는 신호 경로 전체가 이상할 때만 쓴다.
 const MESSAGE: Partial<Record<State, string>> = {
   stale: '서버 수신이 끊겼습니다 · 표시된 값은 최신이 아닙니다',
   low_quality: '신호 품질이 기준에 못 미쳐 값을 보류하고 있습니다',

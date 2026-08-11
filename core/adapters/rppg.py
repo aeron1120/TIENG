@@ -393,7 +393,14 @@ class RppgAdapter(SensorAdapter):
 
         accepted = self._guard(bpm, time.monotonic())
         if accepted is None:
-            return self._hold(q.confidence, f"생리학적으로 불가능한 점프 ({bpm:.0f}bpm)", progress)
+            # 품질 미달이 아니다. 게이트를 통과한 신호인데 값만 버린 것이라 상태를
+            # 나눈다 (api/schemas.py 의 State).
+            return self._hold(
+                q.confidence,
+                f"생리학적으로 불가능한 점프 ({bpm:.0f}bpm)",
+                progress,
+                state="rejected",
+            )
         return self._metric(round(accepted, 1), q.confidence, "ok", progress)
 
     # --- 안정화 ----------------------------------------------------------- #
@@ -448,16 +455,25 @@ class RppgAdapter(SensorAdapter):
         )
         return self._display_bpm
 
-    def _hold(self, confidence: float | None, reason: str, progress: float) -> Metric:
+    def _hold(
+        self,
+        confidence: float | None,
+        reason: str,
+        progress: float,
+        state: State = "low_quality",
+    ) -> Metric:
         """값을 지어내지 않고 보류한다 (README §0-4). 사유는 로그로 남긴다.
 
         progress 는 화면으로 나간다. 사유 문자열을 그대로 보내지 않는 이유는
         UI 문구를 어댑터가 정하게 되기 때문이다 — 화면은 숫자만 받아서 제 말로 쓴다.
+
+        state 를 받는 이유는 보류 사유가 두 종류이기 때문이다. 기본은 신호가 나쁜
+        것이고, 점프 거부는 신호가 멀쩡한데 값만 버린 것이라 rejected 로 나간다.
         """
         log.debug(
             "rppg.hold", adapter=self.id, reason=reason, confidence=confidence, progress=progress
         )
-        return self._metric(None, confidence, "low_quality", progress)
+        return self._metric(None, confidence, state, progress)
 
     def _metric(
         self, value: float | None, confidence: float | None, state: State, progress: float

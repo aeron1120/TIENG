@@ -1,0 +1,64 @@
+# 노트북/PC 웹캠 하나로 돌리는 설정.
+#   DEVICE_CONFIG=config/device.webcam.yaml uvicorn api.main:app --port 8000
+#
+# 심박(rPPG)만 실제 카메라로 재고 나머지는 합성이다. 파이 전용 하드웨어
+# (BME680/BH1750/PIR/MLX90640, Tuya)가 없는 개발 PC 에서 실측 rPPG 경로를
+# 눈으로 확인하려는 용도다. 화면에서 심박 카드만 금색 "실측"으로 떠야 한다.
+device_id: tfv-webcam-01
+sample_rate_hz: 1
+thresholds: config/thresholds.yaml
+metrics_csv: null              # 개발용이라 기본은 끈다
+interventions_csv: logs/interventions.webcam.csv
+
+adapters:
+  - id: rppg
+    module: core.adapters.rppg
+    mode: live
+    # USB/내장 웹캠이므로 backend 는 opencv 다 (device.yaml 의 picamera2 는 CSI 전용).
+    # 720p 로 올린 이유는 심박이 아니라 졸음이다. rPPG 는 볼 ROI 의 평균 RGB 만
+    # 쓰므로 480p 로 충분하지만, 눈꺼풀을 재려면 눈이 몇 픽셀로 잡히느냐가 그대로
+    # 정밀도가 된다. 480p 에서는 눈 하나가 40x20 px 남짓이라 감김 정도를 못 가른다.
+    params: { camera_index: 0, width: 1280, height: 720, window_s: 12, backend: opencv }
+  - id: drowsiness
+    module: core.adapters.drowsiness
+    mode: live
+    # 카메라를 직접 열지 않는다. rppg 가 잡고 있는 프레임을 받아 쓴다 — 같은 장치를
+    # 두 번 열면 Windows 에서 실패하고 Linux 에서도 두 스트림이 노출을 서로 흔든다.
+    # 그래서 rppg 를 빼면 이 카드도 같이 no_adapter 로 뜬다.
+    #
+    # 임계는 문헌의 통상값이고 이 장비로 보정한 적이 없다. 발표에서 근거로 쓰려면
+    # KSS 라벨을 붙인 자체 데이터가 먼저 필요하다.
+    params: { source: rppg, window_s: 60,
+              perclos_warn: 8, perclos_alert: 15,
+              blink_warn_ms: 300, blink_alert_ms: 400 }
+  - id: env
+    module: core.adapters.env_mock
+    mode: simulated
+    # dark_every_s: 0 으로 어둡게 만드는 주기를 끈다. 여기서는 실제 카메라
+    # 신뢰도를 보는 게 목적이라, 합성 조도가 L1 을 대신 터뜨리면 방해가 된다.
+    params: { base_lux: 140, dark_every_s: 0 }
+  - id: rr_estimator
+    module: core.adapters.thermal_mlx90640
+    mode: simulated
+    params: { nostril_roi: [13, 9, 6, 5], refresh_hz: 4, synthetic_rpm: 15 }
+  - id: posture
+    module: core.adapters.posture_mock
+    mode: simulated
+    params: { hold_ticks: 4 }
+
+actuators:
+  - id: room_light
+    module: actuators.tuya_plug
+    mode: simulated            # 네트워크를 건드리지 않는다
+    params: { simulated_lux_gain: 120 }
+  - id: guardian_email
+    module: actuators.notify_email
+    mode: simulated            # 실제로 보내지 않고 로그만 남는다
+
+policies:
+  - module: core.policy.l1_light
+    enabled: true
+    params: { switch_id: room_light }
+  - module: core.policy.l4_guardian
+    enabled: true
+    params: { notifier_id: guardian_email }

@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from actuators.base import Actuator
 from api.schemas import Metric, Mode, State
-from core.adapters.base import PreviewSource, SensorAdapter
+from core.adapters.base import FrameConsumer, FrameSource, PreviewSource, SensorAdapter
 from core.policy.base import InterventionPolicy
 from core.thresholds import Thresholds
 from core.thresholds import load as load_thresholds
@@ -83,6 +83,7 @@ class Registry:
 
     async def start(self) -> None:
         await self._start_adapters()
+        self._wire_frames()
         await self._start_actuators()
         self._build_policies()
 
@@ -205,6 +206,31 @@ class Registry:
         }
 
     # --- 로딩 --------------------------------------------------------------- #
+
+    def _wire_frames(self) -> None:
+        """프레임을 받아 도는 어댑터에 공급자를 붙인다.
+
+        어댑터끼리 서로를 찾지 못하게 하는 규칙(README §0-2)을 지키려고 여기서 한다.
+        공급자를 못 찾아도 세우지 않는다 — 카드가 값 없이 뜨고 사유가 화면에 실린다.
+        어느 하나가 죽어도 나머지는 돈다는 규칙과 같다 (README §0-3).
+        """
+        for entry in self.config.adapters:
+            consumer = self._adapters.get(entry.id)
+            if not isinstance(consumer, FrameConsumer):
+                continue
+            source = self._adapters.get(consumer.source_id)
+            if isinstance(source, FrameSource):
+                consumer.attach_frames(source)
+                log.info("adapter.frames_attached", adapter=entry.id, source=consumer.source_id)
+                continue
+            consumer.attach_frames(None)
+            why = (
+                f"프레임 공급자 {consumer.source_id!r} 가 없다"
+                if source is None
+                else f"{consumer.source_id!r} 는 프레임을 내보내지 않는다"
+            )
+            self._failures[entry.id] = why
+            log.warning("adapter.frames_missing", adapter=entry.id, source=consumer.source_id)
 
     async def _start_adapters(self) -> None:
         for entry in self.config.adapters:

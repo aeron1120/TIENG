@@ -62,6 +62,7 @@ PREVIEW_WIDTH = 320  # 얼굴이 ROI 안에 들어왔는지 보는 용도라 이
 PREVIEW_FPS = 10.0
 PREVIEW_QUALITY = 70
 PREVIEW_LINGER_SEC = 3.0  # 마지막 요청 후 이만큼 지나면 인코딩을 멈춘다
+FRAME_SHARE_LINGER_SEC = 3.0  # 프레임을 받아 가는 어댑터가 끊기면 이만큼 뒤 들고 있기를 멈춘다
 _PREVIEW_ROI = (89, 160, 197)  # BGR. 화면 강조색 #c5a059 와 같은 색
 _PREVIEW_FACE = (120, 120, 120)
 
@@ -111,6 +112,13 @@ class RppgAdapter(SensorAdapter):
         self._fault: str | None = None
         self._preview: bytes | None = None
         self._preview_until = 0.0  # 이 시각까지는 보는 사람이 있다고 본다
+        # 프레임 공유. 미리보기와 같은 규칙이다 — 받아 가는 쪽이 있을 때만 한 장을
+        # 메모리에 들고 있고 다음 프레임이 덮어쓴다. 디스크에는 쓰지 않는다.
+        self._frame: np.ndarray | None = None
+        self._frame_t = 0.0
+        self._frames_until = 0.0
+        # 남이 그려 달라고 맡긴 상자. {주인: (상자들, 색)}. 무엇을 뜻하는지는 모른다.
+        self._overlays: dict[str, tuple[list[tuple[int, int, int, int]], tuple[int, int, int]]] = {}
 
         self._gate = 0.4
         # 안정화 상태. read() 가 순차로만 불리므로 lock 을 걸지 않는다.
@@ -251,6 +259,12 @@ class RppgAdapter(SensorAdapter):
                     self._times.popleft()
                     self._rgbs.popleft()
                 wanted = now < self._preview_until
+                if now < self._frames_until:
+                    # 참조만 넘긴다. cap.read() 가 매번 새 배열을 주므로 이 한 장은
+                    # 캡처 스레드가 다시 건드리지 않는다.
+                    self._frame, self._frame_t = frame, now
+                else:
+                    self._frame = None
 
             # 미리보기는 보는 사람이 있을 때만 만든다. 아무도 안 보는데 매 프레임
             # JPEG 을 굽는 건 Pi 에서 그대로 FPS 손해다.
@@ -258,9 +272,35 @@ class RppgAdapter(SensorAdapter):
                 next_preview = now + 1.0 / PREVIEW_FPS
                 self._publish_preview(frame, face_box, width, height)
 
-            del frame  # 원본 프레임은 여기서 끝. 저장하지 않는다.
+            # 원본 프레임은 여기서 끝. 디스크에 쓰지 않는다 (README §1 비목표).
+            # 공유가 켜져 있으면 위에서 참조를 하나 남겨 뒀고, 그것도 다음 프레임이
+            # 덮어쓴다 — 메모리에 늘 한 장뿐이다.
+            del frame
 
     # --- 미리보기 --------------------------------------------------------- #
+
+    def latest_frame(self) -> tuple[float, np.ndarray] | None:
+        """FrameSource. 가장 최근 BGR 프레임과 그 캡처 시각(monotonic).
+
+        미리보기의 request_preview 와 같은 자리다 — 부르는 것 자체가 "받아 갈 사람이
+        있다"는 신호라, 아무도 안 부르면 캡처 루프는 프레임을 들고 있지도 않는다.
+        그래서 첫 호출은 None 이 정상이고, 다음 프레임부터 값이 나온다.
+        """
+        with self._lock:
+            self._frames_until = time.monotonic() + FRAME_SHARE_LINGER_SEC
+            if self._frame is None:
+                return None
+            return self._frame_t, self._frame
+
+    def set_overlay(
+        self,
+        owner: str,
+        boxes: list[tuple[int, int, int, int]],
+        color: tuple[int, int, int],
+    ) -> None:
+        """OverlayTarget. 미리보기에 같이 그려 줄 상자를 맡아 둔다."""
+        with self._lock:
+            self._overlays[owner] = (list(boxes), color)
 
     def request_preview(self) -> None:
         with self._lock:
@@ -299,6 +339,13 @@ class RppgAdapter(SensorAdapter):
             box(face_box, _PREVIEW_FACE)
         for rect in _roi_candidates(face_box, width, height):
             box(rect, _PREVIEW_ROI)
+
+        # 남이 맡긴 상자를 마지막에 얹는다. 위에 그려야 겹쳤을 때 가려지지 않는다.
+        with self._lock:
+            overlays = list(self._overlays.values())
+        for rects, color in overlays:
+            for rect in rects:
+                box(rect, color)
 
         # 거울상으로 뒤집는다. 화면을 보면서 자세를 잡는 용도라 좌우가 그대로면
         # 오른쪽으로 움직였는데 화면은 왼쪽으로 가서 맞추기가 어렵다.

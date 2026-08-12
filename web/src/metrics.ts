@@ -1,6 +1,9 @@
 import {
   Activity,
   Droplets,
+  Eye,
+  EyeOff,
+  Gauge,
   Heart,
   type LucideIcon,
   PersonStanding,
@@ -20,6 +23,9 @@ export const LABEL: Record<string, string> = {
   noise: '소음',
   occupancy: '재실',
   posture: '자세',
+  perclos: '눈감김',
+  blink_dur: '깜빡임',
+  drowsiness: '졸음',
 }
 
 export const ICON: Record<string, LucideIcon> = {
@@ -31,7 +37,17 @@ export const ICON: Record<string, LucideIcon> = {
   noise: Volume2,
   occupancy: PersonStanding,
   posture: Activity,
+  perclos: EyeOff,
+  blink_dur: Eye,
+  drowsiness: Gauge,
 }
+
+/**
+ * 졸음 어댑터가 내는 지표. 전용 패널(DrowsinessPanel)이 통째로 맡으므로
+ * 보조 지표 카드에서는 뺀다 — 같은 값을 두 군데 그리면 어느 쪽이 최신인지
+ * 매번 확인하게 된다.
+ */
+export const DROWSINESS_KEYS = ['drowsiness', 'perclos', 'blink_dur']
 
 export const MODE_LABEL: Record<Mode, string> = {
   live: '실측',
@@ -51,6 +67,22 @@ const POSTURE_LABEL: Record<string, string> = {
   sitting: '앉음',
   standing: '섬',
   lying: '누움',
+}
+
+/** 졸음 판정. 어댑터는 영문 키로 보내고 화면이 제 말로 옮긴다. */
+export const DROWSINESS_LABEL: Record<string, string> = {
+  awake: '각성',
+  warning: '주의',
+  drowsy: '졸음',
+  unknown: '판정 불가',
+}
+
+/** 판정별 색. 정상일 때는 조용히 둔다 — 늘 켜져 있는 화면이라 평소에 눈에 띄면 피로하다. */
+export const DROWSINESS_TONE: Record<string, string> = {
+  awake: 'text-muted',
+  warning: 'text-gold',
+  drowsy: 'text-alert',
+  unknown: 'text-faint',
 }
 
 export const ACTION_LABEL: Record<string, string> = {
@@ -136,7 +168,8 @@ export function isWarmingUp(metric: Metric, stale: boolean): boolean {
  */
 export function displayValue(metric: Metric, stale: boolean): string | null {
   if (stale || metric.value === null) return null
-  if (typeof metric.value === 'string') return POSTURE_LABEL[metric.value] ?? metric.value
+  if (typeof metric.value === 'string')
+    return POSTURE_LABEL[metric.value] ?? DROWSINESS_LABEL[metric.value] ?? metric.value
   // 재실은 1/0 로 오지만 화면에 "1"이라고 띄우면 아무 뜻도 전달되지 않는다.
   if (metric.key === 'occupancy') return metric.value >= 0.5 ? '감지' : '없음'
   return String(metric.value)

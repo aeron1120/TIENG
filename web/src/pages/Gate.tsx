@@ -9,7 +9,14 @@ import {
   LogIn,
   UserPlus,
 } from 'lucide-react'
-import { useEffect, useState, type FormEvent } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type RefObject,
+} from 'react'
 import { useAuth } from '../authContext'
 
 // 앱을 처음 열면 나오는 관문. 여기를 지나기 전에는 WebSocket 도 열지 않는다 —
@@ -45,6 +52,21 @@ const CHOICES = [
 const FIELD =
   'kr w-full rounded-md border-[0.5px] border-gold/20 bg-panel-dim px-3 py-2.5 text-[14px] text-fg placeholder:text-faint focus:border-gold/60 focus:outline-none'
 
+// Enter 로 다음 칸에 넘어간다. 태블릿 앞에서 칸마다 손을 뻗지 않아도 되고, 마지막
+// 칸에서는 손대지 않으므로 브라우저가 그대로 폼을 제출한다.
+//
+// 여기서 가로채지 않으면 중간 칸의 Enter 는 아무 일도 하지 않는다. 제출 버튼이
+// 아직 disabled 라서 브라우저가 암묵적 제출을 건너뛰기 때문이다.
+//
+// 조합 중인 Enter 는 흘려보낸다. 한글을 치는 동안 IME 가 글자를 확정하려고 누르는
+// Enter 라서, 잡아 버리면 아이디를 다 치기도 전에 칸이 바뀐다.
+const advance =
+  (next: RefObject<HTMLInputElement | null>) => (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+    event.preventDefault()
+    next.current?.focus()
+  }
+
 export function Gate() {
   const { enterAsGuest, logIn, register } = useAuth()
   const [mode, setMode] = useState<Mode>('choose')
@@ -57,6 +79,8 @@ export function Gate() {
   // 가입은 됐는데 아직 못 들어온 상태. 관문에 그대로 두면 방금 가입한 사람이
   // 비밀번호를 잘못 쳤다고 생각하고 계속 다시 시도한다.
   const [waiting, setWaiting] = useState<string | null>(null)
+  const passwordRef = useRef<HTMLInputElement>(null)
+  const confirmRef = useRef<HTMLInputElement>(null)
 
   // 아이디가 겹치는지는 치는 동안 물어본다. 비밀번호 확인란과 같은 이유다 — 가입을
   // 누른 뒤에 "이미 있는 아이디"를 알려 주면 비밀번호까지 다 채운 뒤다.
@@ -208,6 +232,7 @@ export function Gate() {
                   autoFocus
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
+                  onKeyDown={advance(passwordRef)}
                   aria-invalid={taken?.available === false}
                   aria-describedby={taken ? 'username-check' : undefined}
                 />
@@ -229,16 +254,20 @@ export function Gate() {
                 )}
               </div>
               <input
+                ref={passwordRef}
                 className={FIELD}
                 type="password"
                 placeholder="비밀번호"
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                // 로그인은 여기가 마지막 칸이라 손대지 않는다 — Enter 가 그대로 제출한다.
+                onKeyDown={mode === 'register' ? advance(confirmRef) : undefined}
               />
               {mode === 'register' && (
                 <div>
                   <input
+                    ref={confirmRef}
                     className={`${FIELD} ${mismatch ? 'border-alert/60 focus:border-alert' : ''}`}
                     type="password"
                     placeholder="비밀번호 확인"

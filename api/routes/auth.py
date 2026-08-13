@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -26,6 +26,9 @@ from api.auth import (
     current,
     require,
 )
+
+if TYPE_CHECKING:  # psycopg 가 없는 기기에서도 이 모듈은 떠야 한다 (api/main.py)
+    from api.auth_pg import PgUsers
 
 # 로그인한 본인. 라우터 단위로 걸면 누가 요청했는지를 핸들러가 받지 못해서,
 # 프로필처럼 "내 것"을 다루는 경로는 인자로 받는다.
@@ -63,7 +66,8 @@ class Availability(BaseModel):
     detail: str  # 왜 못 쓰는지. 쓸 수 있으면 빈 문자열
 
 
-def _store(request: Request) -> Users:
+def _store(request: Request) -> Users | PgUsers:
+    """계정 저장소. 배포에 따라 파일이거나 Postgres 다 (api/main.py)."""
     return request.app.state.users  # type: ignore[no-any-return]
 
 

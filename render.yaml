@@ -19,7 +19,10 @@ services:
     region: singapore
     # -e 로 까는 이유: pyproject 의 packages 에 actuators 가 없어서 일반 설치로는
     # tuya_plug / notify_email 을 못 찾는다.
-    buildCommand: pip install -e .
+    #
+    # cloud extras 는 psycopg 다. 여기는 컨테이너가 재배포마다 새로 뜨므로 계정을
+    # 파일에 두면 날아간다 — DATABASE_URL 이 있으면 Postgres 로 붙는다 (api/main.py).
+    buildCommand: pip install -e ".[cloud]"
     startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
     # 세션 없이도 200 을 주는 경로라야 한다. 인증을 요구하는 경로를 걸면 Render 가
     # 계속 죽은 것으로 보고 재시작한다.

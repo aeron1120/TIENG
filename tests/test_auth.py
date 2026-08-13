@@ -6,21 +6,56 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING, TypeAlias
 
 import pytest
 from fastapi.testclient import TestClient
 
 from api.auth import AuthError, Users
 
+if TYPE_CHECKING:  # psycopg 는 cloud extras 다. 없는 기기에서도 이 파일은 모여야 한다.
+    from api.auth_pg import PgUsers
+
+# 저장소 테스트는 두 구현에 똑같이 적용된다. 규칙이 갈리면 배포마다 계정이 다르게
+# 동작하고, 그건 화면에서 보이지 않는다.
+Store: TypeAlias = "Users | PgUsers"
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+# 실수로 운영 DB 를 비우지 않도록 DATABASE_URL 과 다른 이름을 쓴다. 아래 픽스처는
+# 매 테스트마다 세 테이블을 TRUNCATE 하므로, 운영 문자열이 흘러들면 계정이 사라진다.
+#
+#   $env:TFV_TEST_DATABASE_URL = "postgresql://..."   # PowerShell
+TEST_DSN = "TFV_TEST_DATABASE_URL"
 
-@pytest.fixture
-def users(tmp_path: Path) -> Users:
-    store = Users(tmp_path / "users.db")
+
+@pytest.fixture(params=["sqlite", "postgres"])
+def users(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Store]:
+    if request.param == "sqlite":
+        store: Store = Users(tmp_path / "users.db")
+        store.init()
+        yield store
+        return
+
+    dsn = os.environ.get(TEST_DSN)
+    if not dsn:
+        pytest.skip(f"{TEST_DSN} 이 없다. Postgres 판은 건너뛴다")
+
+    from api.auth_pg import PgUsers
+
+    store = PgUsers(dsn)
     store.init()
-    return store
+    # tmp_path 로 격리되는 SQLite 와 달리 여기는 DB 하나를 계속 쓴다. 앞 테스트가
+    # 남긴 계정이 있으면 "첫 가입자가 관리자"부터 성립하지 않는다.
+    with store.pool.connection() as conn:
+        conn.execute("TRUNCATE users, sessions, profiles RESTART IDENTITY CASCADE")
+    yield store
+    # 테스트마다 풀을 새로 연다. 안 닫으면 무료 플랜의 연결 수를 금방 다 쓴다.
+    store.close()
 
 
 @pytest.fixture
@@ -35,7 +70,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 # --- 저장소 ---
 
 
-def test_the_first_account_is_the_admin(users: Users) -> None:
+def test_the_first_account_is_the_admin(users: Store) -> None:
     """기기를 처음 켠 사람이 주인이다. 그 뒤로는 전부 member 다."""
     owner = users.register("owner", "correct horse")
     nurse = users.register("nurse", "battery staple")
@@ -44,7 +79,7 @@ def test_the_first_account_is_the_admin(users: Users) -> None:
     assert owner.active and nurse.active
 
 
-def test_the_first_account_does_not_wait_for_approval(users: Users) -> None:
+def test_the_first_account_does_not_wait_for_approval(users: Store) -> None:
     """첫 사람을 대기시키면 승인해 줄 사람이 없어 기기가 잠긴다."""
     owner = users.register("owner", "correct horse")
 
@@ -52,7 +87,7 @@ def test_the_first_account_does_not_wait_for_approval(users: Users) -> None:
     assert users.principal(users.login("owner", "correct horse")) is not None
 
 
-def test_later_signups_wait_for_approval(users: Users) -> None:
+def test_later_signups_wait_for_approval(users: Store) -> None:
     """공개 주소에서는 주소를 아는 누구나 들어오게 두면 안 된다."""
     users.register("owner", "correct horse")
     nurse = users.register("nurse", "battery staple")
@@ -67,7 +102,7 @@ def test_later_signups_wait_for_approval(users: Users) -> None:
     assert who is not None and who.role == "member"
 
 
-def test_waiting_and_blocked_do_not_read_the_same(users: Users) -> None:
+def test_waiting_and_blocked_do_not_read_the_same(users: Store) -> None:
     """기다리면 되는 사람과 사람을 찾아가야 하는 사람에게 같은 말을 하면 안 된다."""
     users.register("owner", "correct horse")
     nurse = users.register("nurse", "battery staple")
@@ -83,7 +118,7 @@ def test_waiting_and_blocked_do_not_read_the_same(users: Users) -> None:
     assert waiting.value.detail != blocked.value.detail
 
 
-def test_withdrawing_approval_closes_open_sessions(users: Users) -> None:
+def test_withdrawing_approval_closes_open_sessions(users: Store) -> None:
     """승인을 거뒀는데 열려 있던 창이 살아 있으면 거둔 것이 아니다."""
     users.register("owner", "correct horse")
     nurse = users.register("nurse", "battery staple")
@@ -95,7 +130,7 @@ def test_withdrawing_approval_closes_open_sessions(users: Users) -> None:
     assert users.principal(token) is None
 
 
-def test_wrong_password_and_unknown_id_look_the_same(users: Users) -> None:
+def test_wrong_password_and_unknown_id_look_the_same(users: Store) -> None:
     """어느 아이디가 존재하는지 응답으로 알려주지 않는다."""
     users.register("owner", "correct horse")
 
@@ -108,7 +143,7 @@ def test_wrong_password_and_unknown_id_look_the_same(users: Users) -> None:
     assert errors[0] == errors[1]
 
 
-def test_blocking_closes_open_sessions(users: Users) -> None:
+def test_blocking_closes_open_sessions(users: Store) -> None:
     """차단하면 이미 들어와 있던 창도 같이 끊겨야 한다. 안 그러면 안 막힌 것과 같다."""
     users.register("owner", "correct horse")
     nurse = users.register("nurse", "battery staple")
@@ -126,24 +161,42 @@ def test_blocking_closes_open_sessions(users: Users) -> None:
     assert users.principal(users.login("nurse", "battery staple")) is not None
 
 
-def test_the_last_admin_cannot_be_blocked(users: Users) -> None:
+def test_the_last_admin_cannot_be_blocked(users: Store) -> None:
     owner = users.register("owner", "correct horse")
     with pytest.raises(AuthError):
         users.set_active(owner.id, False)
 
 
-def test_short_credentials_are_refused(users: Users) -> None:
+def test_short_credentials_are_refused(users: Store) -> None:
     with pytest.raises(AuthError):
         users.register("ab", "correct horse")
     with pytest.raises(AuthError):
         users.register("owner", "short")
 
 
-def test_duplicate_id_is_refused(users: Users) -> None:
+def test_duplicate_id_is_refused(users: Store) -> None:
     users.register("owner", "correct horse")
     with pytest.raises(AuthError) as exc:
         users.register("OWNER", "battery staple")  # 대소문자만 다른 것도 같은 아이디다
     assert exc.value.status == 409
+
+
+def test_only_one_admin_when_everyone_registers_at_once(users: Store) -> None:
+    """화면이 공개 주소로 열려 있어서 첫 가입 순간에 여럿이 몰릴 수 있다.
+
+    세는 것과 넣는 것이 한 트랜잭션 안에 없으면 둘 다 "내가 첫 번째"로 본다.
+    관리자가 둘이면 서로를 차단할 수 있고, 그건 화면 어디에도 안 보인다.
+    """
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        accounts = [
+            future.result()
+            for future in [
+                pool.submit(users.register, f"racer{i}", "correct horse") for i in range(5)
+            ]
+        ]
+
+    assert sum(account.role == "admin" for account in accounts) == 1
+    assert sum(account.approved for account in accounts) == 1
 
 
 # --- 엔드포인트 ---

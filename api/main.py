@@ -8,6 +8,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 from fastapi import Depends, FastAPI, HTTPException
@@ -32,6 +33,9 @@ from core.csv_logs import InterventionCsvLogger, MetricCsvLogger
 from core.policy.runner import PolicyRunner
 from core.registry import Registry
 
+if TYPE_CHECKING:  # psycopg 가 없는 기기에서도 이 모듈은 떠야 한다
+    from api.auth_pg import PgUsers
+
 log = structlog.get_logger(__name__)
 
 DEFAULT_CONFIG = Path("config/device.yaml")
@@ -41,9 +45,26 @@ def _config_path() -> Path:
     return Path(os.environ.get("DEVICE_CONFIG") or DEFAULT_CONFIG)
 
 
-def _users_path() -> Path:
-    # 기기 설정(config)이 아니라 사용 흔적이라 state/ 에 둔다 — layout.json 과 같은 자리.
-    return Path(os.environ.get("TFV_USERS_DB") or auth.DEFAULT_PATH)
+def _users_store() -> Users | PgUsers:
+    """계정 저장소. DATABASE_URL 이 있으면 Postgres, 없으면 파일이다.
+
+    파이는 이 값을 두지 않는다. LAN 안에서 인터넷 없이 돌아야 하므로 (README §1)
+    계정이 밖에 있으면 인터넷이 끊긴 방에서 로그인이 막힌다.
+
+    클라우드는 반대다. 컨테이너가 재배포마다 새로 떠서 state/users.db 가 같이
+    날아간다 — 쓸 때마다 다시 가입해야 한다 (docs/deploy.md).
+
+    psycopg 는 cloud extras 라 파이에는 없다. import 를 여기까지 미루는 이유가
+    그것이다 — 모듈 맨 위에서 부르면 파이에서 앱이 통째로 안 뜬다.
+    """
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        # 기기 설정(config)이 아니라 사용 흔적이라 state/ 에 둔다 — layout.json 과 같은 자리.
+        return Users(Path(os.environ.get("TFV_USERS_DB") or auth.DEFAULT_PATH))
+
+    from api.auth_pg import PgUsers
+
+    return PgUsers(dsn)
 
 
 async def _sample_loop(app: FastAPI) -> None:
@@ -91,7 +112,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     registry = Registry.from_yaml(path, overrides.load())
     await registry.start()
 
-    users = Users(_users_path())
+    users = _users_store()
     users.init()
     app.state.users = users
 

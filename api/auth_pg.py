@@ -144,6 +144,37 @@ class PgUsers:
     def close(self) -> None:
         self.pool.close()
 
+    def ensure_admin(self, username: str, password: str) -> None:
+        """환경변수로 정한 관리자 계정을 보장한다. 판단 근거는 api/auth.py 와 같다."""
+        username = check_username(username)
+        if len(password) < 8:
+            raise AuthError(400, "관리자 비밀번호는 8자 이상이어야 한다")
+
+        digest = hash_password(password)
+        with self.pool.connection() as conn:
+            # register() 와 같은 잠금을 잡는다. 관리자를 세우는 중에 누가 가입하면
+            # 그 사람이 "첫 번째"로 세어져 관리자가 둘이 된다.
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (_REGISTER_LOCK,))
+            row = conn.execute(
+                "SELECT id FROM users WHERE lower(username) = lower(%s)", (username,)
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO users"
+                    " (username, password_hash, role, approved, active, created_at)"
+                    " VALUES (%s, %s, 'admin', TRUE, TRUE, %s)",
+                    (username, digest, datetime.now(UTC)),
+                )
+                event = "auth_pg.admin_created"
+            else:
+                conn.execute(
+                    "UPDATE users SET password_hash = %s, role = 'admin',"
+                    " approved = TRUE, active = TRUE WHERE id = %s",
+                    (digest, int(row["id"])),
+                )
+                event = "auth_pg.admin_synced"
+        log.info(event, username=username)
+
     # --- 가입 / 로그인 ---
 
     def register(self, username: str, password: str) -> Account:

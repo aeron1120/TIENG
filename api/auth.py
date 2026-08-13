@@ -219,6 +219,42 @@ class Users:
                 conn.execute("ALTER TABLE users ADD COLUMN approved INTEGER NOT NULL DEFAULT 1")
                 log.info("auth.migrated", added="users.approved")
 
+    def ensure_admin(self, username: str, password: str) -> None:
+        """환경변수로 정한 관리자 계정을 보장한다.
+
+        없으면 만들고, 있으면 비밀번호·권한·승인을 환경변수에 맞춘다. 비밀번호를
+        잊었을 때 DB 를 손대지 않고 환경변수만 바꿔 다시 띄우면 되게 하려는 것이다.
+
+        이 계정이 생기면 "첫 가입자가 관리자"(register)는 저절로 성립하지 않는다.
+        세는 계정 수가 이미 1 이라 그 뒤로 가입하는 사람은 전부 승인을 기다린다.
+        관리자가 누구인지를 화면에 먼저 온 순서가 아니라 배포하는 쪽이 정하게 된다.
+        """
+        username = check_username(username)
+        if len(password) < 8:
+            raise AuthError(400, "관리자 비밀번호는 8자 이상이어야 한다")
+
+        digest = hash_password(password)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO users"
+                    " (username, password_hash, role, approved, active, created_at)"
+                    " VALUES (?, ?, 'admin', 1, 1, ?)",
+                    (username, digest, datetime.now(UTC).isoformat()),
+                )
+                event = "auth.admin_created"
+            else:
+                conn.execute(
+                    "UPDATE users SET password_hash = ?, role = 'admin', approved = 1, active = 1"
+                    " WHERE id = ?",
+                    (digest, int(row["id"])),
+                )
+                event = "auth.admin_synced"
+            conn.execute("COMMIT")
+        log.info(event, username=username)
+
     # --- 가입 / 로그인 ---
 
     def register(self, username: str, password: str) -> Account:

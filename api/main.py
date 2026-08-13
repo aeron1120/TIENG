@@ -67,6 +67,27 @@ def _users_store() -> Users | PgUsers:
     return PgUsers(dsn)
 
 
+def _ensure_admin(users: Users | PgUsers) -> None:
+    """TFV_ADMIN_USER/PASSWORD 가 있으면 그 계정을 관리자로 세운다.
+
+    둘 중 하나라도 없으면 아무것도 하지 않는다. 그때는 첫 가입자가 관리자가 되는
+    기존 동작이 그대로 남는다 — 파이는 환경변수 없이 켜는 일이 잦고, 관리자를
+    아무도 만들 수 없으면 기기가 통째로 잠긴다.
+    """
+    name = os.environ.get("TFV_ADMIN_USER")
+    password = os.environ.get("TFV_ADMIN_PASSWORD")
+    if not name or not password:
+        log.info("admin.env_absent")  # 첫 가입자가 관리자가 된다
+        return
+
+    try:
+        users.ensure_admin(name, password)
+    except auth.AuthError as exc:
+        # 서버를 못 뜨게 하지는 않는다. 환경변수 오타 하나로 앱이 멎으면 침실 앞
+        # 화면이 검게 남는다 — 관리자가 없는 것보다 나쁘다.
+        log.error("admin.rejected", detail=exc.detail)
+
+
 async def _sample_loop(app: FastAPI) -> None:
     registry: Registry = app.state.registry
     hub: Hub = app.state.hub
@@ -114,6 +135,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     users = _users_store()
     users.init()
+    _ensure_admin(users)
     app.state.users = users
 
     metrics_csv = _open_log(MetricCsvLogger, registry.config.metrics_csv, "metrics_csv")

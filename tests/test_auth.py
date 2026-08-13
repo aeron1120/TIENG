@@ -190,6 +190,42 @@ def test_duplicate_id_is_refused(users: Store) -> None:
     assert exc.value.status == 409
 
 
+def test_a_fixed_admin_takes_the_first_slot(users: Store) -> None:
+    """관리자를 배포하는 쪽이 정하면, 화면에 먼저 온 사람이 관리자가 되지 않는다.
+
+    공개 주소에서는 누가 먼저 가입하는지가 관리자를 정하면 안 된다.
+    """
+    users.ensure_admin("keeper", "correct horse")
+
+    nurse = users.register("nurse", "battery staple")
+    assert (nurse.role, nurse.approved) == ("member", False)
+
+    who = users.principal(users.login("keeper", "correct horse"))
+    assert who is not None and who.role == "admin"
+
+
+def test_setting_the_admin_twice_moves_the_password(users: Store) -> None:
+    """비밀번호를 잊으면 환경변수만 바꿔 다시 띄운다. DB 를 손댈 일이 없어야 한다."""
+    users.ensure_admin("keeper", "correct horse")
+    users.ensure_admin("keeper", "battery staple")
+
+    with pytest.raises(AuthError):
+        users.login("keeper", "correct horse")
+    assert users.principal(users.login("keeper", "battery staple")) is not None
+    # 두 번 불렀다고 계정이 둘이 되면 안 된다.
+    assert [a.username for a in users.accounts()] == ["keeper"]
+
+
+def test_a_blocked_account_is_restored_by_setting_the_admin(users: Store) -> None:
+    """관리자가 자기를 잠글 방법이 없어야 한다 — 되돌릴 사람이 그 자신뿐이다."""
+    users.ensure_admin("keeper", "correct horse")
+    keeper = users.accounts()[0]
+    users.set_approved(keeper.id, True)  # 이미 승인돼 있다. 여기서 막히지 않아야 한다
+
+    users.ensure_admin("keeper", "correct horse")
+    assert users.principal(users.login("keeper", "correct horse")) is not None
+
+
 def test_only_one_admin_when_everyone_registers_at_once(users: Store) -> None:
     """화면이 공개 주소로 열려 있어서 첫 가입 순간에 여럿이 몰릴 수 있다.
 

@@ -7,8 +7,11 @@
 # web/dist 가 없으므로 api/main.py 는 SPA catch-all 을 걸지 않는다. 없는 /api 경로가
 # index.html 대신 제대로 404 를 주므로 API 전용으로는 오히려 이쪽이 맞다.
 #
-# free 플랜은 접속이 없으면 서비스를 재운다. 잠든 뒤 첫 요청은 30초쯤 걸리고, 그때
-# 계정 DB(state/users.db)도 같이 사라진다 — 계정을 남기려면 Supabase 로 옮겨야 한다.
+# free 플랜은 접속이 없으면 서비스를 재운다. 잠든 뒤 첫 요청은 30초쯤 걸린다.
+#
+# 계정은 컨테이너 밖에 있다. DATABASE_URL(Supabase)과 TFV_ADMIN_USER/PASSWORD 를
+# 대시보드에서 넣는다 — 비밀번호가 들어가는 값이라 여기 적지 않는다 (docs/deploy.md).
+# 개입 CSV 는 아직 컨테이너 안이라 재배포마다 사라진다.
 services:
   - type: web
     name: tieng-api

@@ -51,11 +51,20 @@ def users(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Store]:
     store.init()
     # tmp_path 로 격리되는 SQLite 와 달리 여기는 DB 하나를 계속 쓴다. 앞 테스트가
     # 남긴 계정이 있으면 "첫 가입자가 관리자"부터 성립하지 않는다.
-    with store.pool.connection() as conn:
-        conn.execute("TRUNCATE users, sessions, profiles RESTART IDENTITY CASCADE")
-    yield store
-    # 테스트마다 풀을 새로 연다. 안 닫으면 무료 플랜의 연결 수를 금방 다 쓴다.
-    store.close()
+    #
+    # 끝나고도 한 번 더 비운다. 앞만 치우면 마지막 테스트가 만든 계정이 DB 에 남고,
+    # 이 DB 를 배포가 같이 쓰면 화면에서 처음 가입한 사람이 관리자가 되지 못한다.
+    def clear() -> None:
+        with store.pool.connection() as conn:
+            conn.execute("TRUNCATE users, sessions, profiles RESTART IDENTITY CASCADE")
+
+    clear()
+    try:
+        yield store
+    finally:
+        clear()
+        # 테스트마다 풀을 새로 연다. 안 닫으면 무료 플랜의 연결 수를 금방 다 쓴다.
+        store.close()
 
 
 @pytest.fixture

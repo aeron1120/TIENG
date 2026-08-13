@@ -77,6 +77,33 @@ CREATE TABLE IF NOT EXISTS profiles (
     notes          TEXT NOT NULL DEFAULT '',
     updated_at     TIMESTAMPTZ
 );
+
+-- Supabase 는 Data API(PostgREST)를 켜 두면 public 스키마의 테이블을 인터넷에
+-- 열어 준다. 새 테이블에 anon 권한을 기본으로 주는 설정이 함께 켜져 있으면, 아래
+-- 세 테이블이 그대로 노출된다. anon 키는 브라우저에 박으라고 만든 값이라 비밀이
+-- 아니다 — sessions 가 읽히는 순간 토큰을 쿠키에 넣어 관리자로 들어올 수 있다.
+--
+-- 이 앱은 Postgres 프로토콜로 직접 붙는다. REST 쪽 권한은 한 번도 쓰지 않으므로
+-- 회수한다. 콘솔에서 끄는 것으로 대신하지 않는 이유는, 프로젝트를 새로 만들 때
+-- 체크 하나를 잊으면 조용히 다시 열리기 때문이다.
+--
+-- anon/authenticated 는 Supabase 에만 있는 역할이라 없을 수도 있다. 다른 Postgres
+-- 에서 이 블록이 죽으면 앱이 통째로 안 뜬다.
+DO $$
+DECLARE r text;
+BEGIN
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+            EXECUTE format('REVOKE ALL ON users, sessions, profiles FROM %I', r);
+        END IF;
+    END LOOP;
+END $$;
+
+-- 권한을 회수한 위에 한 겹 더 둔다. 정책을 하나도 안 만들었으므로 RLS 를 거치는
+-- 쪽에서는 아무 줄도 안 보인다. 테이블 소유자인 이 앱은 RLS 를 우회하므로 영향이 없다.
+ALTER TABLE users    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 """
 
 # register() 가 "아직 아무도 없는가"를 세는 동안 다른 가입이 끼어들면 관리자가 둘

@@ -76,6 +76,22 @@ class OverlayTarget(Protocol):
 
 
 @runtime_checkable
+class Pausable(Protocol):
+    """모드에 따라 쉴 수 있는 어댑터.
+
+    카메라 하나와 CPU 를 나눠 쓰는 이상, 지금 안 보는 지표를 위해 매 프레임 얼굴을
+    찾는 것은 그대로 낭비다. 쉬는 동안에도 어댑터는 살아 있고 값만 내지 않는다 —
+    내렸다 올리면 창을 처음부터 다시 채워야 하기 때문이다.
+
+    무엇을 언제 쉬게 할지는 어댑터가 정하지 않는다. config 의 modes 를 보고
+    registry 가 불러 준다 (core/mode.py).
+    """
+
+    def set_active(self, active: bool) -> None:
+        """False 면 프레임 처리를 멈추고 값을 내지 않는다."""
+
+
+@runtime_checkable
 class FrameConsumer(Protocol):
     """다른 어댑터의 프레임을 받아 도는 어댑터.
 

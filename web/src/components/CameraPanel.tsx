@@ -11,6 +11,8 @@ import { useGet } from '../hooks/useApi'
 interface Status {
   available: boolean
   sources: string[]
+  /** 실측 프레임률. 요청값이 아니다 — 졸음 쪽 정확도가 여기 달려 있다. */
+  fps: number
 }
 
 export function CameraPanel() {
@@ -22,6 +24,7 @@ export function CameraPanel() {
   const [failed, setFailed] = useState(false)
 
   const available = status.data?.available === true
+  const fps = status.data?.fps ?? 0
 
   return (
     <section className="overflow-hidden rounded-lg border-[0.5px] border-gold/15 bg-panel">
@@ -30,6 +33,11 @@ export function CameraPanel() {
           <Camera className="h-3.5 w-3.5 text-gold" />
           카메라
         </h2>
+        {available && fps > 0 && (
+          <span className="tnum ml-auto mr-2 font-mono text-[11px] text-faint">
+            {fps.toFixed(0)} fps
+          </span>
+        )}
         {available && (
           <button
             onClick={() => {

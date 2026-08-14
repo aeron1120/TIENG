@@ -10,12 +10,32 @@ metrics_csv: logs/metrics.csv
 interventions_csv: logs/interventions.csv
 
 adapters:
+  # 카메라를 소유하는 어댑터. 지표는 내지 않고 프레임만 나눠 준다. 장치를 두 번
+  # 열 수 없으므로 소유를 한 곳에 몰아 두고, rppg 와 drowsiness 는 둘 다 소비자다.
+  # 이렇게 하면 심박을 빼도 졸음이 계속 돌고 그 반대도 된다.
+  - id: camera
+    module: core.adapters.camera
+    mode: live
+    # backend 는 CSI 리본 카메라라 picamera2. USB 웹캠으로 바꾸면 opencv 로 되돌린다.
+    # 720p 로 올린 이유는 심박이 아니라 졸음이다 — 눈이 몇 픽셀로 잡히느냐가 그대로
+    # 눈꺼풀 측정 정밀도가 된다. rPPG 는 볼 ROI 평균 RGB 만 쓰므로 480p 로도 됐다.
+    # Camera Module 3 는 고프레임률을 낼 수 있다. 재개안 속도(AVR)를 제대로 재려면
+    # 30fps 로는 부족하다 — 재개안 구간이 5프레임밖에 안 된다.
+    params: { camera_index: 0, width: 1280, height: 720, fps: 60, backend: picamera2 }
   - id: rppg
     module: core.adapters.rppg
     mode: live
+    # 졸음 모드에서는 쉰다. 카메라 프레임과 CPU 를 졸음 쪽에 몰아주기 위해서다 —
+    # 눈깜빡임은 100~400ms 라 프레임률이 곧 정확도다 (core/mode.py).
+    modes: [vitals]
     # window_s 는 데모 v4 에서 검증된 12초를 쓴다. 10초 아래로 내리면 BPM 이 튄다.
-    # backend 는 CSI 리본 카메라라 picamera2. USB 웹캠으로 바꾸면 opencv 로 되돌린다.
-    params: { camera_index: 0, width: 640, height: 480, window_s: 12, backend: picamera2 }
+    params: { source: camera, window_s: 12 }
+  # 눈꺼풀로 졸음을 재는 어댑터. 같은 카메라를 나눠 쓴다.
+  - id: drowsiness
+    module: core.adapters.drowsiness
+    mode: live
+    params: { source: camera, window_s: 60, baseline_s: 90,
+              score_warn: 30, score_alert: 60 }
   - id: bme680
     module: core.adapters.env_bme680
     mode: live

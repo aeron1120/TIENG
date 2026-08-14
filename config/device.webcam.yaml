@@ -11,26 +11,45 @@ metrics_csv: null              # 개발용이라 기본은 끈다
 interventions_csv: logs/interventions.webcam.csv
 
 adapters:
-  - id: rppg
-    module: core.adapters.rppg
+  # 카메라를 소유하는 어댑터. 지표는 내지 않고 프레임만 나눠 준다. 장치를 두 번
+  # 열 수 없으므로 소유를 한 곳에 몰아 두고, rppg 와 drowsiness 는 둘 다 소비자다.
+  # 이렇게 하면 심박을 빼도 졸음이 계속 돌고 그 반대도 된다.
+  - id: camera
+    module: core.adapters.camera
     mode: live
     # USB/내장 웹캠이므로 backend 는 opencv 다 (device.yaml 의 picamera2 는 CSI 전용).
     # 720p 로 올린 이유는 심박이 아니라 졸음이다. rPPG 는 볼 ROI 의 평균 RGB 만
     # 쓰므로 480p 로 충분하지만, 눈꺼풀을 재려면 눈이 몇 픽셀로 잡히느냐가 그대로
     # 정밀도가 된다. 480p 에서는 눈 하나가 40x20 px 남짓이라 감김 정도를 못 가른다.
-    params: { camera_index: 0, width: 1280, height: 720, window_s: 12, backend: opencv }
+    # fps 는 요청값이다. 이 노트북 내장 카메라(Intel MIPI)는 해상도·포맷을 어떻게
+    # 바꿔도 28~30 밖에 못 냈다 — DSHOW 는 60 이라고 보고하면서 실제로는 29.7 만
+    # 줬다. 실측값은 /api/camera 의 fps 로 나가니 그걸 믿을 것.
+    #
+    # 60 이 왜 필요한가: 재개안이 기준선 164ms 이라 30fps 에서는 5프레임이다.
+    # 지속시간은 그럭저럭 재지만 속도(AVR)는 못 잰다. 문헌이 1분 선행을 말하는
+    # 지표가 그 AVR 이다.
+    params: { camera_index: 0, width: 1280, height: 720, fps: 60, backend: opencv }
+  - id: rppg
+    module: core.adapters.rppg
+    mode: live
+    # 졸음 모드에서는 쉰다. 카메라 프레임과 CPU 를 졸음 쪽에 몰아주기 위해서다 —
+    # 눈깜빡임은 100~400ms 라 프레임률이 곧 정확도다 (core/mode.py).
+    modes: [vitals]
+    params: { source: camera, window_s: 12 }
   - id: drowsiness
     module: core.adapters.drowsiness
     mode: live
-    # 카메라를 직접 열지 않는다. rppg 가 잡고 있는 프레임을 받아 쓴다 — 같은 장치를
-    # 두 번 열면 Windows 에서 실패하고 Linux 에서도 두 스트림이 노출을 서로 흔든다.
-    # 그래서 rppg 를 빼면 이 카드도 같이 no_adapter 로 뜬다.
+    # 카메라를 직접 열지 않는다. camera 어댑터가 나눠 주는 프레임을 받아 쓴다.
     #
-    # 임계는 문헌의 통상값이고 이 장비로 보정한 적이 없다. 발표에서 근거로 쓰려면
-    # KSS 라벨을 붙인 자체 데이터가 먼저 필요하다.
-    params: { source: rppg, window_s: 60,
-              perclos_warn: 8, perclos_alert: 15,
-              blink_warn_ms: 300, blink_alert_ms: 400 }
+    # baseline_s 는 처음 이만큼을 "각성 상태"로 보고 그 사람의 평소 깜빡임을
+    # 학습하는 시간이다. 절대 임계를 쓰지 않는 이유는 개인차가 커서다 — 같은
+    # 사람에게서도 깜빡임이 194~465ms 로 흔들렸다.
+    #
+    # 운전 시작 직후가 각성 상태라는 가정이 깔려 있다. 이미 졸린 채로 출발하면
+    # 기준선이 졸린 상태로 잡혀 경보가 늦어진다. 실차에서는 시동 직후 몇 분을
+    # 쓰거나, 여러 주행의 기준선을 사람별로 남겨 두는 쪽이 맞다.
+    params: { source: camera, window_s: 60, baseline_s: 90,
+              score_warn: 30, score_alert: 60 }
   - id: env
     module: core.adapters.env_mock
     mode: simulated

@@ -19,7 +19,15 @@ from pydantic import BaseModel, Field
 
 from actuators.base import Actuator
 from api.schemas import Metric, Mode, State
-from core.adapters.base import FrameConsumer, FrameSource, PreviewSource, SensorAdapter
+from core.adapters.base import (
+    FrameConsumer,
+    FrameSource,
+    Pausable,
+    PreviewSource,
+    SensorAdapter,
+)
+from core.mode import MODES
+from core.mode import Mode as RunMode
 from core.policy.base import InterventionPolicy
 from core.thresholds import Thresholds
 from core.thresholds import load as load_thresholds
@@ -36,6 +44,8 @@ class AdapterEntry(BaseModel):
     # 모듈이 아직 없거나 import 가 깨진 어댑터의 카드 자리를 예약한다.
     # 모듈이 정상 로드되면 어댑터 클래스의 provides 가 이 값을 대체한다.
     provides: list[str] = Field(default_factory=list)
+    # 이 어댑터가 도는 모드. 비우면 항상 돈다 (core/mode.py).
+    modes: list[str] = Field(default_factory=list)
     params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -69,6 +79,7 @@ class Registry:
         self.actuators: dict[str, Actuator] = {}
         self.policies: list[InterventionPolicy] = []
         self.thresholds: Thresholds | None = None
+        self.mode: RunMode = "vitals"
         self._adapters: dict[str, SensorAdapter] = {}
         self._provides: dict[str, list[str]] = {}
         # 왜 못 올라왔는지. 화면에서 바로 읽을 수 있어야 배선을 고칠 수 있다.
@@ -84,6 +95,7 @@ class Registry:
     async def start(self) -> None:
         await self._start_adapters()
         self._wire_frames()
+        self.apply_mode(self.mode)
         await self._start_actuators()
         self._build_policies()
 
@@ -146,6 +158,7 @@ class Registry:
                     adapter_entry.id, list(adapter_entry.provides)
                 ),
                 "state": state,
+                "modes": list(adapter_entry.modes),
                 "detail": self._failures.get(adapter_entry.id, ""),
             })
 
@@ -185,6 +198,7 @@ class Registry:
 
         return {
             "device_id": self.config.device_id,
+            "mode": self.mode,
             "sample_rate_hz": self.config.sample_rate_hz,
             "thresholds_path": self.config.thresholds,
             "thresholds": thresholds,
@@ -192,6 +206,21 @@ class Registry:
             "actuators": actuators,
             "policies": policies,
         }
+
+    def apply_mode(self, mode: RunMode) -> None:
+        """모드에 맞춰 어댑터를 쉬게 하거나 깨운다.
+
+        어느 어댑터가 어느 모드에서 도는지는 config 가 정한다 — 코드에 박아 두면
+        모드를 하나 늘릴 때마다 여기를 고쳐야 한다 (README §0-5).
+        """
+        if mode not in MODES:
+            raise ValueError(f"모르는 모드다: {mode!r}")
+        self.mode = mode
+        for entry in self.config.adapters:
+            adapter = self._adapters.get(entry.id)
+            if not isinstance(adapter, Pausable):
+                continue
+            adapter.set_active(not entry.modes or mode in entry.modes)
 
     def preview_sources(self) -> dict[str, PreviewSource]:
         """카메라 화면을 내보낼 수 있는 어댑터.

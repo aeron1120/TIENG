@@ -4,9 +4,12 @@ legacy/tieng_rppg/rppg_demo_v4.py 의 HR 경로를 이식했다. 데모의 UI·�
 facemesh ROI·참조 저주파제거는 가져오지 않았다. Phase 2 는 실측 HR 하나를
 대시보드에 띄우는 것까지고, 나머지는 필요해질 때 legacy 에서 꺼내면 된다.
 
-카메라는 전용 스레드에서 네이티브 fps 로 계속 돈다. read() 가 1Hz 로 불리는
-것과 무관하게 12초 창이 채워져야 하기 때문이다. cv2 블로킹 호출은 전부 그
-스레드 안에 있고, scipy 추정은 executor 로 뺀다 (README §10).
+카메라는 직접 열지 않는다. core/adapters/camera.py 가 소유하고 프레임을 나눠 준다.
+장치를 두 번 열 수 없다는 물리적 사실을 한 곳에 가둬 두면, 심박을 꺼도 졸음이
+계속 돌고 그 반대도 된다.
+
+전용 스레드는 그대로 둔다. read() 가 1Hz 로 불리는 것과 무관하게 12초 창이
+채워져야 하기 때문이다. scipy 추정만 executor 로 뺀다 (README §10).
 
 원본 영상은 저장하지 않는다. 프레임은 ROI 평균 RGB 3개 숫자로 줄인 뒤 즉시
 버린다 (README §1 비목표).
@@ -19,7 +22,6 @@ JPEG 로 만들어 메모리에 하나 들고 있다가 다음 프레임이 오�
 from __future__ import annotations
 
 import asyncio
-import platform
 import threading
 import time
 from collections import deque
@@ -47,7 +49,7 @@ FULL_BAND_HZ = (0.3, 4.0)  # 에너지비 분모(전체 생리 대역)
 MIN_SKIN_PIXELS = 150
 JITTER_SCALE_PX = 6.0  # 이만큼 흔들리면 jitter_norm = 1
 FACE_DETECT_SEC = 0.5  # 매 프레임 검출은 Pi에서 FPS를 깎는다
-READ_FAIL_LIMIT = 30  # 연속 실패가 이만큼이면 카메라가 빠진 것으로 본다
+POLL_HZ = 60.0  # 프레임 폴링. 공급자의 실제 fps 보다 넉넉히 잡고 중복은 버린다
 
 # --- 안정화 -------------------------------------------------------------- #
 # legacy 데모(rppg_demo_v4.py)에는 SQI 게이트 말고도 jump guard / 출력 EMA /
@@ -58,12 +60,8 @@ BPM_SMOOTH_ALPHA = 0.3  # 표시 BPM 용. legacy 의 --smooth-alpha 와 같은 �
 GATE_HYSTERESIS = 0.08  # 게이트 진입/이탈 dead-band. legacy hysteresis_label 과 같은 값
 JUMP_RELEASE_S = 10.0  # 점프 거부가 이만큼 이어지면 기준값이 틀린 것으로 보고 풀어 준다
 
-PREVIEW_WIDTH = 320  # 얼굴이 ROI 안에 들어왔는지 보는 용도라 이 이상 필요 없다
-PREVIEW_FPS = 10.0
-PREVIEW_QUALITY = 70
-PREVIEW_LINGER_SEC = 3.0  # 마지막 요청 후 이만큼 지나면 인코딩을 멈춘다
-FRAME_SHARE_LINGER_SEC = 3.0  # 프레임을 받아 가는 어댑터가 끊기면 이만큼 뒤 들고 있기를 멈춘다
-_PREVIEW_ROI = (89, 160, 197)  # BGR. 화면 강조색 #c5a059 와 같은 색
+# 미리보기에 얹을 상자 색 (BGR). 그리는 것은 camera 어댑터고 우리는 좌표만 맡긴다.
+_PREVIEW_ROI = (89, 160, 197)  # 화면 강조색 #c5a059 와 같은 색
 _PREVIEW_FACE = (120, 120, 120)
 
 
@@ -75,27 +73,18 @@ class RppgAdapter(SensorAdapter):
         id: str,
         mode: Mode,
         *,
-        camera_index: int = 0,
-        width: int = 640,
-        height: int = 480,
+        source: str = "camera",
         window_s: float = WINDOW_SEC,
-        backend: str = "opencv",
         thresholds_path: str = str(thresholds.DEFAULT_PATH),
     ) -> None:
         super().__init__(id, mode)
-        # 자동 감지하지 않는다. USB 와 CSI 가 둘 다 꽂힌 기기에서 어느 쪽을 고를지
-        # 규칙이 지저분해지고, device.yaml 은 어차피 기기별 파일이라 적어 두는 편이
-        # 낫다. 오타가 조용히 opencv 로 떨어지면 엉뚱한 카메라가 열리므로 여기서 막는다.
-        if backend not in ("opencv", "picamera2"):
-            raise ValueError(f"backend 는 opencv 또는 picamera2 여야 한다: {backend!r}")
-        self.camera_index = camera_index
-        self.width = width
-        self.height = height
+        # FrameConsumer 계약. registry 가 이 이름으로 공급자를 찾아 붙여 준다.
+        self.source_id = source
         self.window_s = window_s
-        self.backend = backend
         self.thresholds_path = Path(thresholds_path)
 
-        self._cap: Any = None
+        self._frames: Any = None
+        self._overlay: Any = None
         self._detector: Any = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -110,15 +99,6 @@ class RppgAdapter(SensorAdapter):
         self._skin_ratio: float | None = None
         self._brightness: float | None = None
         self._fault: str | None = None
-        self._preview: bytes | None = None
-        self._preview_until = 0.0  # 이 시각까지는 보는 사람이 있다고 본다
-        # 프레임 공유. 미리보기와 같은 규칙이다 — 받아 가는 쪽이 있을 때만 한 장을
-        # 메모리에 들고 있고 다음 프레임이 덮어쓴다. 디스크에는 쓰지 않는다.
-        self._frame: np.ndarray | None = None
-        self._frame_t = 0.0
-        self._frames_until = 0.0
-        # 남이 그려 달라고 맡긴 상자. {주인: (상자들, 색)}. 무엇을 뜻하는지는 모른다.
-        self._overlays: dict[str, tuple[list[tuple[int, int, int, int]], tuple[int, int, int]]] = {}
 
         self._gate = 0.4
         # 안정화 상태. read() 가 순차로만 불리므로 lock 을 걸지 않는다.
@@ -127,16 +107,43 @@ class RppgAdapter(SensorAdapter):
         self._display_bpm: float | None = None
         self._reject_since: float | None = None
         self._emitting = False  # 게이트를 통과한 상태인가 (히스테리시스용)
+        self._active = True  # 모드에 따라 registry 가 껐다 켠다
+
+    # --- Pausable --------------------------------------------------------- #
+
+    def set_active(self, active: bool) -> None:
+        """졸음 모드에서는 쉰다. 카메라와 CPU 를 졸음 쪽에 몰아주기 위해서다.
+
+        쉴 때 창을 비우는 이유는, 다시 켰을 때 몇 분 전 표본으로 만든 BPM 이
+        방금 잰 값인 척 나가면 안 되기 때문이다 (README §0-4).
+        """
+        if self._active == active:
+            return
+        self._active = active
+        if not active:
+            with self._lock:
+                self._times.clear()
+                self._rgbs.clear()
+                self._skin_ratio = None
+                self._brightness = None
+            self._display_bpm = None
+            self._prev_bpm = None
+            if self._overlay is not None:
+                self._overlay.set_overlay(f"{self.id}:face", [], _PREVIEW_FACE)
+                self._overlay.set_overlay(f"{self.id}:roi", [], _PREVIEW_ROI)
+        log.info("rppg.active", adapter=self.id, active=active)
+
+    # --- FrameConsumer ---------------------------------------------------- #
+
+    def attach_frames(self, source: Any) -> None:
+        self._frames = source
+        # 프레임을 준 쪽이 미리보기도 만든다면 볼 ROI 를 거기 얹는다.
+        self._overlay = source if hasattr(source, "set_overlay") else None
 
     # --- 수명주기 --------------------------------------------------------- #
 
     async def start(self) -> None:
         self._gate = thresholds.load(self.thresholds_path).confidence_min
-        loop = asyncio.get_running_loop()
-        self._cap = await loop.run_in_executor(None, self._open_camera)
-        if self._cap is None:
-            raise RuntimeError(f"카메라 {self.camera_index} 를 열 수 없다")
-
         self._detector = _build_face_detector()
         if self._detector is None:
             # 얼굴 검출이 없어도 화면 중앙 가이드 박스로 동작한다. 정확도만 떨어진다.
@@ -154,13 +161,11 @@ class RppgAdapter(SensorAdapter):
         if self._thread is not None:
             self._thread.join(timeout=3.0)
             self._thread = None
-        if self._cap is not None:
-            self._cap.release()
-            self._cap = None
-        with self._lock:
-            self._preview = None
 
     async def read(self) -> list[Metric]:
+        if not self._active:
+            # 쉬는 중. 값이 없는 것이지 고장난 게 아니라 진행률을 0 으로 둔다.
+            return [self._metric(None, None, "low_quality", 0.0)]
         with self._lock:
             if self._fault is not None:
                 raise RuntimeError(self._fault)  # registry 가 state=error 로 강등한다
@@ -179,52 +184,28 @@ class RppgAdapter(SensorAdapter):
 
     # --- 캡처 스레드 ------------------------------------------------------ #
 
-    def _open_camera(self) -> Any:
-        if self.backend == "picamera2":
-            return _open_picamera2(self.camera_index, self.width, self.height)
-
-        backends: list[int] = []
-        if platform.system().lower().startswith("win"):
-            backends += [cv2.CAP_DSHOW, cv2.CAP_MSMF]
-        backends.append(0)
-        for backend in backends:
-            cap = (
-                cv2.VideoCapture(self.camera_index, backend)
-                if backend
-                else cv2.VideoCapture(self.camera_index)
-            )
-            if cap.isOpened():
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-                return cap
-            cap.release()
-        return None
-
     def _capture_loop(self) -> None:
-        assert self._cap is not None
         face_box: tuple[int, int, int, int] | None = None
         last_detect = 0.0
         prev_center: tuple[float, float] | None = None
-        failures = 0
-        next_preview = 0.0
+        last_ts = -1.0
+        period = 1.0 / POLL_HZ
 
         while not self._stop.is_set():
-            ok, frame = self._cap.read()
-            if not ok or frame is None:
-                failures += 1
-                if failures >= READ_FAIL_LIMIT:
-                    with self._lock:
-                        self._fault = "카메라 프레임을 연속으로 못 읽었다"
-                        # 마지막 프레임을 버린다. 안 버리면 카메라가 빠진 뒤에
-                        # 화면을 연 사람에게 죽은 프레임이 실시간 영상인 것처럼
-                        # 나간다. 값을 지어내지 않는 것과 같은 이유다 (README §0-4).
-                        self._preview = None
-                    return
-                time.sleep(0.01)
+            if not self._active:
+                time.sleep(0.1)
                 continue
-            failures = 0
+            source = self._frames
+            got = source.latest_frame() if source is not None else None
+            if got is None:
+                time.sleep(period)
+                continue
+            now, frame = got  # 시각은 캡처한 쪽이 찍는다 (단조시계)
+            if now <= last_ts:  # 같은 프레임을 두 번 세지 않는다
+                time.sleep(period)
+                continue
+            last_ts = now
 
-            now = time.monotonic()  # 신호 타이밍은 벽시계가 아니라 단조시계를 쓴다
             height, width = frame.shape[:2]
 
             if now - last_detect >= FACE_DETECT_SEC:
@@ -258,106 +239,20 @@ class RppgAdapter(SensorAdapter):
                 while self._times and (now - self._times[0]) > self.window_s:
                     self._times.popleft()
                     self._rgbs.popleft()
-                wanted = now < self._preview_until
-                if now < self._frames_until:
-                    # 참조만 넘긴다. cap.read() 가 매번 새 배열을 주므로 이 한 장은
-                    # 캡처 스레드가 다시 건드리지 않는다.
-                    self._frame, self._frame_t = frame, now
-                else:
-                    self._frame = None
 
-            # 미리보기는 보는 사람이 있을 때만 만든다. 아무도 안 보는데 매 프레임
-            # JPEG 을 굽는 건 Pi 에서 그대로 FPS 손해다.
-            if wanted and now >= next_preview:
-                next_preview = now + 1.0 / PREVIEW_FPS
-                self._publish_preview(frame, face_box, width, height)
+            # 지금 무엇을 보고 있는지 미리보기에 얹는다. 그리는 것은 camera
+            # 어댑터고 우리는 좌표만 맡긴다 — 색이 둘이라 주인을 둘로 나눈다.
+            if self._overlay is not None:
+                self._overlay.set_overlay(
+                    f"{self.id}:face", [face_box] if face_box else [], _PREVIEW_FACE
+                )
+                self._overlay.set_overlay(
+                    f"{self.id}:roi", list(_roi_candidates(face_box, width, height)), _PREVIEW_ROI
+                )
 
-            # 원본 프레임은 여기서 끝. 디스크에 쓰지 않는다 (README §1 비목표).
-            # 공유가 켜져 있으면 위에서 참조를 하나 남겨 뒀고, 그것도 다음 프레임이
-            # 덮어쓴다 — 메모리에 늘 한 장뿐이다.
+            # 원본 프레임은 여기서 끝. 우리는 참조만 빌려 썼고 저장하지 않는다
+            # (README §1 비목표).
             del frame
-
-    # --- 미리보기 --------------------------------------------------------- #
-
-    def latest_frame(self) -> tuple[float, np.ndarray] | None:
-        """FrameSource. 가장 최근 BGR 프레임과 그 캡처 시각(monotonic).
-
-        미리보기의 request_preview 와 같은 자리다 — 부르는 것 자체가 "받아 갈 사람이
-        있다"는 신호라, 아무도 안 부르면 캡처 루프는 프레임을 들고 있지도 않는다.
-        그래서 첫 호출은 None 이 정상이고, 다음 프레임부터 값이 나온다.
-        """
-        with self._lock:
-            self._frames_until = time.monotonic() + FRAME_SHARE_LINGER_SEC
-            if self._frame is None:
-                return None
-            return self._frame_t, self._frame
-
-    def set_overlay(
-        self,
-        owner: str,
-        boxes: list[tuple[int, int, int, int]],
-        color: tuple[int, int, int],
-    ) -> None:
-        """OverlayTarget. 미리보기에 같이 그려 줄 상자를 맡아 둔다."""
-        with self._lock:
-            self._overlays[owner] = (list(boxes), color)
-
-    def request_preview(self) -> None:
-        with self._lock:
-            self._preview_until = time.monotonic() + PREVIEW_LINGER_SEC
-
-    def preview_jpeg(self) -> bytes | None:
-        with self._lock:
-            return self._preview
-
-    def _publish_preview(
-        self,
-        frame: np.ndarray,
-        face_box: tuple[int, int, int, int] | None,
-        width: int,
-        height: int,
-    ) -> None:
-        """지금 프레임의 축소본을 JPEG 으로 만들어 하나만 들고 있는다.
-
-        측정에 쓰는 ROI 를 같이 그린다. 신뢰도가 낮을 때 "왜"를 화면에서 바로
-        알 수 있어야 한다 — 얼굴을 놓쳤는지, 박스 밖으로 나갔는지가 보인다.
-        """
-        scale = PREVIEW_WIDTH / float(width)
-        small = cv2.resize(frame, (PREVIEW_WIDTH, max(1, round(height * scale))))
-
-        def box(rect: tuple[int, int, int, int], color: tuple[int, int, int]) -> None:
-            x, y, w, h = rect
-            cv2.rectangle(
-                small,
-                (round(x * scale), round(y * scale)),
-                (round((x + w) * scale), round((y + h) * scale)),
-                color,
-                1,
-            )
-
-        if face_box is not None:
-            box(face_box, _PREVIEW_FACE)
-        for rect in _roi_candidates(face_box, width, height):
-            box(rect, _PREVIEW_ROI)
-
-        # 남이 맡긴 상자를 마지막에 얹는다. 위에 그려야 겹쳤을 때 가려지지 않는다.
-        with self._lock:
-            overlays = list(self._overlays.values())
-        for rects, color in overlays:
-            for rect in rects:
-                box(rect, color)
-
-        # 거울상으로 뒤집는다. 화면을 보면서 자세를 잡는 용도라 좌우가 그대로면
-        # 오른쪽으로 움직였는데 화면은 왼쪽으로 가서 맞추기가 어렵다.
-        ok, buf = cv2.imencode(
-            ".jpg", cv2.flip(small, 1), [int(cv2.IMWRITE_JPEG_QUALITY), PREVIEW_QUALITY]
-        )
-        if not ok:
-            return
-        with self._lock:
-            self._preview = buf.tobytes()
-
-    # --- 추정 ------------------------------------------------------------- #
 
     def _estimate(
         self,
@@ -512,73 +407,6 @@ class RppgAdapter(SensorAdapter):
         )
 
 
-# --------------------------------------------------------------------------- #
-# 카메라 백엔드
-# --------------------------------------------------------------------------- #
-class _Picamera2Capture:
-    """Picamera2 를 cv2.VideoCapture 처럼 보이게 감싼다.
-
-    캡처 루프와 stop() 은 read()/release() 만 쓴다. 그 두 개만 맞춰 주면 나머지
-    코드는 어느 백엔드로 열렸는지 몰라도 된다.
-    """
-
-    __slots__ = ("_camera",)
-
-    def __init__(self, camera: Any) -> None:
-        self._camera = camera
-
-    def read(self) -> tuple[bool, np.ndarray | None]:
-        # 여기서 예외가 새어 나가면 캡처 스레드가 조용히 죽는다. 그러면 _fault 가
-        # 안 잡혀 read() 는 멎은 창을 계속 내보낸다 — 실패는 실패로 보여야 한다.
-        try:
-            return True, self._camera.capture_array()
-        except Exception as exc:
-            log.warning("rppg.picamera2_read_failed", error=str(exc))
-            return False, None
-
-    def release(self) -> None:
-        self._camera.stop()
-        self._camera.close()
-
-
-def _open_picamera2(camera_index: int, width: int, height: int) -> _Picamera2Capture:
-    """CSI 리본 카메라 (Bookworm).
-
-    이 카메라도 /dev/video0 으로 잡히기는 하지만 그건 디베이어 전 raw 프레임이라
-    cv2.VideoCapture 로는 쓸 수 없다. libcamera 를 거치는 Picamera2 로 연다.
-
-    picamera2 는 libcamera 파이썬 바인딩에 묶여 있어 apt 로만 깔린다
-    (python3-picamera2). pi extras 에 넣으면 pip 설치가 통째로 깨지므로 넣지 않고,
-    venv 를 --system-site-packages 로 만들어 가져온다 (docs/hardware.md §0).
-    여기서 늦게 import 하는 것은 다른 드라이버와 같은 이유다 — 없으면 이 카드만
-    죽고 나머지는 그대로 돈다.
-    """
-    from picamera2 import Picamera2
-
-    # 카메라가 없으면 Picamera2 는 "list index out of range" 로 죽는다. 그 메시지만
-    # 보고는 리본이 안 꽂힌 건지 인덱스가 틀린 건지 알 수 없으므로 먼저 세어 본다.
-    found = Picamera2.global_camera_info()
-    if camera_index >= len(found):
-        raise RuntimeError(
-            f"libcamera 가 잡은 카메라는 {len(found)}대인데 camera_index={camera_index} 를 찾는다. "
-            "리본이 제대로 꽂혔는지, rpicam-hello --list-cameras 에 보이는지 확인할 것"
-        )
-
-    camera = Picamera2(camera_index)
-    # 포맷 이름은 메모리에 담기는 순서와 반대다. "RGB888" 로 잡아야 실제 바이트가
-    # B,G,R 순으로 와서 cv2 가 기대하는 배열이 그대로 나온다. 뒤집히면 POS 도
-    # 피부 마스크도 조용히 틀리므로, 파이에서 미리보기를 열어 피부가 파랗게 보이지
-    # 않는지 눈으로 확인할 것.
-    camera.configure(
-        camera.create_video_configuration(main={"size": (width, height), "format": "RGB888"})
-    )
-    camera.start()
-    return _Picamera2Capture(camera)
-
-
-# --------------------------------------------------------------------------- #
-# 신호 처리 (rppg_demo_v4.py 에서 이식)
-# --------------------------------------------------------------------------- #
 def _ema(previous: float | None, sample: float) -> float:
     """첫 표본은 그대로 받는다.
 

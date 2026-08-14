@@ -5,6 +5,8 @@ import {
   EyeOff,
   Gauge,
   Heart,
+  Timer,
+  TrendingUp,
   type LucideIcon,
   PersonStanding,
   Sun,
@@ -25,6 +27,11 @@ export const LABEL: Record<string, string> = {
   posture: '자세',
   perclos: '눈감김',
   blink_dur: '깜빡임',
+  reopen_ms: '재개안 지연',
+  blink_rate: '깜빡임 빈도',
+  head_drop: '고개 떨굼',
+  drowsy_score: '졸음 점수',
+  drowsy_trend: '졸음 추세',
   drowsiness: '졸음',
 }
 
@@ -39,6 +46,11 @@ export const ICON: Record<string, LucideIcon> = {
   posture: Activity,
   perclos: EyeOff,
   blink_dur: Eye,
+  reopen_ms: Timer,
+  blink_rate: Eye,
+  head_drop: PersonStanding,
+  drowsy_score: Gauge,
+  drowsy_trend: TrendingUp,
   drowsiness: Gauge,
 }
 
@@ -47,7 +59,16 @@ export const ICON: Record<string, LucideIcon> = {
  * 보조 지표 카드에서는 뺀다 — 같은 값을 두 군데 그리면 어느 쪽이 최신인지
  * 매번 확인하게 된다.
  */
-export const DROWSINESS_KEYS = ['drowsiness', 'perclos', 'blink_dur']
+export const DROWSINESS_KEYS = [
+  'drowsiness',
+  'drowsy_score',
+  'drowsy_trend',
+  'reopen_ms',
+  'blink_dur',
+  'blink_rate',
+  'head_drop',
+  'perclos',
+]
 
 export const MODE_LABEL: Record<Mode, string> = {
   live: '실측',

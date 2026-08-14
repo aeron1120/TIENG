@@ -203,7 +203,9 @@ function DeviceView({ device, showing }: { device: DeviceCamera; showing: boolea
             showing && device.state === 'running' ? '' : 'invisible'
           }`}
         />
-        {showing && device.state === 'running' && <Roi roi={device.roi} tracking={device.tracking} />}
+        {showing && device.state === 'running' && (
+          <Overlay face={device.face} rois={device.rois} tracking={device.tracking} />
+        )}
       </div>
 
       {!showing ? (
@@ -217,21 +219,41 @@ function DeviceView({ device, showing }: { device: DeviceCamera; showing: boolea
   )
 }
 
-/** 지금 얼굴로 보고 있는 자리. 못 잡았으면 흐리게 두어 "여기 맞춰라"로 읽히게 한다. */
-function Roi({ roi, tracking }: { roi: Box; tracking: boolean }) {
+const place = (box: Box) => ({
+  left: `${box.x * 100}%`,
+  top: `${box.y * 100}%`,
+  width: `${box.w * 100}%`,
+  height: `${box.h * 100}%`,
+})
+
+/**
+ * 지금 어디를 보고 있는지.
+ *
+ * 얼굴 자리는 옅게, 실제로 재는 이마·양 볼은 진하게 그린다. 실기 미리보기가 같은
+ * 규칙으로 그린다 (core/adapters/rppg.py 의 _publish_preview) — 두 화면을 나란히
+ * 놓았을 때 같은 것을 보고 있다고 읽혀야 한다.
+ *
+ * 얼굴을 못 잡았으면 점선 하나만 남겨 "여기 맞춰라"로 읽히게 한다.
+ */
+function Overlay({ face, rois, tracking }: { face: Box; rois: Box[]; tracking: boolean }) {
   return (
-    <div
-      aria-hidden
-      className={`pointer-events-none absolute rounded-md border-2 transition-[border-color] ${
-        tracking ? 'border-gold' : 'border-dashed border-gold/30'
-      }`}
-      style={{
-        left: `${roi.x * 100}%`,
-        top: `${roi.y * 100}%`,
-        width: `${roi.w * 100}%`,
-        height: `${roi.h * 100}%`,
-      }}
-    />
+    <>
+      <div
+        aria-hidden
+        className={`pointer-events-none absolute rounded-md border transition-[border-color] ${
+          tracking ? 'border-white/25' : 'border-2 border-dashed border-gold/30'
+        }`}
+        style={place(face)}
+      />
+      {rois.map((roi, i) => (
+        <div
+          key={i}
+          aria-hidden
+          className="pointer-events-none absolute rounded-[3px] border-2 border-gold shadow-[0_0_8px_rgba(197,160,89,0.35)]"
+          style={place(roi)}
+        />
+      ))}
+    </>
   )
 }
 
@@ -306,7 +328,7 @@ function Zoom({
           device.stream ? (
             <div className="absolute inset-0 -scale-x-100">
               <video ref={ref} muted playsInline disablePictureInPicture className="h-full w-full object-cover" />
-              <Roi roi={device.roi} tracking={device.tracking} />
+              <Overlay face={device.face} rois={device.rois} tracking={device.tracking} />
             </div>
           ) : (
             <Notice icon={CameraOff}>카메라가 꺼져 있습니다</Notice>

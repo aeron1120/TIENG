@@ -10,6 +10,10 @@ import type { Metric } from '../types'
 // 계산은 서버가 한다 (core/pulse.py). 여기서 하면 옥시미터로 검증한 공식을 두 벌로
 // 유지하게 되고, 두 배포의 숫자가 갈리는 순간 "검증된 값"이라고 말할 근거가 사라진다.
 // 여기가 맡는 것은 픽셀을 봐야만 나오는 값들뿐이다 — 서버에는 프레임이 없다.
+//
+// 어디를 재고 있는지는 화면에 그대로 나가야 한다. 재는 쪽이 아무 반응도 없으면
+// 값이 나와도 믿기 어렵고, 얼굴을 어떻게 놓아야 하는지도 알 수 없다. 그래서 얼굴
+// 자리와 실제로 재는 구역을 같이 돌려준다 — 그리는 것과 재는 것이 같아야 한다.
 
 const FPS = 30
 const FRAME_MS = 1000 / FPS
@@ -23,16 +27,23 @@ const H = 120
 // 아직 얼굴을 못 찾았을 때 보여 주는 자리. 여기 맞춰 달라는 안내이기도 하다.
 const HOME: Box = { x: 0.3, y: 0.15, w: 0.4, h: 0.5 }
 
-// 피부 픽셀 분포에서 ROI 를 잡는다. 중심에서 표준편차의 이만큼까지를 얼굴로 본다.
-// 1.6 이면 정규분포 기준 약 89% 를 덮는다 — 목·어깨까지 끌고 오지 않으면서 이마와
-// 볼을 다 담는 값이다.
-const SPREAD = 1.6
-// 프레임 전체에서 피부가 이보다 적으면 얼굴이 없다고 본다.
-const MIN_SKIN = 0.01
-// ROI 를 프레임마다 그대로 옮기면 상자가 떨린다. 눌러서 따라가게 한다.
+// 살색 덩어리가 이보다 작으면 얼굴이 아니라고 본다 (프레임 대비).
+const MIN_BLOB = 0.01
+// 얼굴 덩어리가 세로로 이보다 길면 목·가슴까지 이어진 것으로 보고 위쪽만 남긴다.
+// 얼굴은 대략 가로:세로 = 1:1.3 이라, 그보다 훨씬 길면 옷이 붙은 것이다.
+const FACE_ASPECT = 1.4
+// 상자를 프레임마다 그대로 옮기면 떨린다. 눌러서 따라가게 한다.
 const ROI_ALPHA = 0.25
 // 상자를 화면에 다시 그리는 주기. 30fps 로 상태를 갱신하면 리액트가 그만큼 렌더한다.
 const ROI_PUSH_MS = 100
+
+// 얼굴 상자 안에서 실제로 재는 자리. core/adapters/rppg.py 의 _roi_candidates 와
+// 같은 비율이다 — 두 배포가 같은 곳을 재야 숫자를 나란히 놓고 말할 수 있다.
+const PATCHES: { label: string; x: number; y: number; w: number; h: number }[] = [
+  { label: '이마', x: 0.3, y: 0.08, w: 0.4, h: 0.16 },
+  { label: '왼쪽 볼', x: 0.18, y: 0.42, w: 0.24, h: 0.22 },
+  { label: '오른쪽 볼', x: 0.58, y: 0.42, w: 0.24, h: 0.22 },
+]
 
 // YCrCb 피부 범위. core/adapters/rppg.py 의 _SKIN_LO/_SKIN_HI 와 같은 값이다.
 const SKIN = { yLo: 40, yHi: 250, crLo: 133, crHi: 173, cbLo: 77, cbHi: 127 }
@@ -40,6 +51,11 @@ const SKIN = { yLo: 40, yHi: 250, crLo: 133, crHi: 173, cbLo: 77, cbHi: 127 }
 // 이만큼 흔들리면 jitter_norm = 1. 어댑터의 JITTER_SCALE_PX 와 같은 자리지만
 // 여기 좌표계는 160x120 이라 그 비율로 줄여 잡는다.
 const JITTER_SCALE = 6.0 * (W / 640)
+
+// 프레임마다 새로 만들지 않는다. 30fps 로 19,200칸짜리 배열을 두 개씩 버리면
+// 가비지 수집이 계속 돈다.
+const mask = new Uint8Array(W * H)
+const stack = new Int32Array(W * H)
 
 export type CameraState = 'off' | 'starting' | 'running' | 'denied' | 'unsupported' | 'failed'
 
@@ -59,11 +75,13 @@ export interface DeviceCamera {
   detail: string
   /** 서버가 방금 표본으로 낸 값. WebSocket 으로도 오지만 이쪽이 한 박자 빠르다. */
   reading: Metric | null
-  /** 지금 얼굴로 보고 있는 자리. 화면에 그대로 그린다. */
-  roi: Box
-  /** 얼굴을 잡았는가. 못 잡았으면 roi 는 안내용 기본 자리다. */
+  /** 얼굴로 보고 있는 자리. 화면에 옅게 그린다. */
+  face: Box
+  /** 실제로 재고 있는 구역들 (이마·양 볼). 화면에 진하게 그린다. */
+  rois: Box[]
+  /** 얼굴을 잡았는가. 못 잡았으면 face 는 안내용 기본 자리다. */
   tracking: boolean
-  /** ROI 안이 얼마나 피부인가 (0~1). 화면이 "잡히고 있다"를 보여 주는 데 쓴다. */
+  /** 재는 구역이 얼마나 피부인가 (0~1). "잡히고 있다"를 보여 주는 데 쓴다. */
   skinRatio: number
 }
 
@@ -80,7 +98,8 @@ interface Frame {
   skinRatio: number
   brightness: number
   center: [number, number] | null
-  box: Box | null
+  face: Box | null
+  rois: Box[]
 }
 
 export function useDeviceCamera(active: boolean): DeviceCamera {
@@ -89,7 +108,8 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
   const [state, setState] = useState<CameraState>('off')
   const [detail, setDetail] = useState('')
   const [reading, setReading] = useState<Metric | null>(null)
-  const [roi, setRoi] = useState<Box>(HOME)
+  const [face, setFace] = useState<Box>(HOME)
+  const [rois, setRois] = useState<Box[]>([])
   const [tracking, setTracking] = useState(false)
   const [skinRatio, setSkinRatio] = useState(0)
 
@@ -97,7 +117,7 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
   const pending = useRef<Sample[]>([])
   const quality = useRef({ jitter: 0, skinRatio: 0, brightness: 0 })
   const prevCenter = useRef<[number, number] | null>(null)
-  const box = useRef<Box>(HOME)
+  const held = useRef<Box>(HOME)
 
   const stop = useCallback(() => {
     const video = videoRef.current
@@ -107,7 +127,7 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
     setStream(null)
     pending.current = []
     prevCenter.current = null
-    box.current = HOME
+    held.current = HOME
     // 서버가 마지막 값을 바로 버리게 한다. 안 불러도 몇 초 뒤 저절로 내려가지만,
     // 끈 사람이 자기 심박이 남아 있는 것을 보면 안 꺼진 줄 안다.
     void fetch('/api/rppg/samples', { method: 'DELETE' }).catch(() => {})
@@ -119,7 +139,8 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
       setState('off')
       setReading(null)
       setTracking(false)
-      setRoi(HOME)
+      setFace(HOME)
+      setRois([])
       setSkinRatio(0)
       return
     }
@@ -176,10 +197,10 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
       ctx.drawImage(video, 0, 0, W, H)
       const frame = readFrame(ctx)
 
-      if (frame.box) {
+      if (frame.face) {
         // 잡은 자리로 눌러서 따라간다. 한 프레임 튄 것 때문에 상자가 날아다니면
         // 맞추는 사람이 그걸 따라 움직이게 된다.
-        box.current = blend(box.current, frame.box, ROI_ALPHA)
+        held.current = blend(held.current, frame.face, ROI_ALPHA)
       }
 
       let jitter = 0
@@ -202,8 +223,10 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
 
       if (now - lastPush >= ROI_PUSH_MS) {
         lastPush = now
-        setRoi({ ...box.current })
-        setTracking(frame.box !== null)
+        setFace({ ...held.current })
+        // 눌러 둔 얼굴 자리에서 다시 잘라야 화면의 세 칸도 같이 눌린다.
+        setRois(frame.face ? patchesOf(held.current) : [])
+        setTracking(frame.face !== null)
         setSkinRatio(frame.skinRatio)
       }
     }
@@ -247,7 +270,7 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
     }
   }, [active, stop])
 
-  return { videoRef, stream, state, detail, reading, roi, tracking, skinRatio }
+  return { videoRef, stream, state, detail, reading, face, rois, tracking, skinRatio }
 }
 
 function clamp01(value: number): number {
@@ -262,6 +285,16 @@ function blend(from: Box, to: Box, alpha: number): Box {
     w: mix(from.w, to.w),
     h: mix(from.h, to.h),
   }
+}
+
+/** 얼굴 상자 안의 측정 구역들. 화면에 그리는 것과 실제로 재는 것이 같아야 한다. */
+function patchesOf(face: Box): Box[] {
+  return PATCHES.map((p) => ({
+    x: face.x + p.x * face.w,
+    y: face.y + p.y * face.h,
+    w: p.w * face.w,
+    h: p.h * face.h,
+  }))
 }
 
 /**
@@ -290,98 +323,140 @@ export function isSkin(r: number, g: number, b: number): boolean {
 }
 
 /**
- * 얼굴을 찾고 그 안의 평균색을 뽑는다.
+ * 가장 큰 살색 덩어리를 찾는다.
  *
- * 얼굴 검출기를 쓰지 않는다. 브라우저마다 있는 API 가 다르고, 모델을 번들하면 폰에서
- * 첫 로딩이 그만큼 늦어진다. 대신 이미 프레임마다 하고 있는 피부 판정을 그대로 써서
- * 피부 픽셀이 모여 있는 자리를 얼굴로 본다 — 분포의 중심과 퍼짐으로 상자를 만든다.
+ * 흩어진 피부 픽셀의 평균으로 상자를 잡으면 안 된다. 방에 살색이 여기저기 있으면
+ * (나무 벽, 손, 살색 옷, 조명 받은 벽) 중심이 그 가운데로 끌리고 퍼짐이 커져서
+ * 상자가 화면 전체가 된다 — 얼굴을 잡은 것이 아니라 살색이 있는 범위를 감싼 것이다.
  *
- * 한계가 있다. 살색 배경(나무 벽, 살구색 가구)이 크게 잡히면 상자가 그쪽으로 끌린다.
- * 그때는 상자 안 피부 비율이 떨어지고 신호도 나빠져서 서버가 값을 보류한다 —
- * 틀린 자리를 잡은 채로 숫자가 나오지는 않는다.
+ * 서로 붙어 있는 것끼리 묶으면 벽은 벽대로, 얼굴은 얼굴대로 세어진다. 픽셀마다
+ * 한 번씩만 방문하므로 비용은 전체 한 바퀴와 같다.
+ */
+function largestBlob(data: Uint8ClampedArray): { x0: number; y0: number; x1: number; y1: number; count: number } | null {
+  for (let i = 0, px = 0; i < data.length; i += 4, px++) {
+    mask[px] = isSkin(data[i], data[i + 1], data[i + 2]) ? 1 : 0
+  }
+
+  let best: { x0: number; y0: number; x1: number; y1: number; count: number } | null = null
+  for (let seed = 0; seed < mask.length; seed++) {
+    if (mask[seed] !== 1) continue
+
+    let top = 0
+    stack[top++] = seed
+    mask[seed] = 2 // 밀어 넣기 전에 표시한다. 안 그러면 같은 칸이 여러 번 쌓인다.
+    let count = 0
+    let x0 = W
+    let y0 = H
+    let x1 = 0
+    let y1 = 0
+
+    while (top > 0) {
+      const p = stack[--top]
+      const x = p % W
+      const y = (p / W) | 0
+      count++
+      if (x < x0) x0 = x
+      if (x > x1) x1 = x
+      if (y < y0) y0 = y
+      if (y > y1) y1 = y
+
+      if (x > 0 && mask[p - 1] === 1) (mask[p - 1] = 2), (stack[top++] = p - 1)
+      if (x < W - 1 && mask[p + 1] === 1) (mask[p + 1] = 2), (stack[top++] = p + 1)
+      if (y > 0 && mask[p - W] === 1) (mask[p - W] = 2), (stack[top++] = p - W)
+      if (y < H - 1 && mask[p + W] === 1) (mask[p + W] = 2), (stack[top++] = p + W)
+    }
+
+    if (!best || count > best.count) best = { x0, y0, x1: x1 + 1, y1: y1 + 1, count }
+  }
+  return best
+}
+
+/**
+ * 얼굴을 찾고, 그 안의 이마·양 볼에서 평균색을 뽑는다.
  *
- * 어댑터(core/adapters/rppg.py)는 얼굴을 찾은 뒤 이마와 양 볼 셋을 가중 평균한다.
- * 여기는 상자 하나지만 뽑는 값의 뜻은 같다 — 피부 픽셀의 평균색, 그 비율, 밝기,
- * 그리고 중심이 얼마나 움직였는가.
+ * 어댑터(core/adapters/rppg.py)는 Haar cascade 로 얼굴을 찾은 뒤 같은 비율로 세
+ * 구역을 자르고 피부 픽셀 수로 가중 평균한다. 여기는 얼굴을 찾는 방법만 다르다 —
+ * 브라우저에는 검출기가 없어서 가장 큰 살색 덩어리를 얼굴로 본다. 그 뒤로는 같다.
+ *
+ * 세 구역으로 나누는 이유는 한 곳이 가려져도 나머지로 버티기 위해서다. 손으로 볼을
+ * 괴면 그 칸만 빠지고 이마로 계속 잰다.
  */
 function readFrame(ctx: CanvasRenderingContext2D): Frame {
   const { data } = ctx.getImageData(0, 0, W, H)
+  const blob = largestBlob(data)
+  const empty = { rgb: null, skinRatio: 0, brightness: 0, center: null, face: null, rois: [] }
 
-  // 1차: 프레임 전체에서 피부가 어디에 모여 있는지 본다.
-  let n = 0
-  let sx = 0
-  let sy = 0
-  let sxx = 0
-  let syy = 0
-  for (let i = 0, px = 0; i < data.length; i += 4, px++) {
-    if (!isSkin(data[i], data[i + 1], data[i + 2])) continue
-    const x = px % W
-    const y = (px / W) | 0
-    n++
-    sx += x
-    sy += y
-    sxx += x * x
-    syy += y * y
-  }
+  if (!blob || blob.count < W * H * MIN_BLOB) return empty
 
-  if (n < W * H * MIN_SKIN) {
-    // 얼굴이 없다. 상자는 부르는 쪽이 안내 자리로 되돌린다.
-    return { rgb: null, skinRatio: 0, brightness: 0, center: null, box: null }
-  }
+  // 목·가슴이 살색이면 얼굴과 한 덩어리가 된다. 얼굴은 세로가 가로의 1.3배쯤이라
+  // 그보다 길면 위쪽(머리)만 남긴다.
+  const bw = blob.x1 - blob.x0
+  const bh = Math.min(blob.y1 - blob.y0, Math.round(bw * FACE_ASPECT))
+  if (bw < 8 || bh < 8) return empty
+  const face = { x: blob.x0 / W, y: blob.y0 / H, w: bw / W, h: bh / H }
 
-  const cx = sx / n
-  const cy = sy / n
-  const halfW = Math.max(8, SPREAD * Math.sqrt(Math.max(0, sxx / n - cx * cx)))
-  const halfH = Math.max(8, SPREAD * Math.sqrt(Math.max(0, syy / n - cy * cy)))
+  // 세 구역 각각의 평균색을 내고 피부 픽셀 수로 가중 평균한다 (_select_hr_roi 와 같다).
+  let total = 0
+  let wr = 0
+  let wg = 0
+  let wb = 0
+  let bestCount = 0
+  let bestRatio = 0
+  let bestBright = 0
+  let bestCenter: [number, number] | null = null
 
-  const x0 = Math.max(0, Math.round(cx - halfW))
-  const y0 = Math.max(0, Math.round(cy - halfH))
-  const x1 = Math.min(W, Math.round(cx + halfW))
-  const y1 = Math.min(H, Math.round(cy + halfH))
-  const bw = x1 - x0
-  const bh = y1 - y0
-  if (bw <= 0 || bh <= 0) {
-    return { rgb: null, skinRatio: 0, brightness: 0, center: null, box: null }
-  }
+  for (const patch of patchesOf(face)) {
+    const px0 = Math.max(0, Math.round(patch.x * W))
+    const py0 = Math.max(0, Math.round(patch.y * H))
+    const px1 = Math.min(W, Math.round((patch.x + patch.w) * W))
+    const py1 = Math.min(H, Math.round((patch.y + patch.h) * H))
+    const area = (px1 - px0) * (py1 - py0)
+    if (area <= 0) continue
 
-  // 2차: 그 상자 안의 피부 픽셀만으로 평균색을 낸다. 밖에 있는 살색 배경이
-  // 평균에 섞이지 않게 하려는 것이다.
-  let count = 0
-  let sumR = 0
-  let sumG = 0
-  let sumB = 0
-  let inX = 0
-  let inY = 0
-  for (let y = y0; y < y1; y++) {
-    for (let x = x0; x < x1; x++) {
-      const i = (y * W + x) * 4
-      const r = data[i]
-      const g = data[i + 1]
-      const b = data[i + 2]
-      if (!isSkin(r, g, b)) continue
-      count++
-      sumR += r
-      sumG += g
-      sumB += b
-      inX += x
-      inY += y
+    let count = 0
+    let sr = 0
+    let sg = 0
+    let sb = 0
+    for (let y = py0; y < py1; y++) {
+      for (let x = px0; x < px1; x++) {
+        const i = (y * W + x) * 4
+        const r = data[i]
+        const g = data[i + 1]
+        const b = data[i + 2]
+        if (!isSkin(r, g, b)) continue
+        count++
+        sr += r
+        sg += g
+        sb += b
+      }
+    }
+    // 몇 픽셀만 남은 평균색은 얼굴이 아니라 배경일 가능성이 크다. 어댑터의
+    // MIN_SKIN_PIXELS 와 같은 뜻이다.
+    if (count < area * 0.1) continue
+
+    total += count
+    wr += (sr / count) * count
+    wg += (sg / count) * count
+    wb += (sb / count) * count
+    if (count > bestCount) {
+      bestCount = count
+      bestRatio = count / area
+      bestBright = (sr + sg + sb) / (3 * count)
+      bestCenter = [(px0 + px1) / 2, (py0 + py1) / 2]
     }
   }
 
-  const ratio = count / (bw * bh)
-  const box = { x: x0 / W, y: y0 / H, w: bw / W, h: bh / H }
-  // 어댑터의 MIN_SKIN_PIXELS 와 같은 뜻이다. 몇 픽셀만 남은 평균색은 얼굴이 아니라
-  // 배경일 가능성이 크고, 그 값으로 맥파를 뽑으면 잡음에 락온한다.
-  if (count < bw * bh * 0.02) {
-    return { rgb: null, skinRatio: ratio, brightness: 0, center: null, box }
+  if (total === 0) {
+    // 얼굴 자리는 잡았는데 잴 만한 피부가 없다. 상자는 보여 주되 값은 안 만든다.
+    return { rgb: null, skinRatio: 0, brightness: 0, center: null, face, rois: patchesOf(face) }
   }
 
-  // 상자를 눌러 따라가게 하는 것은 부르는 쪽이 한다. 여기서는 이번 프레임만 본다.
   return {
-    rgb: [sumR / count, sumG / count, sumB / count],
-    skinRatio: ratio,
-    brightness: (sumR + sumG + sumB) / (3 * count),
-    center: [inX / count, inY / count],
-    box,
+    rgb: [wr / total, wg / total, wb / total],
+    skinRatio: bestRatio,
+    brightness: bestBright,
+    center: bestCenter,
+    face,
+    rois: patchesOf(face),
   }
 }

@@ -32,6 +32,7 @@ Linux 에서 열리더라도 두 스트림이 노출을 서로 흔들어 심박�
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from collections import deque
@@ -43,6 +44,7 @@ import numpy as np
 import structlog
 
 from api.schemas import Metric, Mode, State, server_now
+from core import drowsy_baseline
 from core.adapters.base import FrameSource, OverlayTarget, SensorAdapter
 
 log = structlog.get_logger(__name__)
@@ -90,9 +92,22 @@ BLINK_MIN_S, BLINK_MAX_S = 0.05, 1.20
 # --- 개인 기준선 ---------------------------------------------------------- #
 # 문헌이 공통으로 지적하는 것이 개인차가 크다는 점이다. 실제로 같은 사람에게서도
 # 깜빡임이 194~465ms 로 흔들렸다. 절대 임계(400ms 등)로는 누구는 늘 졸린 사람이
-# 되고 누구는 영영 안 걸린다. 그래서 "평소의 그 사람" 대비 변화율로 본다.
+# 되고 누구는 영영 안 걸린다. 그래서 "평소의 그 사람" 대비로 본다.
+#
+# 대비를 **증가율이 아니라 표준편차 배수(z)** 로 잰다. 채널마다 평소 흔들리는 폭이
+# 다르기 때문이다 — 재개안이 평소 ±10% 흔들리고 빈도가 ±50% 흔들린다면 같은
+# "+30%" 가 두 채널에서 전혀 다른 뜻이다. 실측에서 빈도가 21 -> 48/분 으로 튀며
+# 점수를 밀어 올린 것이 정확히 이 문제였다.
+#
+# 부수 효과로 채널마다 손으로 정하던 상수 넷이 Z_FULL 하나로 준다. 가중치가
+# 그제서야 "중요도"만 뜻하게 된다 — 예전에는 RISE 상수와 가중치가 뒤섞여 있어
+# 하나를 조정하면 두 손잡이를 같이 돌리는 셈이었다.
 BASELINE_S = 90.0  # 처음 이만큼을 각성 상태로 보고 기준선을 만든다
-BASELINE_MIN_BLINKS = 8  # 이보다 적으면 기준선을 믿지 않는다
+BASELINE_MIN_SAMPLES = 20  # 창이 찬 뒤 이만큼은 봐야 흔들림을 안다 (read 는 1Hz)
+Z_FULL = 3.0  # 기준선 표준편차의 이 배수면 그 채널이 만점
+# 표준편차 하한. 기준선이 우연히 너무 고르면 미세한 변화가 곧바로 만점이 된다.
+# "평소 값의 10% 가 1σ" 보다 더 민감해지지 않게 막는다.
+Z_SD_FLOOR_REL = 0.10
 
 # --- 채널 가중 ------------------------------------------------------------ #
 # 조기 경보가 목적이라 PERCLOS 를 주력에서 내렸다. PERCLOS 는 "눈이 오래 감겨
@@ -111,15 +126,6 @@ W_DURATION = 0.25  # 깜빡임 지속시간 — 같은 상위군
 W_BLINKRATE = 0.15  # 깜빡임 빈도 — 문헌의 상위 4개에 blink interval 이 있다
 W_HEAD = 0.15  # 고개 떨굼 — 눈꺼풀과 독립
 W_PERCLOS = 0.10  # 후행·확인용. 혼자서는 경고를 못 낸다
-
-# 각 채널이 0 -> 1 로 차오르는 구간. PERCLOS 만 절대값이고 나머지는 기준선 대비다.
-REOPEN_RISE = 0.60  # 재개안이 기준선보다 60% 길어지면 만점
-DURATION_RISE = 0.50
-# 빈도는 오르내리기를 둘 다 한다. 졸음 초기에 늘었다가 심해지면 줄어드는 것으로
-# 알려져 있어, 방향이 아니라 **기준선에서 얼마나 벗어났나**로 본다.
-BLINKRATE_SHIFT = 0.60
-HEAD_DROP_RISE = 0.12  # 고개가 기준선보다 이만큼 내려가면 만점 (자세 비율 기준)
-PERCLOS_LO, PERCLOS_HI = 4.0, 15.0
 
 SCORE_WARN, SCORE_ALERT = 30.0, 60.0
 
@@ -163,6 +169,7 @@ class DrowsinessAdapter(SensorAdapter):
         model: str = "models/face_detection_yunet_2023mar.onnx",
         window_s: float = 60.0,
         baseline_s: float = BASELINE_S,
+        baseline_path: str = str(drowsy_baseline.DEFAULT_PATH),
         score_warn: float = SCORE_WARN,
         score_alert: float = SCORE_ALERT,
     ) -> None:
@@ -172,6 +179,9 @@ class DrowsinessAdapter(SensorAdapter):
         self.model_path = Path(model)
         self.window_s = window_s
         self.baseline_s = baseline_s
+        self.baseline_path = Path(baseline_path)
+        # 측정 대상. registry 가 config 밖(state/mode.json)에서 받아 넣어 준다.
+        self.subject = ""
         self.score_warn = score_warn
         self.score_alert = score_alert
 
@@ -191,14 +201,15 @@ class DrowsinessAdapter(SensorAdapter):
         self._closure_ref: tuple[float, float] | None = None
         self._seen: deque[tuple[float, bool]] = deque()  # (시각, 눈을 봤나)
         self._blinks: deque[tuple[float, float, float]] = deque()  # (끝시각, 지속 s, 재개안 s)
-        # 개인 기준선. 각성 상태로 보는 처음 baseline_s 동안 모아 중앙값을 낸다.
-        self._base_samples: list[tuple[float, float]] = []
-        self._base_started: float | None = None
+        # 기준선. 채널 이름 -> (평균, 표준편차). 완성 전에는 None 이고 그동안
+        # _base_stats 에 표본을 모은다. **창이 찬 뒤의 값만** 모은다 — 덜 찬 창의
+        # 값은 원래 흔들려서, 그걸 평소 흔들림으로 잡으면 기준이 너무 헐거워진다.
+        self._base: dict[str, tuple[float, float]] | None = None
+        self._base_stats: dict[str, list[float]] = {}
         self._base_until: float | None = None
-        self._base_dur: float | None = None
-        self._base_reopen: float | None = None
-        self._base_rate: float | None = None  # 분당 깜빡임
-        self._base_pitch: float | None = None  # 머리 자세 기준
+        # 지난 주행에서 쌓아 둔 기준선. 세션 표본과 합쳐 쓴다.
+        self._saved = drowsy_baseline.Baseline()
+        self._session: dict[str, list[float]] = {}
         # 머리 자세 (시각, pitch). 눈꺼풀과 무관한 유일한 채널이다.
         self._poses: deque[tuple[float, float]] = deque()
         # 점수 이력. 추세(기울기)를 내려고 들고 있는다.
@@ -210,6 +221,57 @@ class DrowsinessAdapter(SensorAdapter):
         self._fault: str | None = None
         # 지금 값을 내고 있는가. 게이트 히스테리시스용이라 read() 만 만진다.
         self._producing = False
+
+    # --- SubjectAware ------------------------------------------------------ #
+
+    def set_subject(self, subject: str) -> None:
+        """측정 대상이 바뀌면 기준선을 갈아 끼운다. 남의 평소로 재면 안 재느니만 못하다."""
+        if subject == self.subject:
+            return
+        self.subject = subject
+        self._load_saved()
+        with self._lock:
+            self._base = None
+            self._base_stats.clear()
+            self._base_until = None
+            self._session.clear()
+            self._scores.clear()
+
+    def _key(self) -> str:
+        return self.subject or f"device:{self.id}"
+
+    def _store_path(self) -> Path:
+        p = self.baseline_path
+        return p if p.is_absolute() else _ROOT / p
+
+    def _load_saved(self) -> None:
+        store = drowsy_baseline.load(self._store_path())
+        self._saved = store.adapters.get(self._key(), drowsy_baseline.Baseline())
+        log.info(
+            "drowsiness.baseline_loaded",
+            adapter=self.id,
+            subject=self._key(),
+            sessions=self._saved.sessions,
+            ready=self._saved.ready(),
+        )
+
+    def _persist(self) -> None:
+        """이번 세션 표본을 누적분에 더해 남긴다. 블로킹 I/O 라 호출자가 스레드로 뺀다."""
+        path = self._store_path()
+        store = drowsy_baseline.load(path)
+        saved = store.adapters.setdefault(self._key(), drowsy_baseline.Baseline())
+        for key, values in self._session.items():
+            for value in values:
+                saved.add(key, value)
+        saved.sessions += 1
+        drowsy_baseline.save(store, path)
+        log.info(
+            "drowsiness.baseline_saved",
+            adapter=self.id,
+            subject=self._key(),
+            sessions=saved.sessions,
+            samples={k: c.n for k, c in saved.channels.items()},
+        )
 
     # --- FrameConsumer ------------------------------------------------------ #
 
@@ -231,6 +293,7 @@ class DrowsinessAdapter(SensorAdapter):
             str(path), "", (320, 320), YUNET_SCORE, YUNET_NMS
         )
 
+        self._load_saved()
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._loop, name=f"drowsiness-{self.id}", daemon=True
@@ -242,6 +305,12 @@ class DrowsinessAdapter(SensorAdapter):
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
+        # 이번 주행분을 누적분에 더해 남긴다. 다음 주행은 이만큼 덜 기다린다.
+        if self._session:
+            try:
+                await asyncio.to_thread(self._persist)
+            except Exception as exc:  # 저장 실패로 종료를 막지 않는다
+                log.warning("drowsiness.baseline_save_failed", adapter=self.id, error=str(exc))
 
     # --- 지표 --------------------------------------------------------------- #
 
@@ -256,19 +325,31 @@ class DrowsinessAdapter(SensorAdapter):
             seen = [ok for _, ok in self._seen]
             blinks = [(d, r) for _, d, r in self._blinks]
             poses = [p for _, p in self._poses]
-            base_dur, base_reopen = self._base_dur, self._base_reopen
-            base_rate, base_pitch = self._base_rate, self._base_pitch
-            base_until = self._base_until
             attached = self._attached
 
         track = float(np.mean(seen)) if seen else 0.0
-        progress = self._progress(now, since, base_until, base_dur is not None)
-
         if not attached:
             return self._blank("no_adapter", None, 0.0)
         if not seen:
             # 공급자는 붙었는데 프레임이 아직 없다. 카메라가 뜨는 중일 수 있다.
             return self._blank("low_quality", 0.0, 0.0)
+
+        # 채널 원값. 여기서는 정규화하지 않는다 — 화면에 그대로 나가는 값이라
+        # ms 는 ms 로, 회/분은 회/분으로 읽혀야 한다.
+        raw: dict[str, float] = {}
+        if closures:
+            raw["perclos"] = float(np.mean([c >= CLOSED_FRAC for c in closures])) * 100.0
+        if blinks:
+            raw["blink_dur"] = float(np.mean([d for d, _ in blinks])) * 1000.0
+            raw["reopen_ms"] = float(np.mean([r for _, r in blinks])) * 1000.0
+        if self.window_s > 0:
+            raw["blink_rate"] = len(blinks) / self.window_s * 60.0
+        if poses:
+            raw["pitch"] = float(np.mean(poses))
+
+        base = self._feed_baseline(now, since, raw)
+        progress = self._progress(now, since, base is not None)
+
         floor = KEEP_TRACK_RATE if self._producing else MIN_TRACK_RATE
         if track < floor:
             # 얼굴이나 눈이 안 잡힌다. 값을 지어내지 않는다 (README §0-4).
@@ -276,24 +357,15 @@ class DrowsinessAdapter(SensorAdapter):
             return self._blank("low_quality", track, progress)
         self._producing = True
 
-        perclos = float(np.mean([c >= CLOSED_FRAC for c in closures])) * 100.0 if closures else None
-        dur_ms = float(np.mean([d for d, _ in blinks])) * 1000.0 if blinks else None
-        reopen_ms = float(np.mean([r for _, r in blinks])) * 1000.0 if blinks else None
-        rate = len(blinks) / self.window_s * 60.0 if self.window_s > 0 else None
-        # 고개가 기준선보다 얼마나 내려갔나. 든 것은 세지 않는다 — 졸음의 징후는
-        # 떨구는 쪽이고, 위를 보는 것은 그냥 다른 데를 보는 것이다.
-        head_drop = None
-        if poses and base_pitch is not None and abs(base_pitch) > 1e-6:
-            head_drop = max((base_pitch - float(np.mean(poses))) / abs(base_pitch), 0.0) * 100.0
-
-        # 창이 덜 찼거나 기준선이 아직 없으면 판정하지 않는다. 기준선 없이 절대
-        # 임계로 재면 개인차가 그대로 오진이 된다 (BASELINE_S 주석).
-        if progress < 1.0 or base_dur is None or base_reopen is None:
+        # 기준선 없이 절대 임계로 재면 개인차가 그대로 오진이 된다 (BASELINE_S 주석).
+        if base is None:
             return self._blank("low_quality", track, progress)
 
-        score = self._score(
-            perclos, dur_ms, reopen_ms, rate, head_drop, base_dur, base_reopen, base_rate
-        )
+        head_drop = None
+        if "pitch" in raw and "pitch" in base and abs(base["pitch"][0]) > 1e-6:
+            head_drop = max((base["pitch"][0] - raw["pitch"]) / abs(base["pitch"][0]), 0.0) * 100.0
+
+        score = self._score(raw, base)
         with self._lock:
             self._scores.append((now, score))
             history = list(self._scores)
@@ -310,8 +382,8 @@ class DrowsinessAdapter(SensorAdapter):
             verdict = "awake"
 
         ok = "ok"
-        blink_state: State = ok if dur_ms is not None else "low_quality"
-        head_state: State = ok if head_drop is not None else "low_quality"
+        got = lambda k: raw.get(k)  # noqa: E731
+        blink_state: State = ok if "blink_dur" in raw else "low_quality"
         return [
             self._metric("drowsy_score", round(score, 1), None, ok, track, progress),
             self._metric(
@@ -322,17 +394,62 @@ class DrowsinessAdapter(SensorAdapter):
                 track,
                 progress,
             ),
-            self._metric("reopen_ms", reopen_ms, "ms", blink_state, track, progress),
-            self._metric("blink_dur", dur_ms, "ms", blink_state, track, progress),
-            self._metric("blink_rate", rate, "/분", ok, track, progress),
-            self._metric("head_drop", head_drop, "%", head_state, track, progress),
-            self._metric("perclos", perclos, "%", ok, track, progress),
+            self._metric("reopen_ms", got("reopen_ms"), "ms", blink_state, track, progress),
+            self._metric("blink_dur", got("blink_dur"), "ms", blink_state, track, progress),
+            self._metric("blink_rate", got("blink_rate"), "/분", ok, track, progress),
+            self._metric(
+                "head_drop", head_drop, "%",
+                ok if head_drop is not None else "low_quality", track, progress,
+            ),
+            self._metric("perclos", got("perclos"), "%", ok, track, progress),
             self._metric("drowsiness", verdict, None, ok, track, progress),
         ]
 
-    def _progress(
-        self, now: float, since: float | None, base_until: float | None, base_ready: bool
-    ) -> float:
+    def _feed_baseline(
+        self, now: float, since: float | None, raw: dict[str, float]
+    ) -> dict[str, tuple[float, float]] | None:
+        """각성 구간의 채널 값을 모아 (평균, 표준편차) 를 만든다. 완성 전에는 None.
+
+        창이 찬 뒤의 값만 모은다. 덜 찬 창에서 나온 값은 원래 흔들려서, 그것까지
+        평소 흔들림으로 잡으면 기준이 헐거워져 나중에 아무것도 안 걸린다.
+        """
+        with self._lock:
+            if self._base is not None:
+                return self._base
+            if since is None:
+                return None
+            if self._base_until is None:
+                self._base_until = since + self.baseline_s
+            if (now - since) < self.window_s:
+                return None  # 창이 아직 덜 찼다
+
+            for key, value in raw.items():
+                self._base_stats.setdefault(key, []).append(value)
+
+            counted = min((len(v) for v in self._base_stats.values()), default=0)
+            # 지난 주행분이 충분하면 기다리지 않는다. 시동 걸고 90초를 기다리게
+            # 하는 것이 이 방식으로 바꾼 이유였다.
+            enough = self._saved.ready() or (
+                now >= self._base_until and counted >= BASELINE_MIN_SAMPLES
+            )
+            if not enough:
+                return None
+
+            self._session = {k: list(v) for k, v in self._base_stats.items()}
+            self._base = drowsy_baseline.merge(self._saved, self._session)
+            if not self._base:
+                return None
+            log.info(
+                "drowsiness.baseline",
+                adapter=self.id,
+                subject=self._key(),
+                session_samples=counted,
+                past_sessions=self._saved.sessions,
+                **{key: f"{m:.3g}±{sd:.2g}" for key, (m, sd) in self._base.items()},
+            )
+            return self._base
+
+    def _progress(self, now: float, since: float | None, base_ready: bool) -> float:
         """관측 창과 기준선 학습 중 느린 쪽. 둘 다 끝나야 판정이 나온다."""
         if self.window_s <= 0:
             window = 1.0
@@ -343,51 +460,46 @@ class DrowsinessAdapter(SensorAdapter):
 
         if base_ready:
             baseline = 1.0
-        elif base_until is None:
+        elif self._base_until is None:
             baseline = 0.0
         else:
             span = max(self.baseline_s, 1e-6)
             # 0.99 에서 멈춘다. 기준선이 안 끝났는데 100% 로 보이면 "다 됐는데 왜
             # 값이 없냐"가 된다 — 진행률은 끝났다는 뜻이어야 한다.
-            baseline = min(max(1.0 - (base_until - now) / span, 0.0), 0.99)
+            baseline = min(max(1.0 - (self._base_until - now) / span, 0.0), 0.99)
         return min(window, baseline)
 
     def _score(
-        self,
-        perclos: float | None,
-        dur_ms: float | None,
-        reopen_ms: float | None,
-        rate: float | None,
-        head_drop: float | None,
-        base_dur: float,
-        base_reopen: float,
-        base_rate: float | None,
+        self, raw: dict[str, float], base: dict[str, tuple[float, float]]
     ) -> float:
-        """0~100. 조기 신호에 무게를 싣고 PERCLOS 는 뒤로 뺀다.
+        """0~100. 각 채널을 기준선의 표준편차 배수(z)로 재서 가중 합산한다.
 
-        가중치의 근거는 상단 주석에 있다. 요지는 둘이다 — PERCLOS 는 후행 지표라
-        졸음 **직전**을 못 잡고, 눈꺼풀에서 나오는 채널끼리는 상관이 높아 아무리
-        여럿 더해도 실패 모드가 나뉘지 않는다. 그래서 머리 자세를 넣었다.
+        z 로 재는 이유는 상단 BASELINE_S 주석에 있다. 요지는 채널마다 평소 흔들리는
+        폭이 달라서, "몇 % 변했나"로는 잡음이 큰 채널이 과대평가된다는 것이다.
 
-        PERCLOS 만 절대값이고 나머지는 그 사람의 평소 대비로 넣는다.
+        방향이 있는 채널은 오르는 쪽만 센다. 빈도만 양방향인데, 졸음 초기에 늘었다가
+        심해지면 줄어드는 것으로 알려져 있어 어느 쪽이든 벗어난 정도를 본다.
 
         채널이 없으면 그 몫은 0 으로 둔다. 가중치를 남은 채널에 다시 나눠 주지
         않는 게 중요하다 — 그러면 PERCLOS 하나로도 만점이 나와서, 후행 지표만 보고
         "조기 경보"를 냈다고 말하게 된다.
         """
         score = 0.0
-        if reopen_ms is not None and base_reopen > 1e-6:
-            score += W_REOPEN * _ramp((reopen_ms / 1000.0) / base_reopen - 1.0, REOPEN_RISE)
-        if dur_ms is not None and base_dur > 1e-6:
-            score += W_DURATION * _ramp((dur_ms / 1000.0) / base_dur - 1.0, DURATION_RISE)
-        if rate is not None and base_rate is not None and base_rate > 1e-6:
-            # 빈도는 방향이 정해져 있지 않다. 초기에 늘었다가 심해지면 줄어드는
-            # 것으로 알려져 있어, 어느 쪽이든 벗어난 정도만 본다.
-            score += W_BLINKRATE * _ramp(abs(rate / base_rate - 1.0), BLINKRATE_SHIFT)
-        if head_drop is not None:
-            score += W_HEAD * _ramp(head_drop / 100.0, HEAD_DROP_RISE)
-        if perclos is not None:
-            score += W_PERCLOS * _ramp(perclos - PERCLOS_LO, PERCLOS_HI - PERCLOS_LO)
+        for key, weight, both_ways in (
+            ("reopen_ms", W_REOPEN, False),
+            ("blink_dur", W_DURATION, False),
+            ("blink_rate", W_BLINKRATE, True),
+            ("perclos", W_PERCLOS, False),
+        ):
+            if key not in raw or key not in base:
+                continue
+            z = _z(raw[key], *base[key])
+            score += weight * _ramp(abs(z) if both_ways else z, Z_FULL)
+
+        if "pitch" in raw and "pitch" in base:
+            # 고개는 내려갈 때만 센다. 드는 것은 졸음이 아니라 딴 데를 보는 것이다.
+            # pitch 는 숙이면 작아지므로 부호를 뒤집어야 "내려감"이 양수가 된다.
+            score += W_HEAD * _ramp(-_z(raw["pitch"], *base["pitch"]), Z_FULL)
         return score * 100.0
 
     def _blank(self, state: State, confidence: float | None, progress: float) -> list[Metric]:
@@ -513,7 +625,6 @@ class DrowsinessAdapter(SensorAdapter):
                                 in_blink = False
                                 if BLINK_MIN_S <= dur <= BLINK_MAX_S:
                                     self._blinks.append((ts, dur, reopen))
-                                    self._feed_baseline(ts, dur, reopen)
                 self._trim(ts)
 
             time.sleep(period)
@@ -566,43 +677,6 @@ class DrowsinessAdapter(SensorAdapter):
             boxes.append((x, y, bw, bh))
         return (boxes, pitch) if boxes else None
 
-    def _feed_baseline(self, ts: float, dur: float, reopen: float) -> None:
-        """각성 상태로 보는 처음 구간의 깜빡임을 모아 그 사람의 평소를 만든다.
-
-        호출자가 _lock 을 들고 있어야 한다. 중앙값을 쓰는 이유는 하품이나 눈비비기
-        한 번이 평균을 통째로 끌어올리기 때문이다.
-        """
-        if self._base_dur is not None:
-            return
-        if self._base_until is None:
-            self._base_started = ts
-            self._base_until = ts + self.baseline_s
-        if ts <= self._base_until:
-            self._base_samples.append((dur, reopen))
-            return
-        if len(self._base_samples) < BASELINE_MIN_BLINKS:
-            # 표본이 모자라면 더 기다린다. 서너 번 깜빡인 걸로 만든 기준선은
-            # 그 뒤 모든 판정을 틀리게 만든다.
-            self._base_until = ts + self.baseline_s * 0.5
-            self._base_samples.append((dur, reopen))
-            return
-        self._base_dur = float(np.median([d for d, _ in self._base_samples]))
-        self._base_reopen = float(np.median([r for _, r in self._base_samples]))
-        elapsed = max(ts - (self._base_started or ts), 1e-6)
-        self._base_rate = len(self._base_samples) / elapsed * 60.0
-        # 자세 기준은 지금 창에 있는 것으로 잡는다. 기준선 구간이 창보다 길어
-        # 앞부분은 이미 버려졌지만, 각성 상태인 것은 마찬가지다.
-        self._base_pitch = float(np.median([p for _, p in self._poses])) if self._poses else None
-        log.info(
-            "drowsiness.baseline",
-            adapter=self.id,
-            blinks=len(self._base_samples),
-            dur_ms=round(self._base_dur * 1000, 1),
-            reopen_ms=round(self._base_reopen * 1000, 1),
-            rate_per_min=round(self._base_rate, 1),
-            pitch=None if self._base_pitch is None else round(self._base_pitch, 3),
-        )
-
     def _trim(self, now: float) -> None:
         """창 밖으로 나간 표본을 버린다. 호출자가 _lock 을 들고 있어야 한다."""
         for buf in (self._closures, self._seen, self._blinks, self._poses):
@@ -618,14 +692,15 @@ class DrowsinessAdapter(SensorAdapter):
         if not self._closures:
             self._since = None
             self._closure_ref = None
-            self._base_samples.clear()
-            self._base_started = None
+            self._base = None
+            self._base_stats.clear()
             self._base_until = None
-            self._base_dur = None
-            self._base_reopen = None
-            self._base_rate = None
-            self._base_pitch = None
             self._scores.clear()
+
+
+def _z(value: float, mean: float, sd: float) -> float:
+    """기준선 대비 표준편차 배수. 하한을 둬 지나치게 민감해지지 않게 한다."""
+    return (value - mean) / max(sd, Z_SD_FLOOR_REL * abs(mean), 1e-9)
 
 
 def _slope_per_min(history: list[tuple[float, float]]) -> float | None:

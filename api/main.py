@@ -114,7 +114,9 @@ async def _sample_loop(app: FastAPI) -> None:
             app.state.latest = snapshot
             if csv_log is not None:
                 csv_log.write_snapshot(snapshot)
-            await hub.broadcast(snapshot)
+            # 세션별 지표는 스냅샷에 섞지 않는다. CSV 도 화면 밖 기록도 이 방의
+            # 것이어야 하고, 누구 것인지 나누는 일은 보내는 자리에서만 한다.
+            await hub.broadcast(snapshot, app.state.personal)
         except Exception as exc:
             # 루프가 죽으면 대시보드가 통째로 멎는다. 한 틱을 버리고 계속 돈다.
             log.error("sample_loop.tick_failed", error=str(exc))
@@ -148,6 +150,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.runner = PolicyRunner(registry.policies, sink=interventions_csv)
     app.state.hub = Hub()
     app.state.latest = None
+    # 세션 토큰 -> 그 세션이 자기 기기 카메라로 만든 지표. 채우는 쪽은 아직 없다
+    # (브라우저 카메라 경로). 여기 있는 값은 그 세션에게만 나간다 (api/ws.py).
+    app.state.personal = {}
     app.state.metrics_csv = metrics_csv
 
     task = asyncio.create_task(_sample_loop(app))

@@ -6,6 +6,7 @@ import { Page } from '../components/Page'
 import { TrendChart } from '../components/TrendChart'
 import { useGet, usePost } from '../hooks/useApi'
 import { DROWSINESS_LABEL, DROWSINESS_TONE } from '../metrics'
+import { useAuth } from '../authContext'
 import { useFeed } from '../snapshotContext'
 
 // 졸음 방지 전용 화면. 실시간 화면과 나눈 이유는 보는 사람이 다르기 때문이다 —
@@ -17,20 +18,29 @@ import { useFeed } from '../snapshotContext'
 
 interface ModeInfo {
   mode: string
+  subject: string
   available: string[]
 }
 
 export function Drowsy() {
   const { snapshot, history, stale } = useFeed()
   const modeApi = useGet<ModeInfo>('/api/mode')
-  const switching = usePost<{ mode: string }>('/api/mode')
+  const switching = usePost<{ mode: string; subject: string }>('/api/mode')
+  const { principal } = useAuth()
   const [mode, setMode] = useState<string | null>(null)
+  const [subject, setSubject] = useState('')
 
   useEffect(() => {
-    if (modeApi.data) setMode(modeApi.data.mode)
+    if (modeApi.data) {
+      setMode(modeApi.data.mode)
+      setSubject(modeApi.data.subject)
+    }
   }, [modeApi.data])
   useEffect(() => {
-    if (switching.data) setMode(switching.data.mode)
+    if (switching.data) {
+      setMode(switching.data.mode)
+      setSubject(switching.data.subject)
+    }
   }, [switching.data])
 
   const on = mode === 'drowsy'
@@ -56,7 +66,7 @@ export function Drowsy() {
               </p>
             </div>
             <button
-              onClick={() => switching.send({ mode: on ? 'vitals' : 'drowsy' })}
+              onClick={() => switching.send({ mode: on ? 'vitals' : 'drowsy', subject })}
               disabled={switching.loading || mode === null}
               className={`kr shrink-0 rounded border-[0.5px] px-4 py-2 text-[14px] transition-colors disabled:opacity-40 ${
                 on
@@ -70,6 +80,33 @@ export function Drowsy() {
           {switching.error && (
             <p className="kr mt-2 text-[13px] text-alert">바꾸지 못했습니다 — {switching.error}</p>
           )}
+          {/* 측정 대상. 보는 사람과 재는 사람이 다를 수 있어 명시적으로 고른다 —
+              기준선은 그 사람의 평소라, 남의 것으로 재면 안 재느니만 못하다. */}
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t-[0.5px] border-gold/10 pt-3">
+            <span className="kr text-[13px] text-muted">측정 대상</span>
+            <span className="kr text-[13px] text-fg">
+              {subject || '기기 공용 (사람별 기준선 없음)'}
+            </span>
+            {principal?.username && subject !== principal.username && (
+              <button
+                onClick={() =>
+                  switching.send({ mode: mode ?? 'vitals', subject: principal.username })
+                }
+                className="kr rounded border-[0.5px] border-gold/25 px-2 py-[3px] text-[12px] text-muted hover:bg-white/[0.06] hover:text-gold"
+              >
+                나({principal.username})로 지정
+              </button>
+            )}
+            {subject && (
+              <button
+                onClick={() => switching.send({ mode: mode ?? 'vitals', subject: '' })}
+                className="kr rounded px-2 py-[3px] text-[12px] text-faint hover:text-gold"
+              >
+                해제
+              </button>
+            )}
+          </div>
+
           {on && (
             <p className="kr mt-3 flex items-start gap-2 border-t-[0.5px] border-gold/10 pt-3 text-[12px] leading-relaxed text-faint">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />

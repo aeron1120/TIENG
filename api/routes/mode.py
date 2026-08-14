@@ -24,6 +24,7 @@ async def current(request: Request) -> dict[str, object]:
     registry = getattr(request.app.state, "registry", None)
     return {
         "mode": registry.mode if registry is not None else run_mode.ModeState().mode,
+        "subject": registry.subject if registry is not None else "",
         "available": list(run_mode.MODES),
     }
 
@@ -42,6 +43,8 @@ async def switch(body: run_mode.ModeState, request: Request) -> dict[str, object
         registry.apply_mode(body.mode)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    # 측정 대상이 바뀌면 기준선을 갈아 끼운다 — 남의 평소로 재면 안 재느니만 못하다.
+    registry.apply_subject(body.subject)
 
     await asyncio.to_thread(run_mode.save, body, request.app.state.mode_path)
-    return {"mode": registry.mode}
+    return {"mode": registry.mode, "subject": registry.subject}

@@ -33,9 +33,16 @@ MODES: tuple[Mode, ...] = ("vitals", "drowsy")
 
 
 class ModeState(BaseModel):
-    """vitals = 생체 신호 중심, drowsy = 졸음 방지 중심."""
+    """이 기기가 지금 무엇을, 누구를 재는가.
+
+    subject 는 측정 대상 계정의 username 이다. 로그인한 사람을 그대로 쓰지 않는
+    이유는 **보는 사람과 재는 사람이 다를 수 있어서**다 — 원래 시나리오가 보호자가
+    로그인해 다른 사람의 지표를 보는 것이었고, 측정은 요청 맥락이 없는 1Hz 루프에서
+    돈다. 그래서 명시적으로 고른다. 비우면 기기 공용 기준선을 쓴다.
+    """
 
     mode: Mode = "vitals"
+    subject: str = ""
 
 
 def load(path: Path | None = None) -> ModeState:

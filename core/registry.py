@@ -25,6 +25,7 @@ from core.adapters.base import (
     Pausable,
     PreviewSource,
     SensorAdapter,
+    SubjectAware,
 )
 from core.mode import MODES
 from core.mode import Mode as RunMode
@@ -80,6 +81,7 @@ class Registry:
         self.policies: list[InterventionPolicy] = []
         self.thresholds: Thresholds | None = None
         self.mode: RunMode = "vitals"
+        self.subject = ""  # 측정 대상. 비우면 기기 공용 기준선을 쓴다
         self._adapters: dict[str, SensorAdapter] = {}
         self._provides: dict[str, list[str]] = {}
         # 왜 못 올라왔는지. 화면에서 바로 읽을 수 있어야 배선을 고칠 수 있다.
@@ -95,6 +97,7 @@ class Registry:
     async def start(self) -> None:
         await self._start_adapters()
         self._wire_frames()
+        self.apply_subject(self.subject)
         self.apply_mode(self.mode)
         await self._start_actuators()
         self._build_policies()
@@ -199,6 +202,7 @@ class Registry:
         return {
             "device_id": self.config.device_id,
             "mode": self.mode,
+            "subject": self.subject,
             "sample_rate_hz": self.config.sample_rate_hz,
             "thresholds_path": self.config.thresholds,
             "thresholds": thresholds,
@@ -206,6 +210,13 @@ class Registry:
             "actuators": actuators,
             "policies": policies,
         }
+
+    def apply_subject(self, subject: str) -> None:
+        """측정 대상을 알린다. 개인 기준선을 쓰는 어댑터만 반응한다."""
+        self.subject = subject
+        for adapter in self._adapters.values():
+            if isinstance(adapter, SubjectAware):
+                adapter.set_subject(subject)
 
     def apply_mode(self, mode: RunMode) -> None:
         """모드에 맞춰 어댑터를 쉬게 하거나 깨운다.

@@ -96,10 +96,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 저장된 모드를 먼저 얹고 시작한다. start() 안에서 적용되므로, 졸음 모드로
     # 꺼 둔 기기가 재부팅 뒤 잠깐이라도 심박을 다시 켜는 일이 없다.
     mode_path = _mode_path()
-    registry.mode = run_mode.load(mode_path).mode
+    saved_mode = run_mode.load(mode_path)
+    registry.mode = saved_mode.mode
+    registry.subject = saved_mode.subject
     await registry.start()
     app.state.mode_path = mode_path
-    log.info("mode.restored", mode=registry.mode)
+    log.info("mode.restored", mode=registry.mode, subject=registry.subject or "(공용)")
 
     users = Users(_users_path())
     users.init()

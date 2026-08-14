@@ -92,6 +92,18 @@ class Pausable(Protocol):
 
 
 @runtime_checkable
+class SubjectAware(Protocol):
+    """측정 대상이 누구인지 알아야 하는 어댑터.
+
+    개인 기준선을 사람별로 쌓으려면 열쇠가 필요한데, 어댑터가 계정 체계를 알면
+    안 된다. 그래서 이름 하나만 받는다 — 그게 계정인지 별명인지는 모른다.
+    """
+
+    def set_subject(self, subject: str) -> None:
+        """측정 대상이 바뀌었다. 비우면 기기 공용으로 돌아간다."""
+
+
+@runtime_checkable
 class FrameConsumer(Protocol):
     """다른 어댑터의 프레임을 받아 도는 어댑터.
 

@@ -48,6 +48,8 @@ export function CameraPanel({
   const serverCamera = status.data?.available === true
   const device = useDeviceCamera(source === 'device' && on)
   const hero = variant === 'hero'
+  // 이미 주지표 자리에 있으면 누를 데가 없다.
+  const promotable = !hero && onPromote !== undefined
 
   return (
     <section
@@ -61,11 +63,6 @@ export function CameraPanel({
           카메라
         </h2>
         <div className="flex items-center gap-1">
-          {!hero && onPromote && (
-            <Action onClick={onPromote} title="크게 보기">
-              크게
-            </Action>
-          )}
           <Action onClick={() => setZoom(true)} title="확대">
             <Maximize2 className="h-3.5 w-3.5" />
           </Action>
@@ -102,12 +99,32 @@ export function CameraPanel({
           위아래가 잘리는데, 책상에 앉으면 얼굴이 화면 아래쪽에 오기 때문에 이마
           ROI 가 먼저 날아간다. 미리보기는 그걸 확인하라고 있는 화면이다. */}
       <div className={hero ? 'flex min-h-0 flex-1 flex-col' : '2xl:flex 2xl:items-stretch'}>
+        {/* 미리보기 자체가 버튼이다. 지표 블록을 누르면 크게 뜨는 것과 같은 조작이라
+            따로 배울 게 없다. 머리글의 버튼들과 겹치지 않게 여기에만 건다 — 카드
+            전체를 버튼으로 만들면 그 안의 버튼들이 버튼 안의 버튼이 된다. */}
         <div
-          className={
+          role={promotable ? 'button' : undefined}
+          tabIndex={promotable ? 0 : undefined}
+          onClick={promotable ? onPromote : undefined}
+          onKeyDown={
+            promotable
+              ? (e) => {
+                  if (e.key !== 'Enter' && e.key !== ' ') return
+                  e.preventDefault() // 스페이스가 페이지를 스크롤하지 않게
+                  onPromote?.()
+                }
+              : undefined
+          }
+          aria-label={promotable ? '카메라 크게 보기' : undefined}
+          className={`${
             hero
               ? 'relative min-h-0 flex-1 bg-black'
               : 'relative aspect-[4/3] w-full bg-black 2xl:w-[300px] 2xl:shrink-0'
-          }
+          } ${
+            promotable
+              ? 'cursor-pointer ring-inset transition-shadow hover:ring-2 hover:ring-gold/50 focus-visible:ring-2 focus-visible:ring-gold focus-visible:outline-none'
+              : ''
+          }`}
         >
           {source === 'device' ? (
             <DeviceView device={device} showing={on} />

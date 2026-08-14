@@ -20,10 +20,19 @@ const POST_MS = 1000 // 한 묶음에 30개 남짓
 const W = 160
 const H = 120
 
-// 화면 가운데 고정 박스. 브라우저에는 얼굴 검출이 없으므로 (있는 API 는 브라우저마다
-// 달라 못 믿는다) 사람이 맞추게 하고, 안 맞으면 피부 비율이 떨어져 서버가 값을
-// 보류한다 — 못 맞춘 채로 숫자가 나오지는 않는다.
-const ROI = { x: 0.3, y: 0.15, w: 0.4, h: 0.5 }
+// 아직 얼굴을 못 찾았을 때 보여 주는 자리. 여기 맞춰 달라는 안내이기도 하다.
+const HOME: Box = { x: 0.3, y: 0.15, w: 0.4, h: 0.5 }
+
+// 피부 픽셀 분포에서 ROI 를 잡는다. 중심에서 표준편차의 이만큼까지를 얼굴로 본다.
+// 1.6 이면 정규분포 기준 약 89% 를 덮는다 — 목·어깨까지 끌고 오지 않으면서 이마와
+// 볼을 다 담는 값이다.
+const SPREAD = 1.6
+// 프레임 전체에서 피부가 이보다 적으면 얼굴이 없다고 본다.
+const MIN_SKIN = 0.01
+// ROI 를 프레임마다 그대로 옮기면 상자가 떨린다. 눌러서 따라가게 한다.
+const ROI_ALPHA = 0.25
+// 상자를 화면에 다시 그리는 주기. 30fps 로 상태를 갱신하면 리액트가 그만큼 렌더한다.
+const ROI_PUSH_MS = 100
 
 // YCrCb 피부 범위. core/adapters/rppg.py 의 _SKIN_LO/_SKIN_HI 와 같은 값이다.
 const SKIN = { yLo: 40, yHi: 250, crLo: 133, crHi: 173, cbLo: 77, cbHi: 127 }
@@ -34,14 +43,28 @@ const JITTER_SCALE = 6.0 * (W / 640)
 
 export type CameraState = 'off' | 'starting' | 'running' | 'denied' | 'unsupported' | 'failed'
 
+/** 0~1 비율. 캔버스 크기와 무관해야 화면에 그대로 얹을 수 있다. */
+export interface Box {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 export interface DeviceCamera {
   videoRef: React.RefObject<HTMLVideoElement | null>
+  /** 확대 창처럼 같은 영상을 한 번 더 그릴 때 붙인다. 한 스트림에 <video> 여럿이 붙는다. */
+  stream: MediaStream | null
   state: CameraState
   detail: string
   /** 서버가 방금 표본으로 낸 값. WebSocket 으로도 오지만 이쪽이 한 박자 빠르다. */
   reading: Metric | null
-  /** 화면에 그릴 안내 박스 (0~1 비율). */
-  roi: typeof ROI
+  /** 지금 얼굴로 보고 있는 자리. 화면에 그대로 그린다. */
+  roi: Box
+  /** 얼굴을 잡았는가. 못 잡았으면 roi 는 안내용 기본 자리다. */
+  tracking: boolean
+  /** ROI 안이 얼마나 피부인가 (0~1). 화면이 "잡히고 있다"를 보여 주는 데 쓴다. */
+  skinRatio: number
 }
 
 interface Sample {
@@ -51,32 +74,40 @@ interface Sample {
   b: number
 }
 
-/** 한 프레임에서 뽑은 것. 피부가 너무 적으면 rgb 가 null 이다. */
+/** 한 프레임에서 뽑은 것. 얼굴을 못 찾으면 rgb 가 null 이다. */
 interface Frame {
   rgb: [number, number, number] | null
   skinRatio: number
   brightness: number
   center: [number, number] | null
+  box: Box | null
 }
 
 export function useDeviceCamera(active: boolean): DeviceCamera {
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const [stream, setStream] = useState<MediaStream | null>(null)
   const [state, setState] = useState<CameraState>('off')
   const [detail, setDetail] = useState('')
   const [reading, setReading] = useState<Metric | null>(null)
+  const [roi, setRoi] = useState<Box>(HOME)
+  const [tracking, setTracking] = useState(false)
+  const [skinRatio, setSkinRatio] = useState(0)
 
   // 렌더마다 새로 만들지 않는다. 프레임 루프가 계속 들고 있어야 하는 값들이다.
   const pending = useRef<Sample[]>([])
   const quality = useRef({ jitter: 0, skinRatio: 0, brightness: 0 })
   const prevCenter = useRef<[number, number] | null>(null)
+  const box = useRef<Box>(HOME)
 
   const stop = useCallback(() => {
     const video = videoRef.current
-    const stream = video?.srcObject as MediaStream | null
-    stream?.getTracks().forEach((track) => track.stop())
+    const live = (video?.srcObject as MediaStream | null) ?? null
+    live?.getTracks().forEach((track) => track.stop())
     if (video) video.srcObject = null
+    setStream(null)
     pending.current = []
     prevCenter.current = null
+    box.current = HOME
     // 서버가 마지막 값을 바로 버리게 한다. 안 불러도 몇 초 뒤 저절로 내려가지만,
     // 끈 사람이 자기 심박이 남아 있는 것을 보면 안 꺼진 줄 안다.
     void fetch('/api/rppg/samples', { method: 'DELETE' }).catch(() => {})
@@ -87,6 +118,9 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
       stop()
       setState('off')
       setReading(null)
+      setTracking(false)
+      setRoi(HOME)
+      setSkinRatio(0)
       return
     }
 
@@ -99,6 +133,7 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
     let disposed = false
     let raf = 0
     let timer: number | undefined
+    let lastPush = 0
     const canvas = document.createElement('canvas')
     canvas.width = W
     canvas.height = H
@@ -141,6 +176,12 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
       ctx.drawImage(video, 0, 0, W, H)
       const frame = readFrame(ctx)
 
+      if (frame.box) {
+        // 잡은 자리로 눌러서 따라간다. 한 프레임 튄 것 때문에 상자가 날아다니면
+        // 맞추는 사람이 그걸 따라 움직이게 된다.
+        box.current = blend(box.current, frame.box, ROI_ALPHA)
+      }
+
       let jitter = 0
       if (frame.center && prevCenter.current) {
         const dx = frame.center[0] - prevCenter.current[0]
@@ -158,6 +199,13 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
       if (frame.rgb) {
         pending.current.push({ t: now / 1000, r: frame.rgb[0], g: frame.rgb[1], b: frame.rgb[2] })
       }
+
+      if (now - lastPush >= ROI_PUSH_MS) {
+        lastPush = now
+        setRoi({ ...box.current })
+        setTracking(frame.box !== null)
+        setSkinRatio(frame.skinRatio)
+      }
     }
 
     setState('starting')
@@ -166,15 +214,16 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
       // 앞 카메라를 기본으로 한다. 얼굴을 찍는 화면이라 폰에서 뒤 카메라가 열리면
       // 아무것도 안 잡힌다.
       .getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 }, audio: false })
-      .then(async (stream) => {
+      .then(async (opened) => {
         if (disposed) {
-          stream.getTracks().forEach((t) => t.stop())
+          opened.getTracks().forEach((t) => t.stop())
           return
         }
         const video = videoRef.current
         if (!video) return
-        video.srcObject = stream
+        video.srcObject = opened
         await video.play().catch(() => {})
+        setStream(opened)
         setState('running')
         raf = requestAnimationFrame(tick)
         timer = window.setInterval(() => void send(), POST_MS)
@@ -198,11 +247,21 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
     }
   }, [active, stop])
 
-  return { videoRef, state, detail, reading, roi: ROI }
+  return { videoRef, stream, state, detail, reading, roi, tracking, skinRatio }
 }
 
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value))
+}
+
+function blend(from: Box, to: Box, alpha: number): Box {
+  const mix = (a: number, b: number) => a + (b - a) * alpha
+  return {
+    x: mix(from.x, to.x),
+    y: mix(from.y, to.y),
+    w: mix(from.w, to.w),
+    h: mix(from.h, to.h),
+  }
 }
 
 /**
@@ -210,7 +269,6 @@ function clamp01(value: number): number {
  *
  * 따로 내보내는 이유는 대조할 수 있게 하기 위해서다. 손으로 옮긴 식이라 파이썬 쪽과
  * 갈리면 피부 비율이 달라지고, 그러면 같은 얼굴을 두 배포가 다르게 판정한다.
- * 변환식은 BT.601 로 cv2.cvtColor(..., COLOR_BGR2YCrCb) 가 쓰는 것과 같다.
  */
 export function isSkin(r: number, g: number, b: number): boolean {
   // cv2 의 고정소수점 연산을 그대로 옮긴다. 0.299 같은 십진수를 실수로 계산하면
@@ -232,50 +290,98 @@ export function isSkin(r: number, g: number, b: number): boolean {
 }
 
 /**
- * 안내 박스 안의 피부 픽셀 평균색.
+ * 얼굴을 찾고 그 안의 평균색을 뽑는다.
  *
- * 어댑터는 얼굴을 찾아 이마와 양 볼 셋을 가중 평균하지만 (core/adapters/rppg.py),
- * 여기는 고정 박스 하나다. 뽑아 내는 값의 뜻은 같다 — 피부로 보이는 픽셀의 평균색,
- * 그 비율, 밝기, 그리고 중심이 얼마나 움직였는가.
+ * 얼굴 검출기를 쓰지 않는다. 브라우저마다 있는 API 가 다르고, 모델을 번들하면 폰에서
+ * 첫 로딩이 그만큼 늦어진다. 대신 이미 프레임마다 하고 있는 피부 판정을 그대로 써서
+ * 피부 픽셀이 모여 있는 자리를 얼굴로 본다 — 분포의 중심과 퍼짐으로 상자를 만든다.
+ *
+ * 한계가 있다. 살색 배경(나무 벽, 살구색 가구)이 크게 잡히면 상자가 그쪽으로 끌린다.
+ * 그때는 상자 안 피부 비율이 떨어지고 신호도 나빠져서 서버가 값을 보류한다 —
+ * 틀린 자리를 잡은 채로 숫자가 나오지는 않는다.
+ *
+ * 어댑터(core/adapters/rppg.py)는 얼굴을 찾은 뒤 이마와 양 볼 셋을 가중 평균한다.
+ * 여기는 상자 하나지만 뽑는 값의 뜻은 같다 — 피부 픽셀의 평균색, 그 비율, 밝기,
+ * 그리고 중심이 얼마나 움직였는가.
  */
 function readFrame(ctx: CanvasRenderingContext2D): Frame {
-  const bx = Math.round(ROI.x * W)
-  const by = Math.round(ROI.y * H)
-  const bw = Math.round(ROI.w * W)
-  const bh = Math.round(ROI.h * H)
-  const { data } = ctx.getImageData(bx, by, bw, bh)
+  const { data } = ctx.getImageData(0, 0, W, H)
 
+  // 1차: 프레임 전체에서 피부가 어디에 모여 있는지 본다.
+  let n = 0
+  let sx = 0
+  let sy = 0
+  let sxx = 0
+  let syy = 0
+  for (let i = 0, px = 0; i < data.length; i += 4, px++) {
+    if (!isSkin(data[i], data[i + 1], data[i + 2])) continue
+    const x = px % W
+    const y = (px / W) | 0
+    n++
+    sx += x
+    sy += y
+    sxx += x * x
+    syy += y * y
+  }
+
+  if (n < W * H * MIN_SKIN) {
+    // 얼굴이 없다. 상자는 부르는 쪽이 안내 자리로 되돌린다.
+    return { rgb: null, skinRatio: 0, brightness: 0, center: null, box: null }
+  }
+
+  const cx = sx / n
+  const cy = sy / n
+  const halfW = Math.max(8, SPREAD * Math.sqrt(Math.max(0, sxx / n - cx * cx)))
+  const halfH = Math.max(8, SPREAD * Math.sqrt(Math.max(0, syy / n - cy * cy)))
+
+  const x0 = Math.max(0, Math.round(cx - halfW))
+  const y0 = Math.max(0, Math.round(cy - halfH))
+  const x1 = Math.min(W, Math.round(cx + halfW))
+  const y1 = Math.min(H, Math.round(cy + halfH))
+  const bw = x1 - x0
+  const bh = y1 - y0
+  if (bw <= 0 || bh <= 0) {
+    return { rgb: null, skinRatio: 0, brightness: 0, center: null, box: null }
+  }
+
+  // 2차: 그 상자 안의 피부 픽셀만으로 평균색을 낸다. 밖에 있는 살색 배경이
+  // 평균에 섞이지 않게 하려는 것이다.
   let count = 0
   let sumR = 0
   let sumG = 0
   let sumB = 0
-  let sumX = 0
-  let sumY = 0
-
-  for (let i = 0, px = 0; i < data.length; i += 4, px++) {
-    const r = data[i]
-    const g = data[i + 1]
-    const b = data[i + 2]
-    if (!isSkin(r, g, b)) continue
-
-    count++
-    sumR += r
-    sumG += g
-    sumB += b
-    sumX += px % bw
-    sumY += Math.floor(px / bw)
+  let inX = 0
+  let inY = 0
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const i = (y * W + x) * 4
+      const r = data[i]
+      const g = data[i + 1]
+      const b = data[i + 2]
+      if (!isSkin(r, g, b)) continue
+      count++
+      sumR += r
+      sumG += g
+      sumB += b
+      inX += x
+      inY += y
+    }
   }
 
-  const total = bw * bh
+  const ratio = count / (bw * bh)
+  const box = { x: x0 / W, y: y0 / H, w: bw / W, h: bh / H }
   // 어댑터의 MIN_SKIN_PIXELS 와 같은 뜻이다. 몇 픽셀만 남은 평균색은 얼굴이 아니라
   // 배경일 가능성이 크고, 그 값으로 맥파를 뽑으면 잡음에 락온한다.
-  if (count < total * 0.02) {
-    return { rgb: null, skinRatio: count / total, brightness: 0, center: null }
+  if (count < bw * bh * 0.02) {
+    return { rgb: null, skinRatio: ratio, brightness: 0, center: null, box }
   }
+
+  // 상자를 눌러 따라가게 하는 것은 부르는 쪽이 한다. 여기서는 이번 프레임만 본다.
   return {
     rgb: [sumR / count, sumG / count, sumB / count],
-    skinRatio: count / total,
+    skinRatio: ratio,
     brightness: (sumR + sumG + sumB) / (3 * count),
-    center: [sumX / count, sumY / count],
+    center: [inX / count, inY / count],
+    box,
   }
 }

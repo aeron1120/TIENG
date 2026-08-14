@@ -62,6 +62,19 @@ export function Kiosk() {
   const HeroIcon = hero ? (ICON[hero.key] ?? Activity) : Activity
   const confidence = !stale && hero ? hero.confidence : null
 
+  /** 카메라를 큰 자리로 보내거나, 거기 있으면 원래 보던 지표로 되돌린다.
+   *
+   * 되돌릴 지표는 order 맨 앞이다. 카메라를 올릴 때 내려온 주지표를 그 자리에
+   * 넣어 두므로 (promote), 누른 사람이 직전에 보던 것으로 돌아간다. */
+  const toggleCamera = () => {
+    if (!cameraHero) {
+      promote(CAMERA)
+      return
+    }
+    const back = layout.order.find((key) => snapshot.metrics.some((m) => m.key === key))
+    if (back) promote(back)
+  }
+
   const promote = (key: string) => {
     if (key === layout.hero) return
     // 내려온 주지표는 블록 맨 위로 보낸다. 방금까지 보던 지표가 목록 어딘가로
@@ -93,7 +106,7 @@ export function Kiosk() {
           {cameraHero ? (
             /* 카메라가 주지표 자리에 섰다. 지표로 돌아가려면 오른쪽 블록을 누르면 된다. */
             <div className="relative z-10 min-h-[clamp(320px,50vh,700px)] lg:flex-1">
-              <CameraPanel variant="hero" />
+              <CameraPanel variant="hero" onToggle={toggleCamera} />
             </div>
           ) : (
           <>
@@ -212,7 +225,7 @@ export function Kiosk() {
             ))}
             {!cameraHero && (
               <div className="2xl:col-span-2">
-                <CameraPanel onPromote={() => promote(CAMERA)} />
+                <CameraPanel onToggle={toggleCamera} />
               </div>
             )}
           </div>

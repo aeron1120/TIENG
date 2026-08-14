@@ -31,10 +31,11 @@ const STATE_TEXT: Record<string, string> = {
 
 export function CameraPanel({
   variant = 'panel',
-  onPromote,
+  onToggle,
 }: {
   variant?: 'panel' | 'hero'
-  onPromote?: () => void
+  /** 큰 자리와 작은 자리를 오간다. 지표 블록을 누르는 것과 같은 조작이다. */
+  onToggle?: () => void
 }) {
   const status = useGet<Status>('/api/camera')
   const { source, setSource } = useFeed()
@@ -48,14 +49,18 @@ export function CameraPanel({
   const serverCamera = status.data?.available === true
   const device = useDeviceCamera(source === 'device' && on)
   const hero = variant === 'hero'
-  // 이미 주지표 자리에 있으면 누를 데가 없다.
-  const promotable = !hero && onPromote !== undefined
 
   return (
+    /* 창 아무 데나 누르면 큰 자리와 작은 자리를 오간다. 지표 카드가 그렇게 동작하니
+       옆에 나란히 있는 이것만 다를 이유가 없다.
+
+       role 은 안쪽 미리보기가 갖는다. 여기에 걸면 소스 선택·확대·끄기가 버튼 안의
+       버튼이 된다 — 마우스는 여기서 받고, 키보드는 미리보기에서 받는다. */
     <section
-      className={`overflow-hidden rounded-lg border-[0.5px] border-gold/15 bg-panel ${
+      onClick={onToggle}
+      className={`overflow-hidden rounded-lg border-[0.5px] border-gold/15 bg-panel transition-colors ${
         hero ? 'flex h-full flex-col' : ''
-      }`}
+      } ${onToggle ? 'cursor-pointer hover:border-gold/50' : ''}`}
     >
       <header className="flex items-center justify-between gap-2 px-4 py-2.5">
         <h2 className="kr flex items-center gap-1.5 text-[15px] font-medium text-muted">
@@ -102,29 +107,26 @@ export function CameraPanel({
         {/* 미리보기 자체가 버튼이다. 지표 블록을 누르면 크게 뜨는 것과 같은 조작이라
             따로 배울 게 없다. 머리글의 버튼들과 겹치지 않게 여기에만 건다 — 카드
             전체를 버튼으로 만들면 그 안의 버튼들이 버튼 안의 버튼이 된다. */}
+        {/* 클릭은 바깥 창이 받는다. 여기는 키보드로 닿을 자리를 만든다 — Enter 는
+            click 을 만들지 않으므로 두 번 발동하지 않는다. */}
         <div
-          role={promotable ? 'button' : undefined}
-          tabIndex={promotable ? 0 : undefined}
-          onClick={promotable ? onPromote : undefined}
+          role={onToggle ? 'button' : undefined}
+          tabIndex={onToggle ? 0 : undefined}
           onKeyDown={
-            promotable
+            onToggle
               ? (e) => {
                   if (e.key !== 'Enter' && e.key !== ' ') return
                   e.preventDefault() // 스페이스가 페이지를 스크롤하지 않게
-                  onPromote?.()
+                  onToggle()
                 }
               : undefined
           }
-          aria-label={promotable ? '카메라 크게 보기' : undefined}
+          aria-label={onToggle ? (hero ? '카메라 작게 보기' : '카메라 크게 보기') : undefined}
           className={`${
             hero
               ? 'relative min-h-0 flex-1 bg-black'
               : 'relative aspect-[4/3] w-full bg-black 2xl:w-[300px] 2xl:shrink-0'
-          } ${
-            promotable
-              ? 'cursor-pointer ring-inset transition-shadow hover:ring-2 hover:ring-gold/50 focus-visible:ring-2 focus-visible:ring-gold focus-visible:outline-none'
-              : ''
-          }`}
+          } ${onToggle ? 'ring-inset focus-visible:ring-2 focus-visible:ring-gold focus-visible:outline-none' : ''}`}
         >
           {source === 'device' ? (
             <DeviceView device={device} showing={on} />
@@ -362,7 +364,12 @@ function Action({
 }) {
   return (
     <button
-      onClick={onClick}
+      // 창 전체가 큰/작은 자리를 오가는 버튼이라, 안쪽 버튼을 누른 것이 거기까지
+      // 올라가면 안 된다. 확대를 눌렀는데 창이 같이 옮겨 다니면 못 쓴다.
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
       title={title}
       className="kr flex items-center rounded px-2 py-[3px] text-[13px] text-faint transition-colors hover:bg-white/[0.06] hover:text-gold"
     >
@@ -386,7 +393,11 @@ function Pick({
 }) {
   return (
     <button
-      onClick={onClick}
+      // Action 과 같은 이유. 소스를 고른 것이 창 옮기기로 번지면 안 된다.
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
       disabled={disabled}
       aria-pressed={active}
       className={`kr flex flex-1 items-center justify-center gap-1.5 rounded-md border-[0.5px] px-2 py-1.5 text-[12px] transition-colors disabled:opacity-40 ${

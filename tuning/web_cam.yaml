@@ -1,0 +1,45 @@
+# 노트북 내장 웹캠 (Intel LNL MIPI, 1280x720, 실측 29.9fps).
+#
+# **이 세션에서 실측으로 맞춘 유일한 프로파일이다.** 나머지는 이걸 베낀 출발점이라
+# 그 카메라로 음성 대조(scripts/negative_control.py)를 돌리기 전에는 숫자를 근거로
+# 쓰면 안 된다.
+name: web_cam
+measured: true
+notes: |
+  실측 근거:
+    - 얼굴 검출 YuNet 70.8% / 추적률 1.0 (Haar 는 0.2%)
+    - 개안도 원값 0.262~0.833 -> 뜬/감은 사이로 정규화해야 P80 에 닿는다
+    - 눈 상자 높이 48px, IOD 약 150px
+    - 음성 대조 12분: 오탐 66% (z 정규화 전). σ 가 창 30초 대비 12분에서 3배
+  아직 못 한 것:
+    - z 정규화 뒤 오탐률 재측정
+    - 누적 기준선이 쌓인 뒤의 재측정
+window_s: 60
+baseline_s: 90
+geometry:
+  eye_box_w: 0.45
+  eye_box_h: 0.32
+  min_iod_px: 40
+  yunet_score: 0.6
+  yunet_nms: 0.3
+openness:
+  open_pctl: 90
+  closed_pctl: 2
+  min_samples: 60
+  min_span: 0.10
+blink:
+  # 30fps 라 깜빡임(100~400ms)이 3~12프레임이다. min_s 를 더 내리면 잡음이 깜빡임으로
+  # 세어진다.
+  enter: 0.55
+  exit: 0.35
+  min_s: 0.05
+  max_s: 1.20
+score:
+  z_full: 3.0
+  z_sd_floor_rel: 0.10
+  warn: 30
+  alert: 60
+  weights: { reopen: 0.35, duration: 0.25, blink_rate: 0.15, head: 0.15, perclos: 0.10 }
+track:
+  min_rate: 0.45
+  keep_rate: 0.30

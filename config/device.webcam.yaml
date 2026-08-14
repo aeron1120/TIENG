@@ -48,8 +48,9 @@ adapters:
     # 운전 시작 직후가 각성 상태라는 가정이 깔려 있다. 이미 졸린 채로 출발하면
     # 기준선이 졸린 상태로 잡혀 경보가 늦어진다. 실차에서는 시동 직후 몇 분을
     # 쓰거나, 여러 주행의 기준선을 사람별로 남겨 두는 쪽이 맞다.
-    params: { source: camera, window_s: 60, baseline_s: 90,
-              score_warn: 30, score_alert: 60 }
+    # 카메라마다 다른 숫자는 여기가 아니라 튜닝 프로파일에 있다 (core/tuning.py).
+    # 지표를 뽑는 구조는 같고 값만 갈린다.
+    params: { source: camera, tuning: tuning/web_cam.yaml }
   - id: env
     module: core.adapters.env_mock
     mode: simulated

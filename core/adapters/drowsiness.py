@@ -45,6 +45,7 @@ import structlog
 
 from api.schemas import Metric, Mode, State, server_now
 from core import drowsy_baseline
+from core import tuning as tuning_mod
 from core.adapters.base import FrameSource, OverlayTarget, SensorAdapter
 
 log = structlog.get_logger(__name__)
@@ -60,34 +61,14 @@ FACE_RETRY_SEC = 0.1  # 놓친 동안에는 더 자주 다시 찾는다
 # 것은 다르고, 그때마다 상자를 버리면 표본이 거의 안 쌓인다.
 FACE_LOST_SEC = 2.0
 
-YUNET_SCORE = 0.6  # 이보다 확신이 낮은 얼굴은 버린다
-YUNET_NMS = 0.3
-
-# 눈 상자 크기. 두 눈 사이 거리(IOD)에 비례해서 잡는다 — 얼굴 크기가 곧 거리라
-# 픽셀로 고정하면 가까이 오면 눈이 상자를 넘치고 멀어지면 눈썹까지 들어온다.
-# 눈꺼풀이 오르내리는 범위를 담아야 하므로 눈구멍 자체(IOD 의 약 0.16)보다 넉넉히 준다.
-EYE_BOX_W = 0.45
-EYE_BOX_H = 0.32
-
 # PERCLOS 의 정의가 "80% 이상 감김"이라 P80 이라 부른다.
 CLOSED_FRAC = 0.80
 # 감김도를 뜬 상태와 감은 상태 **사이**로 정규화한다. 개안도 원값은 "눈 상자 안
 # 어두운 덩어리의 높이 비율"이라 완전히 감아도 0 이 되지 않는다 — 속눈썹과 주름이
-# 남기 때문이다. 실측에서 개안도가 0.262~0.833 이었고, 뜬 상태만 기준으로 삼으면
-# 감김도가 최대 0.607 까지밖에 안 올라 P80 에 영원히 못 닿았다 (PERCLOS 가 늘 0%).
+# 남기 때문이다. 실측에서 뜬 상태만 기준으로 삼으면 감김도가 최대 0.607 까지밖에
+# 안 올라 P80 에 영원히 못 닿았다 (PERCLOS 가 늘 0%).
 #
-# 최대·최소 대신 분위수를 쓰는 이유는 한 번의 잡음 튐이 기준을 영구히 망치기 때문이다.
-OPEN_PCTL = 90.0
-CLOSED_PCTL = 2.0
-OPEN_MIN_SAMPLES = 60
-# 뜬 상태와 감은 상태가 이만큼은 벌어져야 감김도를 믿는다. 한 번도 안 감으면 둘이
-# 붙어 버리는데, 그때 정규화하면 미세한 잡음이 곧바로 '감김'으로 증폭된다.
-MIN_CLOSURE_SPAN = 0.10
-
-# 깜빡임 판정 히스테리시스. 임계가 하나면 경계에서 덜덜 떨며 한 번 감은 것이
-# 수십 번으로 세어진다.
-BLINK_ENTER, BLINK_EXIT = 0.55, 0.35
-BLINK_MIN_S, BLINK_MAX_S = 0.05, 1.20
+# 분위수·임계는 렌즈와 프레임률에 좌우되므로 tuning/ 으로 뺐다 (core/tuning.py).
 
 # --- 개인 기준선 ---------------------------------------------------------- #
 # 문헌이 공통으로 지적하는 것이 개인차가 크다는 점이다. 실제로 같은 사람에게서도
@@ -102,32 +83,14 @@ BLINK_MIN_S, BLINK_MAX_S = 0.05, 1.20
 # 부수 효과로 채널마다 손으로 정하던 상수 넷이 Z_FULL 하나로 준다. 가중치가
 # 그제서야 "중요도"만 뜻하게 된다 — 예전에는 RISE 상수와 가중치가 뒤섞여 있어
 # 하나를 조정하면 두 손잡이를 같이 돌리는 셈이었다.
-BASELINE_S = 90.0  # 처음 이만큼을 각성 상태로 보고 기준선을 만든다
 BASELINE_MIN_SAMPLES = 20  # 창이 찬 뒤 이만큼은 봐야 흔들림을 안다 (read 는 1Hz)
-Z_FULL = 3.0  # 기준선 표준편차의 이 배수면 그 채널이 만점
-# 표준편차 하한. 기준선이 우연히 너무 고르면 미세한 변화가 곧바로 만점이 된다.
-# "평소 값의 10% 가 1σ" 보다 더 민감해지지 않게 막는다.
-Z_SD_FLOOR_REL = 0.10
 
-# --- 채널 가중 ------------------------------------------------------------ #
-# 조기 경보가 목적이라 PERCLOS 를 주력에서 내렸다. PERCLOS 는 "눈이 오래 감겨
-# 있었다"를 재는데, 그 상태는 이미 늦다 — 리뷰가 "detects fatigue too late,
-# fails to detect participants that are drowsy with eyes wide open" 이라고 적는다.
+# 채널 가중과 판정 임계도 tuning/ 에 있다. 조기 경보가 목적이라 PERCLOS 를 주력에서
+# 내렸다 — 리뷰가 "detects fatigue too late, fails to detect participants that are
+# drowsy with eyes wide open" 이라고 적는다. 대신 눈꺼풀 운동의 질을 본다.
 #
-# 대신 눈꺼풀 운동의 질을 본다. 졸릴 때 느려지는 것은 눈을 감는 동작이 아니라
-# **다시 뜨는 동작**이라, 재개안 지연이 가장 이른 신호다.
-#
-# 앞의 셋은 전부 같은 개안도 시계열에서 나온다 — 형태(재개안·지속)와 시간(빈도)로
-# 갈리지만 뿌리가 같아 상관이 높다. 그래서 개안도 측정이 흔들리면 셋이 같이
-# 흔들린다. 머리 자세를 넣은 이유가 이것이다: **눈꺼풀과 무관한 유일한 채널**이라,
-# 융합이 실제로 실패 모드를 나눠 갖게 만든다.
-W_REOPEN = 0.35  # 재개안 지연 — 가장 이른 신호
-W_DURATION = 0.25  # 깜빡임 지속시간 — 같은 상위군
-W_BLINKRATE = 0.15  # 깜빡임 빈도 — 문헌의 상위 4개에 blink interval 이 있다
-W_HEAD = 0.15  # 고개 떨굼 — 눈꺼풀과 독립
-W_PERCLOS = 0.10  # 후행·확인용. 혼자서는 경고를 못 낸다
-
-SCORE_WARN, SCORE_ALERT = 30.0, 60.0
+# 카메라가 바뀌면 어느 채널이 믿을 만한지도 바뀌므로 코드가 아니라 프로파일이
+# 정한다 — 안경 근접 카메라에는 얼굴이 없어 head 가 0 이 되는 식이다.
 
 # --- 추세 ----------------------------------------------------------------- #
 # 조기 경보에서는 "지금 높다"보다 "빠르게 오르고 있다"가 더 쓸모 있을 때가 많다.
@@ -136,12 +99,6 @@ SCORE_WARN, SCORE_ALERT = 30.0, 60.0
 TREND_WINDOW_S = 180.0
 TREND_MIN_SAMPLES = 20
 TREND_WARN = 6.0  # 분당 이만큼 오르면 아직 임계 아래여도 주의로 본다
-
-# 최근 프레임 중 눈을 실제로 본 비율. 문턱이 하나면 실측에서 0.45~0.99 사이를
-# 오가며 값과 보류가 번갈아 떠서, 화면이 1초마다 깜빡인다. rPPG 의 게이트와 같은
-# 방식으로 진입/이탈을 벌려 둔다.
-MIN_TRACK_RATE = 0.45
-KEEP_TRACK_RATE = 0.30
 
 # 미리보기에 눈 상자를 그릴 색 (BGR). rPPG 의 볼 ROI 가 금색(따뜻한 색)이라
 # 대비되도록 청록으로 둔다 — 같은 화면에 있으면 어느 쪽이 무엇인지 바로 갈려야 한다.
@@ -167,23 +124,24 @@ class DrowsinessAdapter(SensorAdapter):
         *,
         source: str = "rppg",
         model: str = "models/face_detection_yunet_2023mar.onnx",
-        window_s: float = 60.0,
-        baseline_s: float = BASELINE_S,
+        tuning: str = str(tuning_mod.DEFAULT_PATH),
         baseline_path: str = str(drowsy_baseline.DEFAULT_PATH),
-        score_warn: float = SCORE_WARN,
-        score_alert: float = SCORE_ALERT,
     ) -> None:
         super().__init__(id, mode)
         # FrameConsumer 계약. registry 가 이 이름으로 공급자를 찾아 붙여 준다.
         self.source_id = source
         self.model_path = Path(model)
-        self.window_s = window_s
-        self.baseline_s = baseline_s
+        # 카메라마다 다른 숫자는 전부 여기서 온다 (core/tuning.py). 코드에 박아 두면
+        # 카메라를 바꿀 때마다 소스를 고치게 되고, 어느 값으로 잰 결과인지도 안 남는다.
+        self.tuning_path = Path(tuning)
+        self._t = tuning_mod.load(
+            self.tuning_path if self.tuning_path.is_absolute() else _ROOT / self.tuning_path
+        )
+        self.window_s = self._t.window_s
+        self.baseline_s = self._t.baseline_s
         self.baseline_path = Path(baseline_path)
         # 측정 대상. registry 가 config 밖(state/mode.json)에서 받아 넣어 준다.
         self.subject = ""
-        self.score_warn = score_warn
-        self.score_alert = score_alert
 
         self._frames: FrameSource | None = None
         self._overlay: OverlayTarget | None = None
@@ -290,9 +248,18 @@ class DrowsinessAdapter(SensorAdapter):
             raise RuntimeError(f"YuNet 모델이 없다: {path}")
         # 입력 크기는 첫 프레임에서 setInputSize 로 다시 맞춘다.
         self._detector = cv2.FaceDetectorYN.create(
-            str(path), "", (320, 320), YUNET_SCORE, YUNET_NMS
+            str(path), "", (320, 320), self._t.geometry.yunet_score, self._t.geometry.yunet_nms
         )
 
+        log.info(
+            "drowsiness.tuning",
+            adapter=self.id,
+            profile=self._t.name,
+            measured=self._t.measured,
+        )
+        if not self._t.measured:
+            # 실측으로 맞춘 적 없는 프로파일이다. 값은 나오지만 근거로 쓰면 안 된다.
+            log.warning("drowsiness.tuning_unmeasured", adapter=self.id, profile=self._t.name)
         self._load_saved()
         self._stop.clear()
         self._thread = threading.Thread(
@@ -350,7 +317,7 @@ class DrowsinessAdapter(SensorAdapter):
         base = self._feed_baseline(now, since, raw)
         progress = self._progress(now, since, base is not None)
 
-        floor = KEEP_TRACK_RATE if self._producing else MIN_TRACK_RATE
+        floor = self._t.track.keep_rate if self._producing else self._t.track.min_rate
         if track < floor:
             # 얼굴이나 눈이 안 잡힌다. 값을 지어내지 않는다 (README §0-4).
             self._producing = False
@@ -374,9 +341,9 @@ class DrowsinessAdapter(SensorAdapter):
         # 아직 임계 아래여도 빠르게 오르는 중이면 주의로 올린다. 조기 경보의 목적이
         # "높다"를 알리는 게 아니라 "오르고 있다"를 먼저 알리는 것이기 때문이다.
         rising = trend is not None and trend >= TREND_WARN
-        if score >= self.score_alert:
+        if score >= self._t.score.alert:
             verdict = "drowsy"
-        elif score >= self.score_warn or (rising and score >= self.score_warn * 0.6):
+        elif score >= self._t.score.warn or (rising and score >= self._t.score.warn * 0.6):
             verdict = "warning"
         else:
             verdict = "awake"
@@ -484,22 +451,25 @@ class DrowsinessAdapter(SensorAdapter):
         않는 게 중요하다 — 그러면 PERCLOS 하나로도 만점이 나와서, 후행 지표만 보고
         "조기 경보"를 냈다고 말하게 된다.
         """
+        w = self._t.score.weights
+        full = self._t.score.z_full
+        floor = self._t.score.z_sd_floor_rel
         score = 0.0
         for key, weight, both_ways in (
-            ("reopen_ms", W_REOPEN, False),
-            ("blink_dur", W_DURATION, False),
-            ("blink_rate", W_BLINKRATE, True),
-            ("perclos", W_PERCLOS, False),
+            ("reopen_ms", w.reopen, False),
+            ("blink_dur", w.duration, False),
+            ("blink_rate", w.blink_rate, True),
+            ("perclos", w.perclos, False),
         ):
             if key not in raw or key not in base:
                 continue
-            z = _z(raw[key], *base[key])
-            score += weight * _ramp(abs(z) if both_ways else z, Z_FULL)
+            z = _z(raw[key], *base[key], floor)
+            score += weight * _ramp(abs(z) if both_ways else z, full)
 
         if "pitch" in raw and "pitch" in base:
             # 고개는 내려갈 때만 센다. 드는 것은 졸음이 아니라 딴 데를 보는 것이다.
             # pitch 는 숙이면 작아지므로 부호를 뒤집어야 "내려감"이 양수가 된다.
-            score += W_HEAD * _ramp(-_z(raw["pitch"], *base["pitch"]), Z_FULL)
+            score += w.head * _ramp(-_z(raw["pitch"], *base["pitch"], floor), full)
         return score * 100.0
 
     def _blank(self, state: State, confidence: float | None, progress: float) -> list[Metric]:
@@ -597,10 +567,10 @@ class DrowsinessAdapter(SensorAdapter):
                     # 좁아진다. 그때 산출을 멈추면 창이 통째로 비고 기준선까지
                     # 초기화된다 — 가만히 잘 뜨고 있을수록 시스템이 죽는 셈이다.
                     # 그래서 한 번 잡은 기준값은 새 것이 유효할 때까지 들고 있는다.
-                    if len(self._opens) >= OPEN_MIN_SAMPLES:
-                        hi = float(np.percentile(self._opens, OPEN_PCTL))
-                        lo = float(np.percentile(self._opens, CLOSED_PCTL))
-                        if hi - lo >= MIN_CLOSURE_SPAN:
+                    if len(self._opens) >= self._t.openness.min_samples:
+                        hi = float(np.percentile(self._opens, self._t.openness.open_pctl))
+                        lo = float(np.percentile(self._opens, self._t.openness.closed_pctl))
+                        if hi - lo >= self._t.openness.min_span:
                             self._closure_ref = (hi, hi - lo)
                     if self._closure_ref is not None:
                         hi, width = self._closure_ref
@@ -613,17 +583,17 @@ class DrowsinessAdapter(SensorAdapter):
                         # 감김과 재개안을 나눠서 잰다. 졸릴 때 느려지는 것은 눈을
                         # 감는 동작이 아니라 다시 뜨는 동작이라, 하나로 합치면 정작
                         # 신호가 있는 쪽이 평평한 쪽에 희석된다.
-                        if not in_blink and closure >= BLINK_ENTER:
+                        if not in_blink and closure >= self._t.blink.enter:
                             in_blink, blink_start, blink_peak = True, ts, closure
                             peak_t = ts
                         elif in_blink:
                             if closure > blink_peak:
                                 blink_peak, peak_t = closure, ts
-                            if closure <= BLINK_EXIT:
+                            if closure <= self._t.blink.exit:
                                 dur = ts - blink_start
                                 reopen = ts - peak_t
                                 in_blink = False
-                                if BLINK_MIN_S <= dur <= BLINK_MAX_S:
+                                if self._t.blink.min_s <= dur <= self._t.blink.max_s:
                                     self._blinks.append((ts, dur, reopen))
                 self._trim(ts)
 
@@ -663,11 +633,11 @@ class DrowsinessAdapter(SensorAdapter):
         pitch = (float(nose[1]) - eye_y) / max(mouth_y - eye_y, 1e-6)
         iod = float(np.hypot(left[0] - right[0], left[1] - right[1]))
         # 너무 멀면 눈꺼풀을 가를 해상도가 안 나온다. 억지로 재느니 표본을 버린다.
-        if iod < 40.0:
+        if iod < self._t.geometry.min_iod_px:
             return None
 
-        bw = max(int(round(iod * EYE_BOX_W)), 8)
-        bh = max(int(round(iod * EYE_BOX_H)), 6)
+        bw = max(int(round(iod * self._t.geometry.eye_box_w)), 8)
+        bh = max(int(round(iod * self._t.geometry.eye_box_h)), 6)
         boxes: list[tuple[int, int, int, int]] = []
         for cx, cy in (right, left):
             x, y = int(round(float(cx) - bw / 2)), int(round(float(cy) - bh / 2))
@@ -698,9 +668,9 @@ class DrowsinessAdapter(SensorAdapter):
             self._scores.clear()
 
 
-def _z(value: float, mean: float, sd: float) -> float:
+def _z(value: float, mean: float, sd: float, floor_rel: float) -> float:
     """기준선 대비 표준편차 배수. 하한을 둬 지나치게 민감해지지 않게 한다."""
-    return (value - mean) / max(sd, Z_SD_FLOOR_REL * abs(mean), 1e-9)
+    return (value - mean) / max(sd, floor_rel * abs(mean), 1e-9)
 
 
 def _slope_per_min(history: list[tuple[float, float]]) -> float | None:

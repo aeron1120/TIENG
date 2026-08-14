@@ -12,6 +12,9 @@ import numpy as np
 import pytest
 
 from core.adapters.drowsiness import DrowsinessAdapter, _slope_per_min, _z
+from core.tuning import Score
+
+FLOOR = Score().z_sd_floor_rel  # 프로파일 기본값. 기준선이 고를 때의 민감도 상한이다.
 
 
 def _adapter(**kw: object) -> DrowsinessAdapter:
@@ -62,8 +65,8 @@ def test_every_promised_metric_comes_out() -> None:
 
 def test_noisy_channel_needs_a_bigger_change_to_matter() -> None:
     """둘 다 30 움직였는데, 평소 흔들림이 4배인 쪽은 4분의 1만 인정받는다."""
-    quiet = _z(130.0, 100.0, 15.0)  # 평소 ±15
-    noisy = _z(130.0, 100.0, 60.0)  # 평소 ±60
+    quiet = _z(130.0, 100.0, 15.0, FLOOR)  # 평소 ±15
+    noisy = _z(130.0, 100.0, 60.0, FLOOR)  # 평소 ±60
 
     assert quiet == pytest.approx(2.0)
     assert noisy == pytest.approx(0.5)
@@ -71,7 +74,7 @@ def test_noisy_channel_needs_a_bigger_change_to_matter() -> None:
 
 def test_a_suspiciously_stable_baseline_cannot_make_us_hair_trigger() -> None:
     """기준선이 우연히 고르면 미세한 변화가 곧바로 만점이 된다. 하한이 그걸 막는다."""
-    assert _z(101.0, 100.0, 0.0) == pytest.approx(0.1)  # 10% 가 1σ 로 취급된다
+    assert _z(101.0, 100.0, 0.0, FLOOR) == pytest.approx(0.1)  # 10% 가 1σ 로 취급된다
 
 
 def test_score_ignores_channels_it_does_not_have() -> None:

@@ -30,10 +30,10 @@ force_utf8()
 from actuators.tuya_plug import TuyaPlug  # noqa: E402
 from api.schemas import Metric, Snapshot, server_now  # noqa: E402
 from core import quality, sim_room, thresholds  # noqa: E402
-from core.adapters.rppg import RppgAdapter  # noqa: E402
 from core.adapters.thermal_mlx90640 import ThermalRespiration  # noqa: E402
 from core.policy.l1_light import L1Light  # noqa: E402
 from core.policy.runner import PolicyRunner  # noqa: E402
+from core.pulse import HrEstimator  # noqa: E402
 from core.registry import Registry  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,25 +78,23 @@ def test_signal_core() -> None:
     section("[1] rPPG 신호 코어 — 합성 신호로 BPM 복원")
     gate = thresholds.load(ROOT / "config" / "thresholds.yaml").confidence_min
     for bpm in (55, 72, 90, 120, 150):
-        # 어댑터를 매번 새로 만든다. 하나를 돌려 쓰면 55 를 받아들인 직후 72 가
+        # 추정기를 매번 새로 만든다. 하나를 돌려 쓰면 55 를 받아들인 직후 72 가
         # 들어오고, jump guard 는 그걸 밀리초 만에 17bpm 뛴 것으로 본다 — 여기서
         # 재려는 것은 신호 코어의 복원 정확도지 궤적 연속성이 아니다.
-        adapter = RppgAdapter(id="rppg", mode="live")
-        adapter._gate = gate
+        estimator = HrEstimator(source="rppg", mode="live", gate=gate)
         t, rgb = synthetic_rgb(bpm)
-        m = adapter._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+        m = estimator.estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
         err = abs(float(m.value) - bpm) if m.value is not None else float("inf")
         check(f"{bpm} bpm 복원 (오차 3 이내)", err <= 3.0, f"추정 {m.value} / 오차 {err:.1f}")
 
 
 def test_quality_gating() -> None:
     section("[2] 품질 게이팅 — 못 믿을 신호는 값을 내지 않는다")
-    adapter = RppgAdapter(id="rppg", mode="live")
-    adapter._gate = 0.4
+    estimator = HrEstimator(source="rppg", mode="live", gate=0.4)
     t, rgb = synthetic_rgb(72)
 
-    clean = adapter._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
-    dark = adapter._estimate(t, rgb, jitter_norm=1.0, skin_ratio=0.05, brightness=10.0)
+    clean = estimator.estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+    dark = estimator.estimate(t, rgb, jitter_norm=1.0, skin_ratio=0.05, brightness=10.0)
     lost = quality.score(
         peak_snr_db=20.0, band_energy_ratio=0.9, skin_ratio=0.02, brightness=100.0, jitter_norm=0.0
     )

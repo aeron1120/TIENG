@@ -13,6 +13,7 @@ import pytest
 from core import quality, thresholds
 from core.adapters import rppg as rppg_module
 from core.adapters.rppg import RppgAdapter
+from core.pulse import HrEstimator
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FS = 30.0
@@ -37,14 +38,23 @@ def _synthetic_rgb(
 
 def _adapter(gate: float = 0.4) -> RppgAdapter:
     adapter = RppgAdapter(id="rppg", mode="live")
-    adapter._gate = gate
+    adapter._hr.gate = gate
     return adapter
+
+
+def _estimator(gate: float = 0.4) -> HrEstimator:
+    """신호경로만 본다. 카메라는 여기 관여하지 않는다 (core/pulse.py).
+
+    어댑터를 거치지 않는 이유는 추정기가 프레임 소스를 모르기 때문이다 — 브라우저가
+    올린 RGB 도 같은 객체를 탄다.
+    """
+    return HrEstimator(source="rppg", mode="live", gate=gate)
 
 
 @pytest.mark.parametrize("true_bpm", [55, 72, 90, 120, 150])
 def test_estimates_known_bpm_within_3(true_bpm: int) -> None:
     t, rgb = _synthetic_rgb(true_bpm)
-    metric = _adapter()._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+    metric = _estimator().estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
 
     assert metric.state == "ok", f"보류됨 (confidence={metric.confidence})"
     assert metric.value is not None
@@ -55,10 +65,10 @@ def test_estimates_known_bpm_within_3(true_bpm: int) -> None:
 def test_degraded_input_is_held_not_guessed() -> None:
     """어둡고 흔들리고 피부가 안 잡히면 값을 내지 않는다 (README §0-4)."""
     t, rgb = _synthetic_rgb(72)
-    adapter = _adapter()
+    estimator = _estimator()
 
-    clean = adapter._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
-    degraded = adapter._estimate(t, rgb, jitter_norm=1.0, skin_ratio=0.05, brightness=10.0)
+    clean = estimator.estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+    degraded = estimator.estimate(t, rgb, jitter_norm=1.0, skin_ratio=0.05, brightness=10.0)
 
     assert clean.state == "ok" and clean.value is not None
     assert degraded.state == "low_quality"
@@ -68,7 +78,7 @@ def test_degraded_input_is_held_not_guessed() -> None:
 
 def test_short_window_warms_up_without_value() -> None:
     t, rgb = _synthetic_rgb(72, seconds=4.0)
-    metric = _adapter()._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+    metric = _estimator().estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
 
     assert metric.state == "low_quality"
     assert metric.value is None
@@ -78,7 +88,7 @@ def test_short_window_warms_up_without_value() -> None:
 def test_flat_signal_is_held() -> None:
     t = np.arange(0.0, 14.0, 1.0 / FS)
     rgb = np.tile(np.array([0.6, 0.5, 0.42]), (len(t), 1))
-    metric = _adapter()._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+    metric = _estimator().estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
 
     assert metric.state == "low_quality"
     assert metric.value is None
@@ -193,7 +203,7 @@ def test_roi_floor_does_not_punish_a_normal_roi() -> None:
 async def test_lost_face_is_held_end_to_end() -> None:
     """어댑터까지 이어서, 얼굴을 놓친 창은 low_quality 로 보류된다."""
     t, rgb = _synthetic_rgb(72)
-    metric = _adapter()._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.02, brightness=100.0)
+    metric = _estimator().estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.02, brightness=100.0)
 
     assert metric.state == "low_quality"
     assert metric.value is None
@@ -282,11 +292,11 @@ def test_dead_camera_drops_its_last_frame() -> None:
 
 
 def test_progress_climbs_while_the_window_fills() -> None:
-    adapter = _adapter()
+    estimator = _estimator()
     seen = []
     for seconds in (1.0, 2.0, 4.0, 6.0):
         t, rgb = _synthetic_rgb(72, seconds=seconds)
-        metric = adapter._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+        metric = estimator.estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
         assert metric.state == "low_quality" and metric.value is None
         assert metric.progress is not None
         seen.append(metric.progress)
@@ -297,7 +307,7 @@ def test_progress_climbs_while_the_window_fills() -> None:
 
 def test_progress_is_full_once_a_value_comes_out() -> None:
     t, rgb = _synthetic_rgb(72)
-    metric = _adapter()._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+    metric = _estimator().estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
 
     assert metric.state == "ok"
     assert metric.progress == 1.0
@@ -306,7 +316,7 @@ def test_progress_is_full_once_a_value_comes_out() -> None:
 def test_bad_signal_is_full_progress_not_warming_up() -> None:
     """이 구분이 이 필드의 존재 이유다. 창은 다 찼고 신호가 나쁜 것이다."""
     t, rgb = _synthetic_rgb(72)
-    metric = _adapter()._estimate(t, rgb, jitter_norm=1.0, skin_ratio=0.05, brightness=10.0)
+    metric = _estimator().estimate(t, rgb, jitter_norm=1.0, skin_ratio=0.05, brightness=10.0)
 
     assert metric.state == "low_quality"
     assert metric.value is None
@@ -320,29 +330,29 @@ def test_bad_signal_is_full_progress_not_warming_up() -> None:
 
 
 def test_jump_rejection_reports_rejected_not_low_quality() -> None:
-    adapter = _adapter()
+    estimator = _estimator()
     t, rgb = _synthetic_rgb(72)
     # 1초 전에 130bpm 을 받아들인 것으로 둔다. 72 로 내려오려면 8bpm/s 를 훌쩍 넘는다.
-    adapter._prev_bpm = 130.0
-    adapter._prev_t = time.monotonic() - 1.0
+    estimator._prev_bpm = 130.0
+    estimator._prev_t = time.monotonic() - 1.0
 
-    metric = adapter._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+    metric = estimator.estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
 
     assert metric.state == "rejected"
     assert metric.value is None  # 지어내지 않는다 (README §0-4)
     assert metric.progress == 1.0  # 기다린다고 나아지는 상태가 아니다
     # 게이트를 통과한 신호다. 이 값이 낮으면 애초에 low_quality 로 갔어야 한다.
-    assert metric.confidence is not None and metric.confidence >= adapter._gate
+    assert metric.confidence is not None and metric.confidence >= estimator.gate
 
 
 def test_plausible_change_still_comes_out() -> None:
     """가드가 정상 변화까지 막으면 값이 영영 안 나온다. 8bpm/s 안쪽은 통과한다."""
-    adapter = _adapter()
+    estimator = _estimator()
     t, rgb = _synthetic_rgb(72)
-    adapter._prev_bpm = 70.0
-    adapter._prev_t = time.monotonic() - 1.0
+    estimator._prev_bpm = 70.0
+    estimator._prev_t = time.monotonic() - 1.0
 
-    metric = adapter._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+    metric = estimator.estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
 
     assert metric.state == "ok"
     assert metric.value is not None
@@ -353,7 +363,7 @@ def test_progress_needs_both_gates() -> None:
     t, rgb = _synthetic_rgb(72, seconds=14.0)
     sparse_t, sparse_rgb = t[::20], rgb[::20]  # 14초에 걸쳐 21개뿐
 
-    metric = _adapter()._estimate(
+    metric = _estimator().estimate(
         sparse_t, sparse_rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0
     )
     assert metric.state == "low_quality"

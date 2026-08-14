@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 
 from api import auth
 from api.auth import Users, require
+from api.feeds import Feeds
 from api.routes.auth import admin as auth_admin_router
 from api.routes.auth import router as auth_router
 from api.routes.camera import router as camera_router
@@ -23,12 +24,13 @@ from api.routes.diagnostics import router as diagnostics_router
 from api.routes.export import router as export_router
 from api.routes.interventions import router as interventions_router
 from api.routes.layout import router as layout_router
+from api.routes.rppg import router as rppg_router
 from api.routes.snapshot import router as snapshot_router
 from api.routes.system import router as system_router
 from api.schemas import Snapshot, server_now
 from api.ws import Hub
 from api.ws import router as ws_router
-from core import overrides
+from core import overrides, thresholds
 from core.csv_logs import InterventionCsvLogger, MetricCsvLogger
 from core.policy.runner import PolicyRunner
 from core.registry import Registry
@@ -116,7 +118,9 @@ async def _sample_loop(app: FastAPI) -> None:
                 csv_log.write_snapshot(snapshot)
             # 세션별 지표는 스냅샷에 섞지 않는다. CSV 도 화면 밖 기록도 이 방의
             # 것이어야 하고, 누구 것인지 나누는 일은 보내는 자리에서만 한다.
-            await hub.broadcast(snapshot, app.state.personal)
+            feeds: Feeds = app.state.personal
+            feeds.prune()  # 카메라를 끈 세션의 마지막 값이 남지 않게 한다
+            await hub.broadcast(snapshot, feeds)
         except Exception as exc:
             # 루프가 죽으면 대시보드가 통째로 멎는다. 한 틱을 버리고 계속 돈다.
             log.error("sample_loop.tick_failed", error=str(exc))
@@ -150,9 +154,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.runner = PolicyRunner(registry.policies, sink=interventions_csv)
     app.state.hub = Hub()
     app.state.latest = None
-    # 세션 토큰 -> 그 세션이 자기 기기 카메라로 만든 지표. 채우는 쪽은 아직 없다
-    # (브라우저 카메라 경로). 여기 있는 값은 그 세션에게만 나간다 (api/ws.py).
-    app.state.personal = {}
+    # 세션 토큰 -> 그 세션이 자기 기기 카메라로 만든 지표. 여기 있는 값은 그
+    # 세션에게만 나간다 (api/ws.py). 채우는 쪽은 api/routes/rppg.py 다.
+    #
+    # 게이트는 코드가 아니라 thresholds.yaml 이 정한다 (README §10). 카메라 어댑터와
+    # 같은 값을 써야 웹에서 잰 값과 파이에서 잰 값이 같은 기준으로 보류된다.
+    gate = thresholds.load(Path(registry.config.thresholds)).confidence_min
+    app.state.personal = Feeds(gate=gate)
     app.state.metrics_csv = metrics_csv
 
     task = asyncio.create_task(_sample_loop(app))
@@ -194,6 +202,9 @@ app.include_router(auth_router)
 app.include_router(auth_admin_router)
 app.include_router(snapshot_router, dependencies=guest)
 app.include_router(camera_router, dependencies=guest)
+# 자기 기기 카메라로 재는 경로. 비회원에게도 연다 — 실시간 화면이 원래 비회원 몫이고,
+# 여기서 나온 값은 그 세션에게만 돌아간다 (api/ws.py).
+app.include_router(rppg_router, dependencies=guest)
 app.include_router(layout_router, dependencies=guest)
 app.include_router(interventions_router, dependencies=member)
 app.include_router(system_router, dependencies=member)

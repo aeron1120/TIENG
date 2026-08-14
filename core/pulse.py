@@ -28,6 +28,7 @@ from core import quality
 
 log = structlog.get_logger(__name__)
 
+WINDOW_SEC = 12.0  # 분석 창. 짧으면 BPM이 튄다 (README §8)
 MIN_SEC = 8.0  # 이보다 짧으면 추정하지 않는다
 MIN_SAMPLES = 30
 FS_RESAMPLE = 30.0  # 프레임 간격이 불균일하므로 균일 격자로 다시 샘플링

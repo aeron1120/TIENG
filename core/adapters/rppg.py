@@ -37,11 +37,10 @@ import structlog
 from api.schemas import Metric, Mode
 from core import thresholds
 from core.adapters.base import SensorAdapter
-from core.pulse import HrEstimator
+from core.pulse import WINDOW_SEC, HrEstimator
 
 log = structlog.get_logger(__name__)
 
-WINDOW_SEC = 12.0  # 분석 창. 짧으면 BPM이 튄다 (README §8)
 MIN_SKIN_PIXELS = 150
 JITTER_SCALE_PX = 6.0  # 이만큼 흔들리면 jitter_norm = 1
 FACE_DETECT_SEC = 0.5  # 매 프레임 검출은 Pi에서 FPS를 깎는다

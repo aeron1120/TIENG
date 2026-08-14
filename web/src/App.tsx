@@ -5,6 +5,7 @@ import {
   LogOut,
   type LucideIcon,
   Ruler,
+  ShieldAlert,
   ShieldCheck,
   UserRound,
 } from 'lucide-react'
@@ -13,6 +14,7 @@ import { atLeast, AuthProvider, useAuth, type Role } from './authContext'
 import { PendingAlert } from './components/PendingAlert'
 import { ICON, LABEL, displayValue, effectiveState } from './metrics'
 import { Accounts } from './pages/Accounts'
+import { Drowsy } from './pages/Drowsy'
 import { Gate } from './pages/Gate'
 import { Guardian } from './pages/Guardian'
 import { Kiosk } from './pages/Kiosk'
@@ -31,6 +33,7 @@ import { SnapshotProvider, useFeed } from './snapshotContext'
 // 실시간은 여기 없다. 첫 화면이 곧 실시간이라 탭으로 한 번 더 걸면 지금 보고 있는
 // 곳으로 가는 버튼이 하나 더 생길 뿐이다. 돌아오는 문은 왼쪽 위 로고다.
 const NAV: { to: string; label: string; icon: LucideIcon; min: Role }[] = [
+  { to: '/drowsy', label: '졸음 방지', icon: ShieldAlert, min: 'member' },
   { to: '/guardian', label: '보호자', icon: UserRound, min: 'member' },
   { to: '/system', label: '시스템', icon: Activity, min: 'member' },
   { to: '/records', label: '기록', icon: ClipboardList, min: 'member' },
@@ -41,6 +44,7 @@ const NAV: { to: string; label: string; icon: LucideIcon; min: Role }[] = [
 ]
 
 const PAGES: Record<string, React.ReactElement> = {
+  '/drowsy': <Drowsy />,
   '/guardian': <Guardian />,
   '/system': <System />,
   '/records': <Records />,

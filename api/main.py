@@ -22,11 +22,13 @@ from api.routes.diagnostics import router as diagnostics_router
 from api.routes.export import router as export_router
 from api.routes.interventions import router as interventions_router
 from api.routes.layout import router as layout_router
+from api.routes.mode import router as mode_router
 from api.routes.snapshot import router as snapshot_router
 from api.routes.system import router as system_router
 from api.schemas import Snapshot, server_now
 from api.ws import Hub
 from api.ws import router as ws_router
+from core import mode as run_mode
 from core.csv_logs import InterventionCsvLogger, MetricCsvLogger
 from core.policy.runner import PolicyRunner
 from core.registry import Registry
@@ -38,6 +40,11 @@ DEFAULT_CONFIG = Path("config/device.yaml")
 
 def _config_path() -> Path:
     return Path(os.environ.get("DEVICE_CONFIG") or DEFAULT_CONFIG)
+
+
+def _mode_path() -> Path:
+    # 기기 설정이 아니라 사용 흔적이라 state/ 에 둔다 — layout.json 과 같은 자리.
+    return Path(os.environ.get("TFV_MODE_PATH") or run_mode.DEFAULT_PATH)
 
 
 def _users_path() -> Path:
@@ -86,7 +93,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("startup", config=str(path))
 
     registry = Registry.from_yaml(path)
+    # 저장된 모드를 먼저 얹고 시작한다. start() 안에서 적용되므로, 졸음 모드로
+    # 꺼 둔 기기가 재부팅 뒤 잠깐이라도 심박을 다시 켜는 일이 없다.
+    mode_path = _mode_path()
+    registry.mode = run_mode.load(mode_path).mode
     await registry.start()
+    app.state.mode_path = mode_path
+    log.info("mode.restored", mode=registry.mode)
 
     users = Users(_users_path())
     users.init()
@@ -144,6 +157,7 @@ app.include_router(auth_admin_router)
 app.include_router(snapshot_router, dependencies=guest)
 app.include_router(camera_router, dependencies=guest)
 app.include_router(layout_router, dependencies=guest)
+app.include_router(mode_router, dependencies=member)
 app.include_router(interventions_router, dependencies=member)
 app.include_router(system_router, dependencies=member)
 app.include_router(export_router, dependencies=member)

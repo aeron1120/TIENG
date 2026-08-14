@@ -148,12 +148,41 @@ function TopBar({ nav }: { nav: typeof NAV }) {
   )
 }
 
+/** 세션을 확인하는 동안 띄우는 화면.
+ *
+ * 관문(Gate)과 같은 머리글을 쓴다. 다른 모양을 띄우면 확인이 끝나는 순간 화면이
+ * 통째로 갈리면서 깜빡인다.
+ *
+ * 안내 문구가 "기다리는 중"이 아니라 "서버를 깨우는 중"인 이유: 공개 주소에서
+ * 오래 걸리는 이유가 실제로 그것이고, 30초를 아무 말 없이 기다리게 하면 새로고침을
+ * 누른다 — 그러면 처음부터 다시 기다린다.
+ */
+function Waking() {
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-ink px-6 text-center">
+      <Activity className="h-7 w-7 animate-measuring text-gold" />
+      <p className="font-mono text-[11px] tracking-[0.32em] text-gold uppercase">
+        VITAL_MONITOR_SYS
+      </p>
+      <p className="kr text-[13px] leading-relaxed text-faint">
+        서버를 깨우는 중입니다
+        <br />
+        처음 여는 경우 1분쯤 걸릴 수 있습니다
+      </p>
+    </main>
+  )
+}
+
 function Shell() {
   const { principal, checking } = useAuth()
 
-  // 첫 조회가 끝나기 전에는 아무것도 그리지 않는다. 여기서 관문을 먼저 띄우면
-  // 이미 로그인해 둔 사람도 새로고침할 때마다 관문이 한 번 번쩍인다.
-  if (checking) return null
+  // 첫 조회가 끝나기 전에는 관문을 띄우지 않는다. 먼저 띄우면 이미 로그인해 둔
+  // 사람도 새로고침할 때마다 관문이 한 번 번쩍인다.
+  //
+  // 그렇다고 아무것도 안 그리면 안 된다. LAN 에서는 이 조회가 몇 ms 라 티가 안 났지만,
+  // 공개 주소에서는 서버가 잠들어 있으면 첫 응답까지 30초 넘게 걸린다 —
+  // 그동안 화면이 통째로 검은 채로 남아 고장으로 보인다 (docs/deploy.md).
+  if (checking) return <Waking />
   if (principal === null) return <Gate />
 
   const nav = NAV.filter((item) => atLeast(principal.role, item.min))

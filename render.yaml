@@ -1,8 +1,8 @@
 # Render 블루프린트 — API 만 돌린다. 화면은 Cloudflare Pages 가 맡는다 (docs/deploy.md).
 #
-# 여기 올라가는 것은 하드웨어 없는 데모다 (config/device.mock.yaml). 실제 방의
-# 지표는 파이에 있고 이쪽으로 오지 않는다 — 값은 전부 합성이라 화면 뱃지가
-# "시뮬레이션"으로 뜬다.
+# 여기 올라가는 것은 하드웨어가 하나도 없는 배포다 (config/device.cloud.yaml).
+# 값을 지어내지 않으므로 카드는 전부 "미연결"로 뜬다 — 아무나 들어오는 화면에서
+# 없는 센서가 그럴듯한 숫자를 내면 그게 곧 거짓말이다 (README §0-4).
 #
 # web/dist 가 없으므로 api/main.py 는 SPA catch-all 을 걸지 않는다. 없는 /api 경로가
 # index.html 대신 제대로 404 를 주므로 API 전용으로는 오히려 이쪽이 맞다.
@@ -32,7 +32,7 @@ services:
     healthCheckPath: /api/auth/me
     envVars:
       - key: DEVICE_CONFIG
-        value: config/device.mock.yaml
+        value: config/device.cloud.yaml
       # 파이(Trixie)와 같은 계열로 맞춘다.
       - key: PYTHON_VERSION
         value: "3.13"

@@ -7,7 +7,15 @@ import { SignalBanner } from '../components/SignalBanner'
 import { StateBadge } from '../components/StateBadge'
 import { TrendChart } from '../components/TrendChart'
 import { useLayout } from '../hooks/useLayout'
-import { ICON, LABEL, STATE_LABEL, displayValue, effectiveState, isWarmingUp } from '../metrics'
+import {
+  ICON,
+  LABEL,
+  STATE_LABEL,
+  displayValue,
+  effectiveState,
+  isDetached,
+  isWarmingUp,
+} from '../metrics'
 import { useFeed } from '../snapshotContext'
 import type { Metric } from '../types'
 
@@ -37,8 +45,8 @@ export function Kiosk() {
     )
   }
 
-  const hero = snapshot.metrics.find((m) => m.key === layout.hero) ?? snapshot.metrics[0]
-  const blocks = sortBlocks(snapshot.metrics, draft ?? layout.order, hero?.key)
+  const hero = pickHero(snapshot.metrics, layout.hero, layout.order, stale)
+  const blocks = sortBlocks(snapshot.metrics, draft ?? layout.order, hero?.key, stale)
   const keys = blocks.map((m) => m.key)
 
   const heroState = hero ? effectiveState(hero, stale) : 'no_adapter'
@@ -211,17 +219,54 @@ export function Kiosk() {
 }
 
 /**
- * 저장된 순서대로 블록을 세운다.
+ * 크게 세울 지표.
+ *
+ * 저장된 선택이 먼저다. 다만 그 지표의 어댑터가 안 붙어 있으면 화면 한가운데가
+ * 커다란 "—" 하나로 남는다 — 센서 없이 브라우저 카메라만 켠 경우가 그렇다.
+ * 그때는 값이 나오는 지표로 임시 승격한다.
+ *
+ * 저장하지는 않는다. 센서가 돌아오면 원래 고른 지표로 그대로 되돌아가야 한다.
+ */
+function pickHero(
+  metrics: Metric[],
+  saved: string,
+  order: string[],
+  stale: boolean,
+): Metric | undefined {
+  const chosen = metrics.find((m) => m.key === saved)
+  if (chosen && !isDetached(chosen, stale)) return chosen
+
+  const rank = new Map(order.map((key, i) => [key, i]))
+  const alive = metrics
+    .filter((m) => !isDetached(m, stale))
+    .sort((a, b) => (rank.get(a.key) ?? order.length) - (rank.get(b.key) ?? order.length))
+  return alive[0] ?? chosen ?? metrics[0]
+}
+
+/**
+ * 블록 순서. 값이 나오는 카드를 위로 올리고, 그 안에서는 저장된 순서를 지킨다.
+ *
+ * 안 붙은 카드를 지우지 않는 이유: 이 기기가 무엇을 볼 수 있는 물건인지가 카드
+ * 목록으로 드러난다. 센서를 꽂으면 그 자리가 그대로 채워진다.
  *
  * order 에 없는 지표는 뒤에 붙이고 (센서를 새로 꽂아도 기존 배치가 안 흔들린다),
  * order 에 있지만 지금 안 오는 지표는 저절로 빠진다.
  */
-function sortBlocks(metrics: Metric[], order: string[], heroKey: string | undefined): Metric[] {
+function sortBlocks(
+  metrics: Metric[],
+  order: string[],
+  heroKey: string | undefined,
+  stale: boolean,
+): Metric[] {
   const rank = new Map(order.map((key, i) => [key, i]))
   return metrics
     .filter((m) => m.key !== heroKey)
-    .map((m, i) => ({ m, rank: rank.get(m.key) ?? order.length + i }))
-    .sort((a, b) => a.rank - b.rank)
+    .map((m, i) => ({
+      m,
+      detached: isDetached(m, stale) ? 1 : 0,
+      rank: rank.get(m.key) ?? order.length + i,
+    }))
+    .sort((a, b) => a.detached - b.detached || a.rank - b.rank)
     .map((entry) => entry.m)
 }
 

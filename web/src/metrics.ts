@@ -119,6 +119,20 @@ export function effectiveState(metric: Metric, stale: boolean): State {
 }
 
 /**
+ * 볼 것이 없는 카드인가. 어댑터가 아예 안 붙었거나 죽은 경우다.
+ *
+ * low_quality·rejected 는 여기 넣지 않는다. 그쪽은 센서가 붙어 있는데 값만 보류한
+ * 것이라 "왜 안 나오는지"가 볼 만한 정보다. 여기는 그것도 없다.
+ *
+ * stale 도 넣지 않는다. 수신이 끊기면 모든 카드가 stale 이라, 이걸로 순서를 바꾸면
+ * 화면이 통째로 뒤집혔다가 돌아온다.
+ */
+export function isDetached(metric: Metric, stale: boolean): boolean {
+  const state = effectiveState(metric, stale)
+  return state === 'no_adapter' || state === 'error'
+}
+
+/**
  * 값이 없는 이유가 "아직 시간이 덜 됐다"인가.
  *
  * rPPG 는 8초 분량이 모여야 첫 값을 낸다. 그 구간과 "신호가 나빠서 못 낸다"가

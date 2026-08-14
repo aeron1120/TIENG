@@ -89,6 +89,9 @@ export function Gate() {
   const [busy, setBusy] = useState(false)
   const [checked, setChecked] = useState<Checked | null>(null)
   const [checking, setChecking] = useState(false)
+  // 기본은 안 남기는 쪽이다. 태블릿을 여러 사람이 지나가며 쓰는 자리에서 켜 두면
+  // 다음 사람이 앞사람 세션을 물려받는다.
+  const [remember, setRemember] = useState(false)
   // 가입은 됐는데 아직 못 들어온 상태. 관문에 그대로 두면 방금 가입한 사람이
   // 비밀번호를 잘못 쳤다고 생각하고 계속 다시 시도한다.
   const [waiting, setWaiting] = useState<string | null>(null)
@@ -151,7 +154,7 @@ export function Gate() {
       if (mode !== 'register') {
         // 관리자도 같은 경로로 들어온다. 계정에 붙은 등급이 무엇을 열지 정하므로
         // (api/auth.py) 입구를 나눈다고 인증까지 나눌 이유는 없다.
-        await logIn(username, password)
+        await logIn(username, password, remember)
       } else {
         const { pending } = await register(username, password)
         // pending 이면 AuthProvider 가 principal 을 안 세운다. 관문이 그대로 남으므로
@@ -340,6 +343,23 @@ export function Gate() {
                     </p>
                   )}
                 </div>
+              )}
+
+              {/* 가입 화면에는 두지 않는다. 승인을 기다리는 사람에게는 세션이
+                  아예 안 생기므로 (api/routes/auth.py) 물어볼 것이 없다. */}
+              {mode !== 'register' && (
+                <label className="kr mt-1 flex cursor-pointer items-center gap-2 text-[13px] text-faint select-none">
+                  <input
+                    type="checkbox"
+                    checked={remember}
+                    onChange={(e) => setRemember(e.target.checked)}
+                    className="h-3.5 w-3.5 accent-gold"
+                  />
+                  로그인 유지
+                  <span className="text-[12px] text-faint/70">
+                    · 끄면 창을 닫을 때 풀립니다
+                  </span>
+                </label>
               )}
 
               <button

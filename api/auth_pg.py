@@ -17,6 +17,7 @@ state/users.db 가 매번 날아가서 쓸 때마다 다시 가입해야 한다.
 
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import UTC, datetime
 from typing import Any
@@ -29,6 +30,7 @@ from psycopg_pool import ConnectionPool
 from api.auth import (
     PROFILE_FIELDS,
     SESSION_TTL,
+    SESSION_TTL_BRIEF,
     Account,
     AuthError,
     Principal,
@@ -38,6 +40,7 @@ from api.auth import (
     check_username,
     hash_password,
 )
+from core.layout import Layout
 
 log = structlog.get_logger(__name__)
 
@@ -64,6 +67,13 @@ CREATE TABLE IF NOT EXISTS sessions (
     token      TEXT PRIMARY KEY,
     user_id    BIGINT REFERENCES users(id) ON DELETE CASCADE,  -- NULL 이면 비회원
     expires_at TIMESTAMPTZ NOT NULL
+);
+-- 화면 배치. 계정마다 하나다 (core/layout.py).
+CREATE TABLE IF NOT EXISTS layouts (
+    user_id  BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    hero     TEXT NOT NULL,
+    -- "order" 는 SQL 예약어라 이름을 바꿨다. JSON 배열이다.
+    ordering TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS profiles (
     user_id        BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -94,7 +104,7 @@ DECLARE r text;
 BEGIN
     FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
-            EXECUTE format('REVOKE ALL ON users, sessions, profiles FROM %I', r);
+            EXECUTE format('REVOKE ALL ON users, sessions, profiles, layouts FROM %I', r);
         END IF;
     END LOOP;
 END $$;
@@ -104,6 +114,7 @@ END $$;
 ALTER TABLE users    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE layouts  ENABLE ROW LEVEL SECURITY;
 """
 
 # register() 가 "아직 아무도 없는가"를 세는 동안 다른 가입이 끼어들면 관리자가 둘
@@ -227,8 +238,8 @@ class PgUsers:
             ).fetchone()
         return row is not None
 
-    def login(self, username: str, password: str) -> str:
-        """세션 토큰. 아이디가 없어도 비밀번호가 틀려도 같은 말을 돌려준다."""
+    def login(self, username: str, password: str, remember: bool = False) -> str:
+        """세션 토큰. 판단 근거는 api/auth.py 의 같은 메서드에 적혀 있다."""
         with self.pool.connection() as conn:
             row = conn.execute(
                 "SELECT id, password_hash, role, approved, active FROM users"
@@ -246,17 +257,17 @@ class PgUsers:
             if not row["active"]:
                 raise AuthError(403, "차단된 계정이다")
 
-            return self._open(conn, user_id=int(row["id"]))
+            return self._open(conn, user_id=int(row["id"]), remember=remember)
 
     def login_as_guest(self) -> str:
         with self.pool.connection() as conn:
-            return self._open(conn, user_id=None)
+            return self._open(conn, user_id=None, remember=False)
 
-    def _open(self, conn: Any, user_id: int | None) -> str:
+    def _open(self, conn: Any, user_id: int | None, remember: bool) -> str:
         token = secrets.token_urlsafe(32)
         conn.execute(
             "INSERT INTO sessions (token, user_id, expires_at) VALUES (%s, %s, %s)",
-            (token, user_id, datetime.now(UTC) + SESSION_TTL),
+            (token, user_id, datetime.now(UTC) + (SESSION_TTL if remember else SESSION_TTL_BRIEF)),
         )
         return token
 
@@ -351,6 +362,41 @@ class PgUsers:
 
         # 언제 적었는지는 서버 시계로 정한다. 본문에 실려 온 값은 버린다.
         return profile.model_copy(update={"updated_at": now})
+
+    # --- 화면 배치 ---
+
+    def layout(self, username: str) -> Layout:
+        """이 계정이 마지막으로 둔 배치. 없으면 기본값이다."""
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                "SELECT l.hero, l.ordering FROM layouts l JOIN users u ON u.id = l.user_id"
+                " WHERE lower(u.username) = lower(%s)",
+                (username,),
+            ).fetchone()
+
+        if row is None:
+            return Layout()
+        try:
+            return Layout(hero=str(row["hero"]), order=json.loads(str(row["ordering"])))
+        except (ValueError, TypeError):
+            # 배치 하나 때문에 화면이 안 뜨면 곤란하다. 못 읽으면 기본값이다.
+            log.warning("auth_pg.layout_unreadable", username=username)
+            return Layout()
+
+    def save_layout(self, username: str, value: Layout) -> Layout:
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                "SELECT id FROM users WHERE lower(username) = lower(%s)", (username,)
+            ).fetchone()
+            if row is None:  # pragma: no cover - 세션이 가리키는 계정이라 여기 오지 않는다
+                raise AuthError(404, "그런 계정이 없다")
+            conn.execute(
+                "INSERT INTO layouts (user_id, hero, ordering) VALUES (%s, %s, %s)"
+                " ON CONFLICT (user_id) DO UPDATE SET hero = excluded.hero,"
+                " ordering = excluded.ordering",
+                (int(row["id"]), value.hero, json.dumps(value.order)),
+            )
+        return value
 
     def set_approved(self, user_id: int, approved: bool) -> None:
         """가입 승인을 내주거나 거둔다. 거두면 열려 있던 세션도 같이 닫는다.

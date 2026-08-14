@@ -351,6 +351,32 @@ def test_an_admin_cannot_block_themselves_out(client: TestClient) -> None:
         )
 
 
+def test_staying_signed_in_is_a_choice(client: TestClient) -> None:
+    """안 고르면 창을 닫는 순간 풀려야 한다.
+
+    브라우저에게 그렇게 시키는 방법은 쿠키에 수명을 안 적는 것뿐이다. 적으면
+    디스크에 남아 껐다 켜도 살아 있다 — 태블릿을 여러 사람이 지나가며 쓰는
+    자리에서는 다음 사람이 앞사람 세션을 물려받는다.
+    """
+    with client:
+        client.post("/api/auth/register", json={"username": "owner", "password": "correct horse"})
+        client.post("/api/auth/logout")
+
+        brief = client.post(
+            "/api/auth/login", json={"username": "owner", "password": "correct horse"}
+        )
+        assert "max-age" not in brief.headers["set-cookie"].lower()
+
+        kept = client.post(
+            "/api/auth/login",
+            json={"username": "owner", "password": "correct horse", "remember": True},
+        )
+        assert "max-age=" in kept.headers["set-cookie"].lower()
+
+    # 어느 쪽이든 들어가는 것 자체는 된다.
+    assert kept.json()["username"] == "owner"
+
+
 def test_logout_drops_the_session(client: TestClient) -> None:
     with client:
         client.post("/api/auth/guest")

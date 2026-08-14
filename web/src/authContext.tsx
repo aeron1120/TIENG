@@ -31,7 +31,8 @@ export interface Auth {
   /** 첫 조회가 끝나기 전. 이 동안은 관문도 본문도 띄우지 않는다. */
   checking: boolean
   enterAsGuest: () => Promise<void>
-  logIn: (username: string, password: string) => Promise<void>
+  /** remember 를 안 주면 창을 닫는 순간 풀린다 (api/routes/auth.py). */
+  logIn: (username: string, password: string, remember?: boolean) => Promise<void>
   /** 첫 가입자만 그 자리에서 들어온다. 그 뒤로는 pending 이 true 로 돌아온다. */
   register: (username: string, password: string) => Promise<Registration>
   logOut: () => Promise<void>
@@ -77,8 +78,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPrincipal(await post<Principal>('/api/auth/guest'))
   }, [])
 
-  const logIn = useCallback(async (username: string, password: string) => {
-    setPrincipal(await post<Principal>('/api/auth/login', { username, password }))
+  const logIn = useCallback(async (username: string, password: string, remember = false) => {
+    setPrincipal(await post<Principal>('/api/auth/login', { username, password, remember }))
   }, [])
 
   const register = useCallback(async (username: string, password: string) => {

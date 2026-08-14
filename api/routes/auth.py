@@ -40,6 +40,9 @@ router = APIRouter(prefix="/api/auth")
 class Credentials(BaseModel):
     username: str = Field(min_length=1, max_length=32)
     password: str = Field(min_length=1, max_length=128)
+    # 안 고르면 창을 닫는 순간 풀린다. 태블릿을 여러 사람이 지나가며 쓰는 자리에서
+    # 기본으로 남겨 두면 다음 사람이 앞사람 세션을 물려받는다.
+    remember: bool = False
 
 
 class Block(BaseModel):
@@ -71,11 +74,13 @@ def _store(request: Request) -> Users | PgUsers:
     return request.app.state.users  # type: ignore[no-any-return]
 
 
-def _set_cookie(response: Response, token: str) -> None:
+def _set_cookie(response: Response, token: str, remember: bool = False) -> None:
     response.set_cookie(
         COOKIE,
         token,
-        max_age=int(SESSION_TTL.total_seconds()),
+        # max_age 를 주면 브라우저가 쿠키를 디스크에 적어 두고, 껐다 켜도 남는다.
+        # 안 주면 창이 닫히는 순간 사라진다 — "로그인 유지 안 함"이 그 뜻이다.
+        max_age=int(SESSION_TTL.total_seconds()) if remember else None,
         httponly=True,  # 스크립트가 못 읽어야 토큰이 화면 코드로 새지 않는다
         samesite="lax",
         # secure 는 켜지 않는다. 이 기기는 LAN 안에서 http 로 열리므로 (README §1)
@@ -133,11 +138,11 @@ async def register(request: Request, response: Response, body: Credentials) -> R
         account = await asyncio.to_thread(store.register, body.username, body.password)
         if not account.approved:
             return Registration(pending=True)
-        token = await asyncio.to_thread(store.login, body.username, body.password)
+        token = await asyncio.to_thread(store.login, body.username, body.password, body.remember)
     except AuthError as exc:
         raise HTTPException(exc.status, exc.detail) from None
 
-    _set_cookie(response, token)
+    _set_cookie(response, token, body.remember)
     return Registration(
         pending=False, principal=Principal(username=account.username, role=account.role)
     )
@@ -147,14 +152,14 @@ async def register(request: Request, response: Response, body: Credentials) -> R
 async def login(request: Request, response: Response, body: Credentials) -> Principal:
     store = _store(request)
     try:
-        token = await asyncio.to_thread(store.login, body.username, body.password)
+        token = await asyncio.to_thread(store.login, body.username, body.password, body.remember)
     except AuthError as exc:
         raise HTTPException(exc.status, exc.detail) from None
 
     who = await asyncio.to_thread(store.principal, token)
     if who is None:  # pragma: no cover - 방금 만든 세션이라 여기 오지 않는다
         raise HTTPException(500, "세션을 만들지 못했다")
-    _set_cookie(response, token)
+    _set_cookie(response, token, body.remember)
     return who
 
 

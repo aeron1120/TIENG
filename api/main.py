@@ -161,6 +161,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 같은 값을 써야 웹에서 잰 값과 파이에서 잰 값이 같은 기준으로 보류된다.
     gate = thresholds.load(Path(registry.config.thresholds)).confidence_min
     app.state.personal = Feeds(gate=gate)
+    # 비회원의 화면 배치. 계정이 있는 사람 것은 저장소에 들어간다 (api/routes/layout.py).
+    app.state.layouts = {}
     app.state.metrics_csv = metrics_csv
 
     task = asyncio.create_task(_sample_loop(app))

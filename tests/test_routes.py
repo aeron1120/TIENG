@@ -105,12 +105,8 @@ def test_camera_says_so_when_there_is_none(client: TestClient) -> None:
         assert client.get("/api/camera/stream").status_code == 404
 
 
-def test_layout_survives_a_reload(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_layout_survives_a_reload(client: TestClient) -> None:
     """브라우저 저장소를 안 쓰므로 (README §10) 서버가 배치를 기억해야 한다."""
-    monkeypatch.setattr("core.layout.DEFAULT_PATH", tmp_path / "layout.json")
-
     with client:
         assert client.get("/api/layout").json() == {"hero": "hr", "order": []}
 
@@ -119,24 +115,43 @@ def test_layout_survives_a_reload(
         assert client.get("/api/layout").json() == saved
 
 
-def test_layout_falls_back_when_the_file_is_broken(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """배치 파일 하나 때문에 화면이 안 뜨면 안 된다."""
-    broken = tmp_path / "layout.json"
-    broken.write_text("{ 이건 JSON 이 아니다", encoding="utf-8")
-    monkeypatch.setattr("core.layout.DEFAULT_PATH", broken)
+def test_a_layout_belongs_to_the_account(client: TestClient, account_db: Users) -> None:
+    """한 사람이 배치를 바꿨다고 다른 사람 화면이 같이 바뀌면 안 된다.
+
+    기기별 파일 하나에 두던 것을 계정별로 옮긴 이유가 이것이다 (core/layout.py).
+    화면이 공개 주소로 열리면서 방 하나에 태블릿 하나라는 전제가 깨졌다.
+    """
+    with client:
+        client.put("/api/layout", json={"hero": "camera", "order": ["hr"]})
+
+        # 두 번째 계정을 만들고 승인한 뒤 그쪽으로 갈아탄다.
+        client.post("/api/auth/register", json={"username": "nurse", "password": "battery staple"})
+        nurse = next(a for a in client.get("/api/auth/users").json() if a["username"] == "nurse")
+        client.put(f"/api/auth/users/{nurse['id']}/approved", json={"approved": True})
+        client.post("/api/auth/login", json={"username": "nurse", "password": "battery staple"})
+
+        assert client.get("/api/layout").json() == {"hero": "hr", "order": []}
+        client.put("/api/layout", json={"hero": "lux", "order": []})
+
+        # 돌아오면 내 배치가 그대로 있어야 한다.
+        client.post("/api/auth/login", json={"username": "tester", "password": "correct horse"})
+        assert client.get("/api/layout").json() == {"hero": "camera", "order": ["hr"]}
+
+
+def test_a_broken_layout_falls_back(client: TestClient, account_db: Users) -> None:
+    """배치 한 줄 때문에 화면이 안 뜨면 곤란하다."""
+    with client:
+        client.put("/api/layout", json={"hero": "temp", "order": ["lux"]})
+
+    with account_db._connect() as conn:  # noqa: SLF001 - 깨진 값을 만들 다른 길이 없다
+        conn.execute("UPDATE layouts SET ordering = '{ 이건 JSON 이 아니다'")
 
     with client:
-        assert client.get("/api/layout").json()["hero"] == "hr"
+        assert client.get("/api/layout").json() == {"hero": "hr", "order": []}
 
 
-def test_layout_caps_how_much_it_will_store(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """클라이언트가 준 값을 그대로 디스크에 쓰는 유일한 경로다."""
-    monkeypatch.setattr("core.layout.DEFAULT_PATH", tmp_path / "layout.json")
-
+def test_layout_caps_how_much_it_will_store(client: TestClient) -> None:
+    """클라이언트가 준 값을 그대로 저장소에 쓰는 경로다."""
     with client:
         res = client.put("/api/layout", json={"hero": "hr", "order": [f"k{i}" for i in range(64)]})
         assert res.status_code == 422

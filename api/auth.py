@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import secrets
 import sqlite3
 from collections.abc import Awaitable, Callable, Iterator
@@ -44,11 +45,20 @@ import structlog
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, StringConstraints
 
+from core.layout import Layout
+
 log = structlog.get_logger(__name__)
 
 DEFAULT_PATH = Path("state/users.db")
 COOKIE = "tfv_session"
+
+# "로그인 유지"를 고른 사람의 세션. 침실 앞에 세워 두고 계속 켜 두는 태블릿에서는
+# 껐다 켤 때마다 다시 로그인하게 만들 이유가 없다.
 SESSION_TTL = timedelta(days=30)
+# 안 고른 사람의 세션. 쿠키를 창이 닫히면 사라지게 굽지만(api/routes/auth.py) 서버의
+# 줄은 그것만으로 안 지워지므로, 하루 뒤에 저절로 치워지게 짧게 준다. 하루면 창을
+# 열어 둔 채로 쓰는 동안 끊길 일은 없다.
+SESSION_TTL_BRIEF = timedelta(days=1)
 
 Role = Literal["guest", "member", "admin"]
 
@@ -76,6 +86,15 @@ CREATE TABLE IF NOT EXISTS sessions (
     token      TEXT PRIMARY KEY,
     user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,  -- NULL 이면 비회원
     expires_at TEXT NOT NULL
+);
+-- 화면 배치. 계정마다 하나다 — 기기별 파일 하나로 두면 한 사람이 바꾼 것이 다른
+-- 모든 사람 화면에 그대로 나간다 (core/layout.py).
+CREATE TABLE IF NOT EXISTS layouts (
+    user_id  INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    hero     TEXT NOT NULL,
+    -- JSON 배열. 지표 키는 센서 구성에 따라 늘고 줄어서 칸을 나눠 둘 수가 없다.
+    -- "order" 는 SQL 예약어라 이름을 바꿨다.
+    ordering TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS profiles (
     user_id        INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -308,8 +327,13 @@ class Users:
             row = conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone()
         return row is not None
 
-    def login(self, username: str, password: str) -> str:
-        """세션 토큰. 아이디가 없어도 비밀번호가 틀려도 같은 말을 돌려준다."""
+    def login(self, username: str, password: str, remember: bool = False) -> str:
+        """세션 토큰. 아이디가 없어도 비밀번호가 틀려도 같은 말을 돌려준다.
+
+        remember 는 이 세션을 얼마나 살려 둘지만 정한다. 창을 닫으면 풀리게 하는
+        것은 쿠키 쪽 일이다 (api/routes/auth.py) — 서버는 그걸 알 수 없으므로
+        수명을 짧게 줘서 남은 줄이 저절로 치워지게 한다.
+        """
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT id, password_hash, role, approved, active FROM users WHERE username = ?",
@@ -327,15 +351,15 @@ class Users:
             if not row["active"]:
                 raise AuthError(403, "차단된 계정이다")
 
-            return self._open(conn, user_id=int(row["id"]))
+            return self._open(conn, user_id=int(row["id"]), remember=remember)
 
     def login_as_guest(self) -> str:
         with self._connect() as conn:
-            return self._open(conn, user_id=None)
+            return self._open(conn, user_id=None, remember=False)
 
-    def _open(self, conn: sqlite3.Connection, user_id: int | None) -> str:
+    def _open(self, conn: sqlite3.Connection, user_id: int | None, remember: bool) -> str:
         token = secrets.token_urlsafe(32)
-        expires = datetime.now(UTC) + SESSION_TTL
+        expires = datetime.now(UTC) + (SESSION_TTL if remember else SESSION_TTL_BRIEF)
         conn.execute(
             "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
             (token, user_id, expires.isoformat()),
@@ -431,6 +455,39 @@ class Users:
 
         # 언제 적었는지는 서버 시계로 정한다. 본문에 실려 온 값은 버린다.
         return profile.model_copy(update={"updated_at": now})
+
+    # --- 화면 배치 ---
+
+    def layout(self, username: str) -> Layout:
+        """이 계정이 마지막으로 둔 배치. 없으면 기본값이다."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT l.hero, l.ordering FROM layouts l JOIN users u ON u.id = l.user_id"
+                " WHERE u.username = ?",
+                (username,),
+            ).fetchone()
+
+        if row is None:
+            return Layout()
+        try:
+            return Layout(hero=str(row["hero"]), order=json.loads(str(row["ordering"])))
+        except (ValueError, TypeError):
+            # 배치 하나 때문에 화면이 안 뜨면 곤란하다. 못 읽으면 기본값이다.
+            log.warning("auth.layout_unreadable", username=username)
+            return Layout()
+
+    def save_layout(self, username: str, value: Layout) -> Layout:
+        with self._connect() as conn:
+            row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+            if row is None:  # pragma: no cover - 세션이 가리키는 계정이라 여기 오지 않는다
+                raise AuthError(404, "그런 계정이 없다")
+            conn.execute(
+                "INSERT INTO layouts (user_id, hero, ordering) VALUES (?, ?, ?)"
+                " ON CONFLICT(user_id) DO UPDATE SET hero = excluded.hero,"
+                " ordering = excluded.ordering",
+                (int(row["id"]), value.hero, json.dumps(value.order)),
+            )
+        return value
 
     def set_approved(self, user_id: int, approved: bool) -> None:
         """가입 승인을 내주거나 거둔다. 거두면 열려 있던 세션도 같이 닫는다.

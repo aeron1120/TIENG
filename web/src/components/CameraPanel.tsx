@@ -88,6 +88,10 @@ export function CameraPanel() {
                 ref={device.videoRef}
                 muted
                 playsInline
+                // 브라우저의 '화면 속 화면'을 막는다. 그 창에는 이쪽 CSS 가 안 걸려서
+                // 좌우 반전이 풀리고, 거울이 아니게 되면 맞추려 할수록 반대로 움직인다.
+                // 떼어낸 창은 안내 박스도 같이 잃는다.
+                disablePictureInPicture
                 // 거울처럼 뒤집는다. 얼굴을 박스에 맞추는 화면이라 좌우가 반대면
                 // 맞추려 할수록 반대로 움직인다.
                 className={`h-full w-full -scale-x-100 object-cover ${

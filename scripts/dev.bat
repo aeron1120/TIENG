@@ -3,6 +3,9 @@ REM TouchFree Vitals - development launcher.
 REM
 REM   scripts\dev.bat         live mode (uses the webcam)
 REM   scripts\dev.bat mock    no webcam, synthetic sensors
+REM   scripts\dev.bat cloud   no sensors at all - same as the public deployment.
+REM                           Cards stay but read "unavailable"; the browser
+REM                           camera is the only thing that can fill one in.
 REM
 REM Opens two windows (backend + web). Close both to stop.
 REM
@@ -18,7 +21,13 @@ pushd "%~dp0.."
 set "ROOT=%CD%"
 popd
 
-if /I "%~1"=="mock" (set "CFG=config\device.mock.yaml") else (set "CFG=config\device.yaml")
+if /I "%~1"=="mock" (
+  set "CFG=config\device.mock.yaml"
+) else if /I "%~1"=="cloud" (
+  set "CFG=config\device.cloud.yaml"
+) else (
+  set "CFG=config\device.yaml"
+)
 
 if not exist "%ROOT%\.venv\Scripts\uvicorn.exe" goto :no_venv
 if not exist "%ROOT%\web\node_modules" goto :no_node
@@ -42,8 +51,9 @@ echo   config      %CFG%
 echo   dashboard   http://localhost:5173/
 echo   api docs    http://127.0.0.1:8000/docs
 echo.
-if /I not "%~1"=="mock" echo   Live mode holds the webcam. Close both windows to stop.
 if /I "%~1"=="mock" echo   Wait ~50s to watch the L1 light intervention fire.
+if /I "%~1"=="cloud" echo   No server sensors. Pick "this device" in the camera panel.
+if /I not "%~1"=="mock" if /I not "%~1"=="cloud" echo   Live mode holds the webcam. Close both windows to stop.
 echo.
 goto :eof
 

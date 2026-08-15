@@ -35,6 +35,7 @@ import hashlib
 import json
 import secrets
 import sqlite3
+import time
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -59,6 +60,16 @@ SESSION_TTL = timedelta(days=30)
 # 줄은 그것만으로 안 지워지므로, 하루 뒤에 저절로 치워지게 짧게 준다. 하루면 창을
 # 열어 둔 채로 쓰는 동안 끊길 일은 없다.
 SESSION_TTL_BRIEF = timedelta(days=1)
+
+# 만료된 세션 줄을 치우는 주기.
+#
+# 예전에는 principal() 이 부를 때마다 치웠다. 그러면 조회 한 번에 쓰기 한 번이 딸려
+# 붙는다 — Postgres 배포에서는 요청마다 DB 를 두 번 다녀오고 (api/auth_pg.py),
+# 그 두 번째가 잠금을 잡는 쓰기다. 지표를 재는 동안 초당 한 번씩 오는 경로다.
+#
+# 청소는 청소일 뿐이라 늦어도 된다. 만료됐는지는 조회가 직접 본다 — 그게 아니라
+# 청소가 correctness 를 떠받치고 있으면, 청소를 미루는 순간 만료된 토큰이 통과한다.
+SESSION_SWEEP_S = 600.0
 
 Role = Literal["guest", "member", "admin"]
 
@@ -214,12 +225,12 @@ class Users:
 
     def __init__(self, path: Path = DEFAULT_PATH) -> None:
         self.path = path
+        self._swept = 0.0  # 만료 세션을 마지막으로 치운 시각 (monotonic)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         # sqlite3.Connection 을 with 에 그냥 넣으면 트랜잭션만 닫고 연결은 열어 둔다.
         # 요청마다 새로 여는 구조라 그대로 두면 핸들이 샌다.
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.path, isolation_level=None)  # 트랜잭션은 직접 연다
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
@@ -229,6 +240,9 @@ class Users:
             conn.close()
 
     def init(self) -> None:
+        # 폴더는 여기서 한 번만 만든다. _connect 에 두면 요청마다 파일시스템을 한 번
+        # 더 두드리는데, 그때는 이미 있는 것이 확실하다.
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
             # 승인 대기가 생기기 전에 만들어진 DB 에는 approved 가 없다. 기본값 1 이라
@@ -375,17 +389,18 @@ class Users:
     def principal(self, token: str) -> Principal | None:
         """토큰이 가리키는 사람. 없거나 만료됐으면 None.
 
-        만료된 줄은 여기서 지운다. 세션은 계속 쌓이기만 하고 지우는 사람이 없어서,
-        읽을 때 같이 치우지 않으면 파일이 한 방향으로만 자란다.
+        만료 판정은 이 조회가 직접 한다. 지우는 쪽에 맡기면 청소를 미루는 순간
+        만료된 토큰이 통과하고, 청소는 실제로 미룬다 (SESSION_SWEEP_S).
         """
+        now = datetime.now(UTC).isoformat()
         with self._connect() as conn:
-            now = datetime.now(UTC).isoformat()
-            conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
             row = conn.execute(
                 "SELECT u.username, u.role, u.approved, u.active FROM sessions s"
-                " LEFT JOIN users u ON u.id = s.user_id WHERE s.token = ?",
-                (token,),
+                " LEFT JOIN users u ON u.id = s.user_id"
+                " WHERE s.token = ? AND s.expires_at > ?",
+                (token, now),
             ).fetchone()
+            self._sweep(conn, now)
 
         if row is None:
             return None
@@ -395,6 +410,22 @@ class Users:
         if not row["active"] or not row["approved"]:
             return None
         return Principal(username=str(row["username"]), role=str(row["role"]))  # type: ignore[arg-type]
+
+    def _sweep(self, conn: sqlite3.Connection, now: str) -> None:
+        """만료된 세션 줄을 치운다. 요청마다 하지 않는다.
+
+        세션은 쌓이기만 하고 지우는 사람이 따로 없다 — 로그아웃을 안 누르고 창만
+        닫는 것이 보통이라, 안 치우면 테이블이 한 방향으로만 자란다. 다만 그건
+        쌓이는 속도의 문제라 10분에 한 번이면 충분하다.
+
+        시각을 먼저 찍는 이유: principal() 은 스레드에서 돈다 (api/auth.py 의 current).
+        나중에 찍으면 동시에 들어온 요청이 전부 청소를 한 번씩 돌린다.
+        """
+        clock = time.monotonic()
+        if clock - self._swept < SESSION_SWEEP_S:
+            return
+        self._swept = clock
+        conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
 
     def accounts(self) -> list[Account]:
         with self._connect() as conn:

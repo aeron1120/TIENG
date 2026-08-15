@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -168,6 +170,63 @@ def test_blocking_closes_open_sessions(users: Store) -> None:
 
     users.set_active(nurse.id, True)
     assert users.principal(users.login("nurse", "battery staple")) is not None
+
+
+def test_an_expired_session_stops_working(users: Store) -> None:
+    """만료 판정은 조회가 직접 해야 한다.
+
+    예전에는 principal() 이 매번 돌리던 DELETE 가 그 일을 겸했다. 그 청소를 뜸하게
+    바꾸면서(SESSION_SWEEP_S) 조회가 스스로 보지 않으면, 만료된 토큰이 청소와 청소
+    사이에 그대로 통과한다.
+
+    그래서 여기서는 청소가 방금 돈 것으로 해 두고 본다 — 지워서 막는 것이 아님을
+    보이려는 것이다.
+    """
+    users.register("owner", "correct horse")
+    token = users.login("owner", "correct horse")
+    assert users.principal(token) is not None
+
+    _expire(users, token)
+    users._swept = time.monotonic()
+    assert users.principal(token) is None
+
+
+def test_expired_sessions_do_not_pile_up(users: Store) -> None:
+    """청소를 미루더라도 없애지는 않는다.
+
+    로그아웃을 누르지 않고 창만 닫는 것이 보통이라, 안 치우면 세션 테이블이 한
+    방향으로만 자란다.
+    """
+    users.register("owner", "correct horse")
+    _expire(users, users.login("owner", "correct horse"))
+    live = users.login("owner", "correct horse")
+    assert _sessions(users) == 2
+
+    users._swept = 0.0  # 청소할 때가 됐다
+    assert users.principal(live) is not None
+    assert _sessions(users) == 1
+
+
+def _expire(store: Store, token: str) -> None:
+    """이 세션을 과거로 민다. 시각을 담는 방식이 저장소마다 다르다."""
+    past = datetime.now(UTC) - timedelta(seconds=1)
+    if isinstance(store, Users):
+        with store._connect() as conn:  # noqa: SLF001 - 만료를 만들 다른 길이 없다
+            conn.execute(
+                "UPDATE sessions SET expires_at = ? WHERE token = ?", (past.isoformat(), token)
+            )
+        return
+    with store.pool.connection() as conn:
+        conn.execute("UPDATE sessions SET expires_at = %s WHERE token = %s", (past, token))
+
+
+def _sessions(store: Store) -> int:
+    if isinstance(store, Users):
+        with store._connect() as conn:  # noqa: SLF001 - 위와 같은 이유
+            return int(conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0])
+    with store.pool.connection() as conn:
+        row = conn.execute("SELECT COUNT(*) AS n FROM sessions").fetchone()
+        return int(row["n"]) if row else 0
 
 
 def test_the_last_admin_cannot_be_blocked(users: Store) -> None:

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -29,6 +30,7 @@ from psycopg_pool import ConnectionPool
 
 from api.auth import (
     PROFILE_FIELDS,
+    SESSION_SWEEP_S,
     SESSION_TTL,
     SESSION_TTL_BRIEF,
     Account,
@@ -145,6 +147,7 @@ class PgUsers:
             kwargs={"row_factory": dict_row},
             open=False,
         )
+        self._swept = 0.0  # 만료 세션을 마지막으로 치운 시각 (monotonic)
 
     def init(self) -> None:
         self.pool.open(wait=True)
@@ -280,16 +283,18 @@ class PgUsers:
     def principal(self, token: str) -> Principal | None:
         """토큰이 가리키는 사람. 없거나 만료됐으면 None.
 
-        만료된 줄은 여기서 지운다. 지우는 사람이 따로 없어서 읽을 때 같이 치우지
-        않으면 테이블이 한 방향으로만 자란다.
+        만료 판정은 이 조회가 직접 한다. 청소는 가끔만 돈다 — 근거는 api/auth.py
+        의 같은 메서드에 적혀 있다. 여기서는 그 왕복 한 번이 인터넷 너머다.
         """
+        now = datetime.now(UTC)
         with self.pool.connection() as conn:
-            conn.execute("DELETE FROM sessions WHERE expires_at < %s", (datetime.now(UTC),))
             row = conn.execute(
                 "SELECT u.username, u.role, u.approved, u.active FROM sessions s"
-                " LEFT JOIN users u ON u.id = s.user_id WHERE s.token = %s",
-                (token,),
+                " LEFT JOIN users u ON u.id = s.user_id"
+                " WHERE s.token = %s AND s.expires_at > %s",
+                (token, now),
             ).fetchone()
+            self._sweep(conn, now)
 
         if row is None:
             return None
@@ -299,6 +304,14 @@ class PgUsers:
         if not row["active"] or not row["approved"]:
             return None
         return Principal(username=str(row["username"]), role=str(row["role"]))  # type: ignore[arg-type]
+
+    def _sweep(self, conn: Any, now: datetime) -> None:
+        """만료된 세션 줄을 치운다. 요청마다 하지 않는다 (api/auth.py 의 _sweep)."""
+        clock = time.monotonic()
+        if clock - self._swept < SESSION_SWEEP_S:
+            return
+        self._swept = clock
+        conn.execute("DELETE FROM sessions WHERE expires_at <= %s", (now,))
 
     def accounts(self) -> list[Account]:
         with self.pool.connection() as conn:

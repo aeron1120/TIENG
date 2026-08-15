@@ -13,7 +13,7 @@ import pytest
 from core import quality, thresholds
 from core.adapters import rppg as rppg_module
 from core.adapters.rppg import RppgAdapter
-from core.pulse import HrEstimator
+from core.pulse import HrEstimator, _coefficients
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FS = 30.0
@@ -83,6 +83,23 @@ def test_short_window_warms_up_without_value() -> None:
     assert metric.state == "low_quality"
     assert metric.value is None
     assert metric.confidence is None  # 아직 confidence 를 말할 근거가 없다
+
+
+def test_the_bandpass_is_designed_once_per_setting() -> None:
+    """계수는 신호가 아니라 설정에서 나온다.
+
+    설계가 estimate() 시간의 4분의 1 이었다. 신호와 무관한 일을 초당 한 번씩,
+    재는 사람 수만큼 다시 하고 있었다.
+
+    다시 하지 않는 대신 설정이 다르면 반드시 다른 계수가 나와야 한다. 캐시가
+    섞이면 15Hz 로 올라온 신호를 30Hz 용 필터로 거르게 되고, 그건 화면에
+    "값이 좀 이상하다"로만 보인다.
+    """
+    same = _coefficients(30.0, 42.0, 180.0)
+    assert _coefficients(30.0, 42.0, 180.0) is same  # 다시 설계하지 않는다
+
+    assert not np.array_equal(same[0], _coefficients(15.0, 42.0, 180.0)[0])
+    assert not np.array_equal(same[0], _coefficients(30.0, 50.0, 180.0)[0])
 
 
 def test_flat_signal_is_held() -> None:

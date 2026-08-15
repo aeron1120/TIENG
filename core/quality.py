@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from functools import lru_cache
 
 import numpy as np
 from scipy.signal import butter, detrend, find_peaks, sosfiltfilt
@@ -276,6 +277,16 @@ def spectral_analysis(x: np.ndarray, fs: float, band: Band) -> Spectral:
     return Spectral(f_peak * 60.0, snr_db, harmonic_ratio, peak_ratio)
 
 
+@lru_cache(maxsize=8)
+def _sections(band: Band, fs: float) -> np.ndarray:
+    """대역통과 계수. 같은 대역·같은 표본율이면 계수도 같다 (core/pulse.py 와 같은 이유).
+
+    Band 가 frozen dataclass 라 그대로 열쇠가 된다. 대역은 둘뿐이고 (BAND_HR/BAND_RR)
+    표본율도 몇 안 되므로 캐시가 커질 일이 없다.
+    """
+    return np.asarray(butter(3, [band.f_lo, band.f_hi], btype="band", fs=fs, output="sos"))
+
+
 def bandpass(x: np.ndarray, fs: float, band: Band) -> np.ndarray:
     """대역 밖을 지운다.
 
@@ -283,8 +294,9 @@ def bandpass(x: np.ndarray, fs: float, band: Band) -> np.ndarray:
     지운 곳에서 피크를 찾는 일이 생기고, 그러면 품질이 아니라 필터 감쇠를 재게
     된다 (spectral_analysis 의 배음비 주석과 같은 함정이다).
     """
-    sos = butter(3, [band.f_lo, band.f_hi], btype="band", fs=fs, output="sos")
-    return np.asarray(sosfiltfilt(sos, np.asarray(x, dtype=np.float64)), dtype=np.float64)
+    return np.asarray(
+        sosfiltfilt(_sections(band, fs), np.asarray(x, dtype=np.float64)), dtype=np.float64
+    )
 
 
 def time_domain_bpm(x: np.ndarray, fs: float, band: Band) -> float:

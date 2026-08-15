@@ -18,6 +18,7 @@ core/adapters/rppg.py 에서 떼어낸 것이다. 옮긴 이유는 두 가지다
 from __future__ import annotations
 
 import time
+from functools import lru_cache
 
 import numpy as np
 import structlog
@@ -257,13 +258,28 @@ def _pos(rgb: np.ndarray) -> np.ndarray:
     return np.asarray(h - np.mean(h), dtype=np.float64)
 
 
-def _bandpass(signal: np.ndarray, fs: float, bpm_min: float, bpm_max: float) -> np.ndarray:
+@lru_cache(maxsize=4)
+def _coefficients(fs: float, bpm_min: float, bpm_max: float) -> tuple[np.ndarray, np.ndarray]:
+    """대역통과 계수. 인자가 같으면 계수도 같다.
+
+    따로 뗀 이유는 이게 estimate() 시간의 4분의 1 이었기 때문이다. 필터를 설계하는
+    일 — 극점·영점을 잡고 쌍선형 변환을 걸고 다항식을 펴는 — 은 신호와 아무 상관이
+    없는데 초당 한 번씩, 재는 사람 수만큼 다시 하고 있었다. 이 세 인자는 모듈 상수라
+    (FS_RESAMPLE, BPM_MIN, BPM_MAX) 실제로는 늘 같은 값이다.
+
+    돌려주는 배열을 부르는 쪽이 고치면 안 된다. filtfilt 는 안 고친다.
+    """
     nyquist = 0.5 * fs
     low = max(0.01, bpm_min / 60.0) / nyquist
     high = min(bpm_max / 60.0 / nyquist, 0.99)
     if not 0 < low < high < 1:
         raise ValueError("invalid bandpass range")
     b, a = butter(3, [low, high], btype="band")
+    return np.asarray(b, dtype=np.float64), np.asarray(a, dtype=np.float64)
+
+
+def _bandpass(signal: np.ndarray, fs: float, bpm_min: float, bpm_max: float) -> np.ndarray:
+    b, a = _coefficients(fs, bpm_min, bpm_max)
     return np.asarray(filtfilt(b, a, signal), dtype=np.float64)
 
 

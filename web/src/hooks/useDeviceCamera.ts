@@ -17,6 +17,10 @@ import type { Metric } from '../types'
 
 const FPS = 30
 const FRAME_MS = 1000 / FPS
+// 프레임을 거를 때 쓰는 간격. FRAME_MS 를 그대로 쓰면 60Hz 화면에서 두 프레임
+// 간격(33.33ms)이 FRAME_MS 와 딱 같아, 부동소수점이 조금만 모자라도 한 프레임을
+// 더 건너뛰어 30 이 아니라 20fps 로 주저앉는다.
+const FRAME_GAP_MS = FRAME_MS - 2
 const POST_MS = 1000 // 한 묶음에 30개 남짓
 
 // 처리용 캔버스 크기. 얼굴 영역의 평균색만 쓰므로 이 이상 필요 없고, 작을수록
@@ -54,8 +58,12 @@ const JITTER_SCALE = 6.0 * (W / 640)
 
 // 프레임마다 새로 만들지 않는다. 30fps 로 19,200칸짜리 배열을 두 개씩 버리면
 // 가비지 수집이 계속 돈다.
+//
+// mask 칸의 뜻: 0 피부 아님 / 1 피부인데 아직 안 세어 봄 / COUNTED 피부이고 세어 봤음.
+// largestBlob 이 다 돌고 나면 1 은 남지 않으므로, 그 뒤로는 COUNTED 가 곧 "피부"다.
 const mask = new Uint8Array(W * H)
 const stack = new Int32Array(W * H)
+const COUNTED = 2
 
 export type CameraState = 'off' | 'starting' | 'running' | 'denied' | 'unsupported' | 'failed'
 
@@ -154,6 +162,7 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
     let disposed = false
     let raf = 0
     let timer: number | undefined
+    let lastFrame = 0
     let lastPush = 0
     const canvas = document.createElement('canvas')
     canvas.width = W
@@ -191,8 +200,14 @@ export function useDeviceCamera(active: boolean): DeviceCamera {
 
       // rAF 는 화면 주사율을 따라간다 (보통 60Hz, 120Hz 도 있다). 서버가 30Hz
       // 격자로 다시 샘플링하므로 그 이상은 비용만 는다.
-      const last = pending.current[pending.current.length - 1]
-      if (last && now - last.t * 1000 < FRAME_MS) return
+      //
+      // 마지막 프레임을 따로 들고 있는다. 예전에는 마지막으로 보낸 표본의 시각을
+      // 봤는데, 표본은 얼굴을 찾았을 때만 쌓인다 — 얼굴을 못 찾는 동안에는 볼
+      // 것이 없어서 이 걸름이 통째로 풀렸다. 화면을 맞추느라 얼굴이 안 잡히는
+      // 그 시간에 폰이 가장 더워지고 있었다. 묶음을 보낸 직후에도 같은 일이
+      // 벌어졌다 (send 가 pending 을 비운다).
+      if (now - lastFrame < FRAME_GAP_MS) return
+      lastFrame = now
 
       ctx.drawImage(video, 0, 0, W, H)
       const frame = readFrame(ctx)
@@ -331,6 +346,9 @@ export function isSkin(r: number, g: number, b: number): boolean {
  *
  * 서로 붙어 있는 것끼리 묶으면 벽은 벽대로, 얼굴은 얼굴대로 세어진다. 픽셀마다
  * 한 번씩만 방문하므로 비용은 전체 한 바퀴와 같다.
+ *
+ * 끝나고 나면 mask 에 피부 판정이 그대로 남는다 (COUNTED). 다 훑고 나온 참이라 1 은
+ * 하나도 안 남는다 — readFrame 이 이걸 다시 계산하지 않고 읽는다.
  */
 function largestBlob(data: Uint8ClampedArray): { x0: number; y0: number; x1: number; y1: number; count: number } | null {
   for (let i = 0, px = 0; i < data.length; i += 4, px++) {
@@ -343,7 +361,7 @@ function largestBlob(data: Uint8ClampedArray): { x0: number; y0: number; x1: num
 
     let top = 0
     stack[top++] = seed
-    mask[seed] = 2 // 밀어 넣기 전에 표시한다. 안 그러면 같은 칸이 여러 번 쌓인다.
+    mask[seed] = COUNTED // 밀어 넣기 전에 표시한다. 안 그러면 같은 칸이 여러 번 쌓인다.
     let count = 0
     let x0 = W
     let y0 = H
@@ -360,10 +378,10 @@ function largestBlob(data: Uint8ClampedArray): { x0: number; y0: number; x1: num
       if (y < y0) y0 = y
       if (y > y1) y1 = y
 
-      if (x > 0 && mask[p - 1] === 1) (mask[p - 1] = 2), (stack[top++] = p - 1)
-      if (x < W - 1 && mask[p + 1] === 1) (mask[p + 1] = 2), (stack[top++] = p + 1)
-      if (y > 0 && mask[p - W] === 1) (mask[p - W] = 2), (stack[top++] = p - W)
-      if (y < H - 1 && mask[p + W] === 1) (mask[p + W] = 2), (stack[top++] = p + W)
+      if (x > 0 && mask[p - 1] === 1) (mask[p - 1] = COUNTED), (stack[top++] = p - 1)
+      if (x < W - 1 && mask[p + 1] === 1) (mask[p + 1] = COUNTED), (stack[top++] = p + 1)
+      if (y > 0 && mask[p - W] === 1) (mask[p - W] = COUNTED), (stack[top++] = p - W)
+      if (y < H - 1 && mask[p + W] === 1) (mask[p + W] = COUNTED), (stack[top++] = p + W)
     }
 
     if (!best || count > best.count) best = { x0, y0, x1: x1 + 1, y1: y1 + 1, count }
@@ -419,15 +437,16 @@ function readFrame(ctx: CanvasRenderingContext2D): Frame {
     let sb = 0
     for (let y = py0; y < py1; y++) {
       for (let x = px0; x < px1; x++) {
-        const i = (y * W + x) * 4
-        const r = data[i]
-        const g = data[i + 1]
-        const b = data[i + 2]
-        if (!isSkin(r, g, b)) continue
+        // 피부인지는 largestBlob 이 방금 프레임 전체에 대해 정해 뒀다. 여기서 다시
+        // 재면 같은 픽셀을 두 번 판정하는 것이고, 판정이 두 군데 적히면 언젠가
+        // 갈린다.
+        const px = y * W + x
+        if (mask[px] !== COUNTED) continue
+        const i = px * 4
         count++
-        sr += r
-        sg += g
-        sb += b
+        sr += data[i]
+        sg += data[i + 1]
+        sb += data[i + 2]
       }
     }
     // 몇 픽셀만 남은 평균색은 얼굴이 아니라 배경일 가능성이 크다. 어댑터의

@@ -73,7 +73,10 @@ def test_degraded_input_is_held_not_guessed() -> None:
     assert clean.state == "ok" and clean.value is not None
     assert degraded.state == "low_quality"
     assert degraded.value is None  # 0 으로 대체하지 않는다
-    assert degraded.confidence is not None and degraded.confidence < clean.confidence
+    # 값을 보류했더라도 왜 보류했는지는 숫자로 말할 수 있어야 한다. 둘 다 있어야
+    # 비교도 성립한다.
+    assert clean.confidence is not None and degraded.confidence is not None
+    assert degraded.confidence < clean.confidence
 
 
 def test_short_window_warms_up_without_value() -> None:

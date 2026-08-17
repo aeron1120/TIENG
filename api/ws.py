@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -18,17 +19,70 @@ log = structlog.get_logger(__name__)
 
 router = APIRouter()
 
+# 마지막 구독자가 나간 뒤 이만큼 기다렸다가 장치를 놓는다. 새로고침은 끊었다가
+# 곧바로 다시 붙는 것이라, 유예가 없으면 카메라를 껐다 켜느라 새로고침마다
+# 몇 초씩 값이 끊긴다.
+IDLE_GRACE_S = 5.0
+
 
 class Hub:
-    def __init__(self) -> None:
+    def __init__(
+        self, on_watched: Callable[[bool], Awaitable[None]] | None = None
+    ) -> None:
         self._clients: set[WebSocket] = set()
+        # 보는 사람이 생기고 없어질 때 부를 곳. 카메라를 놓는 데 쓴다 (api/main.py).
+        self._on_watched = on_watched
+        self._idle: asyncio.Task[None] | None = None
+        # 지금 장치를 들고 있는가. 구독자 수로 대신 판단할 수 없다 — 새로고침은
+        # 목록을 잠깐 비우지만 유예 덕분에 장치는 그대로 들고 있다.
+        self._watching = False
 
     async def connect(self, ws: WebSocket) -> None:
         await ws.accept()
         self._clients.add(ws)
+        self._cancel_idle()
+        if not self._watching:
+            self._watching = await self._watched(True)
 
     def disconnect(self, ws: WebSocket) -> None:
         self._clients.discard(ws)
+        if self._clients or self._on_watched is None or self._idle is not None:
+            return
+        self._idle = asyncio.create_task(self._idle_release())
+
+    async def close(self) -> None:
+        """종료 때 유예 타이머를 정리한다. 남겨 두면 루프가 닫힌 뒤에 깨어난다."""
+        self._cancel_idle()
+
+    def _cancel_idle(self) -> None:
+        if self._idle is not None:
+            self._idle.cancel()
+            self._idle = None
+
+    async def _idle_release(self) -> None:
+        try:
+            await asyncio.sleep(IDLE_GRACE_S)
+        except asyncio.CancelledError:
+            return
+        self._idle = None
+        # 자는 사이에 누가 들어왔을 수 있다.
+        if self._clients:
+            return
+        if await self._watched(False):
+            self._watching = False
+
+    async def _watched(self, watched: bool) -> bool:
+        """장치 쪽에 알린다. 성공했는지 돌려준다 — 실패했으면 상태를 바꾸지 않는다."""
+        if self._on_watched is None:
+            return True
+        try:
+            await self._on_watched(watched)
+        except Exception as exc:
+            # 장치를 못 열거나 못 놓았다고 해서 구독자를 끊지 않는다. 다음 구독자가
+            # 붙을 때 다시 열어 본다.
+            log.warning("hub.watch_failed", watched=watched, error=str(exc))
+            return False
+        return True
 
     async def broadcast(self, snapshot: Snapshot) -> None:
         if not self._clients:

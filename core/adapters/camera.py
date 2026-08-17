@@ -72,6 +72,9 @@ class CameraAdapter(SensorAdapter):
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        # 획득과 반납이 겹치면 장치를 두 번 열거나 스레드가 둘 남는다. 구독자가
+        # 유예 시간 안에 나갔다 들어오면 실제로 겹친다.
+        self._gate = asyncio.Lock()
 
         # 아래는 전부 _lock 으로 보호한다.
         self._frame: np.ndarray | None = None
@@ -90,23 +93,52 @@ class CameraAdapter(SensorAdapter):
     # --- 수명주기 ----------------------------------------------------------- #
 
     async def start(self) -> None:
-        loop = asyncio.get_running_loop()
-        self._cap = await loop.run_in_executor(None, self._open)
-        if self._cap is None:
-            raise RuntimeError(f"카메라 {self.camera_index} 를 열 수 없다")
-        self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._loop, name=f"camera-{self.id}", daemon=True
-        )
-        self._thread.start()
-        log.info(
-            "camera.started",
-            adapter=self.id,
-            backend=self.backend,
-            size=f"{self.width}x{self.height}",
-        )
+        # 기동 때 한 번 연다. 장치가 없으면 여기서 실패해 registry 가 사유를 잡는다 —
+        # 첫 구독자가 붙는 순간까지 그걸 모르고 있으면 시연 중에 발견하게 된다.
+        await self.acquire()
 
     async def stop(self) -> None:
+        await self.release()
+
+    async def acquire(self) -> None:
+        """Releasable. 이미 열려 있으면 아무것도 하지 않는다."""
+        async with self._gate:
+            if self._thread is not None:
+                return
+            loop = asyncio.get_running_loop()
+            self._cap = await loop.run_in_executor(None, self._open)
+            if self._cap is None:
+                raise RuntimeError(f"카메라 {self.camera_index} 를 열 수 없다")
+            self._stop.clear()
+            with self._lock:
+                # 놓았다 다시 여는 것이므로 지난번 고장은 지운다. 남겨 두면 새로 연
+                # 카메라가 멀쩡한데도 read() 가 계속 예외를 던진다.
+                self._fault = None
+                self._fps = 0.0
+            self._thread = threading.Thread(
+                target=self._loop, name=f"camera-{self.id}", daemon=True
+            )
+            self._thread.start()
+            log.info(
+                "camera.started",
+                adapter=self.id,
+                backend=self.backend,
+                size=f"{self.width}x{self.height}",
+            )
+
+    async def release(self) -> None:
+        """Releasable. 이미 놓았으면 아무것도 하지 않는다."""
+        async with self._gate:
+            if self._thread is None and self._cap is None:
+                return
+            # join 과 release 는 최대 3초까지 걸린다. 이벤트 루프에서 직접 하면
+            # 그동안 스냅샷 브로드캐스트가 통째로 멎는다. 종료할 때만 부르던
+            # 코드였으나 이제는 사람이 화면을 닫을 때마다 불린다.
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._close)
+            log.info("camera.released", adapter=self.id)
+
+    def _close(self) -> None:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=3.0)
@@ -117,6 +149,7 @@ class CameraAdapter(SensorAdapter):
         with self._lock:
             self._frame = None
             self._preview = None
+            self._fault = None
 
     async def read(self) -> list[Metric]:
         """지표가 없다. 카메라가 죽은 것만 알린다 — registry 가 사유를 화면에 싣는다."""

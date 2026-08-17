@@ -24,6 +24,7 @@ from core.adapters.base import (
     FrameSource,
     Pausable,
     PreviewSource,
+    Releasable,
     SensorAdapter,
     SubjectAware,
 )
@@ -232,6 +233,29 @@ class Registry:
             if not isinstance(adapter, Pausable):
                 continue
             adapter.set_active(not entry.modes or mode in entry.modes)
+
+    async def set_watched(self, watched: bool) -> None:
+        """보는 사람이 있는지 알린다.
+
+        놓을 수 있는 장치(Releasable)는 아무도 안 볼 때 놓는다. 화면을 닫았는데
+        카메라 LED 가 남아 있으면, 그 기기는 무엇을 하고 있는지 모르는 기기가 된다.
+
+        놓는 동안 그 장치를 쓰는 지표는 멈춘다 — 카메라가 없으면 심박도 졸음도
+        나오지 않는다. 이 맞바꿈은 부르는 쪽(api/ws.py 의 구독자 수)이 정한다.
+
+        여기서 실패해도 올려 보내지 않는다. 카메라를 못 열었다고 해서 화면 연결이
+        끊기면, 정작 무엇이 잘못됐는지 볼 방법이 사라진다.
+        """
+        for adapter in self._adapters.values():
+            if not isinstance(adapter, Releasable):
+                continue
+            try:
+                await (adapter.acquire() if watched else adapter.release())
+            except Exception as exc:
+                log.warning(
+                    "adapter.watch_failed",
+                    adapter=adapter.id, watched=watched, error=str(exc),
+                )
 
     def preview_sources(self) -> dict[str, PreviewSource]:
         """카메라 화면을 내보낼 수 있는 어댑터.

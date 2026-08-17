@@ -115,9 +115,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.registry = registry
     app.state.config_path = path
     app.state.runner = PolicyRunner(registry.policies, sink=interventions_csv)
-    app.state.hub = Hub()
+    # 보는 사람이 없으면 카메라를 놓는다. 화면을 닫았는데 LED 가 남아 있으면
+    # 그 기기는 무엇을 하고 있는지 모르는 기기가 된다.
+    app.state.hub = Hub(on_watched=registry.set_watched)
     app.state.latest = None
     app.state.metrics_csv = metrics_csv
+
+    # 기동 때 열어 장치 유무를 확인했으니 첫 구독자가 붙을 때까지 놓아 둔다.
+    await registry.set_watched(False)
 
     task = asyncio.create_task(_sample_loop(app))
     try:
@@ -128,6 +133,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await task
         except asyncio.CancelledError:
             pass
+        await app.state.hub.close()
         await app.state.runner.stop()
         await registry.stop()
         for logger in (metrics_csv, interventions_csv):

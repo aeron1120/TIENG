@@ -92,6 +92,25 @@ class Pausable(Protocol):
 
 
 @runtime_checkable
+class Releasable(Protocol):
+    """보는 사람이 없으면 장치를 놓을 수 있는 어댑터.
+
+    Pausable 과 다르다. 쉬는 것(set_active)은 장치를 든 채 처리만 멈추는 것이고,
+    여기서는 장치 자체를 놓는다. 카메라는 켜져 있다는 사실만으로 사람을 불편하게
+    하므로, 아무도 화면을 보고 있지 않으면 LED 까지 꺼져야 한다.
+
+    놓는 동안 그 장치를 쓰는 지표는 멈춘다. 그 대가를 감수할지는 어댑터가 아니라
+    부르는 쪽이 정한다 (api/ws.py 의 구독자 수).
+    """
+
+    async def acquire(self) -> None:
+        """장치를 연다. 이미 열려 있으면 아무것도 하지 않는다."""
+
+    async def release(self) -> None:
+        """장치를 놓는다. 이미 놓았으면 아무것도 하지 않는다."""
+
+
+@runtime_checkable
 class SubjectAware(Protocol):
     """측정 대상이 누구인지 알아야 하는 어댑터.
 

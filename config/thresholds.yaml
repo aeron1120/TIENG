@@ -19,6 +19,13 @@ demo:
       lost_sustain_s: 25   # 사람은 있는데 심박수를 이만큼 못 잡으면
       cancel_window_s: 30  # 보내기 전 취소할 수 있는 시간
       cooldown_s: 180      # 시연 중 여러 번 볼 수 있게 짧게
+    drowsy_ladder:
+      # 졸음 판정이 얼마나 이어져야 그 단계로 올라가는가. 판정 자체(점수 임계)는
+      # 사람마다 달라 여기가 아니라 튜닝 프로파일에 있다 (tuning/*.yaml).
+      # 시연에서 세 칸이 다 올라가는 걸 보려면 짧아야 한다.
+      notice: { sustain_s: 5, cooldown_s: 60 }
+      alert: { sustain_s: 15, cooldown_s: 120 }
+      guardian: { sustain_s: 40, cooldown_s: 300, cancel_window_s: 30 }
 
 production:
   hr: { low: 45, high: 120, sustain_s: 120 }
@@ -36,3 +43,9 @@ production:
       lost_sustain_s: 180
       cancel_window_s: 30
       cooldown_s: 1800
+    drowsy_ladder:
+      # 실사용은 한 번 튄 판정으로 올라가지 않는다. 특히 보호자는 2분을 본다 —
+      # 잘못 부른 알림이 한 번 쌓이면 그 다음부터는 아무도 보지 않는다.
+      notice: { sustain_s: 10, cooldown_s: 300 }
+      alert: { sustain_s: 30, cooldown_s: 600 }
+      guardian: { sustain_s: 120, cooldown_s: 1800, cancel_window_s: 30 }

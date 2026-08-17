@@ -111,6 +111,8 @@ export const ACTION_LABEL: Record<string, string> = {
   ventilate: '환기',
   breathing_guide: '호흡 안내',
   notify_guardian: '보호자 알림',
+  drowsy_notice: '졸음 관심',
+  drowsy_alert: '졸음 위험 — 조명 상향',
 }
 
 // 개입 전후 비교에 나오는 키. 지표에서 파생된 값만 따로 적고 나머지는 LABEL 을

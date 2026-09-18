@@ -1,0 +1,372 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Moto crash sensing",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/snapshot": {
+      "get": {
+        "summary": "Snapshot",
+        "operationId": "snapshot_api_snapshot_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Snapshot"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "summary": "Events",
+        "description": "§13-9 전까지는 항상 비어 있다. 규칙이 없으니 이벤트도 없다.",
+        "operationId": "events_api_events_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Event"
+                  },
+                  "type": "array",
+                  "title": "Response Events Api Events Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Event": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "t": {
+            "type": "number",
+            "title": "T"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "trigger",
+              "confirm",
+              "reject",
+              "manual_mark",
+              "sqi_drop"
+            ],
+            "title": "Kind"
+          },
+          "traces": {
+            "items": {
+              "$ref": "#/components/schemas/RuleTrace"
+            },
+            "type": "array",
+            "title": "Traces"
+          },
+          "ring_dump_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ring Dump Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "t",
+          "kind",
+          "traces"
+        ],
+        "title": "Event"
+      },
+      "FusedState": {
+        "properties": {
+          "t": {
+            "type": "number",
+            "title": "T"
+          },
+          "roll": {
+            "type": "number",
+            "title": "Roll"
+          },
+          "roll_state": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "low_quality",
+              "stale",
+              "error",
+              "no_adapter"
+            ],
+            "title": "Roll State"
+          },
+          "pitch": {
+            "type": "number",
+            "title": "Pitch"
+          },
+          "speed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Speed"
+          },
+          "speed_state": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "low_quality",
+              "stale",
+              "error",
+              "no_adapter"
+            ],
+            "title": "Speed State"
+          },
+          "speed_source": {
+            "type": "string",
+            "enum": [
+              "flow",
+              "gps",
+              "blend",
+              "none"
+            ],
+            "title": "Speed Source"
+          },
+          "accel_h": {
+            "type": "number",
+            "title": "Accel H"
+          },
+          "yaw_rate": {
+            "type": "number",
+            "title": "Yaw Rate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "t",
+          "roll",
+          "roll_state",
+          "pitch",
+          "speed",
+          "speed_state",
+          "speed_source",
+          "accel_h",
+          "yaw_rate"
+        ],
+        "title": "FusedState"
+      },
+      "Indicator": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "low_quality",
+              "stale",
+              "error",
+              "no_adapter"
+            ],
+            "title": "State"
+          },
+          "sqi": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sqi"
+          },
+          "t": {
+            "type": "number",
+            "title": "T"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "value",
+          "unit",
+          "state",
+          "sqi",
+          "t"
+        ],
+        "title": "Indicator"
+      },
+      "RuleTrace": {
+        "properties": {
+          "rule": {
+            "type": "string",
+            "title": "Rule"
+          },
+          "fired": {
+            "type": "boolean",
+            "title": "Fired"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Inputs"
+          },
+          "thresholds": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Thresholds"
+          },
+          "blocked_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked By"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rule",
+          "fired",
+          "inputs",
+          "thresholds"
+        ],
+        "title": "RuleTrace",
+        "description": "왜 발동/미발동했는지 (CLAUDE.md §0-6).\n\nblocked_by 가 채워진 것은 '기각' 이 아니라 '판정 불가' 다. 놓침은 되돌릴 수\n없으므로 둘을 같은 결과로 묶지 않는다 (§6.7)."
+      },
+      "Snapshot": {
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "t": {
+            "type": "number",
+            "title": "T"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "live",
+              "replay",
+              "simulated",
+              "unavailable"
+            ],
+            "title": "Mode"
+          },
+          "fused": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FusedState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "indicators": {
+            "items": {
+              "$ref": "#/components/schemas/Indicator"
+            },
+            "type": "array",
+            "title": "Indicators"
+          },
+          "recent_events": {
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            },
+            "type": "array",
+            "title": "Recent Events"
+          },
+          "health": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Health"
+          }
+        },
+        "type": "object",
+        "required": [
+          "device_id",
+          "session_id",
+          "t",
+          "mode",
+          "fused",
+          "indicators",
+          "recent_events",
+          "health"
+        ],
+        "title": "Snapshot",
+        "description": "대시보드/API용 현재 상태."
+      }
+    }
+  }
+}

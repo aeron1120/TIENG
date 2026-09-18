@@ -7,8 +7,11 @@ CP949 에 없어서 그 순간 UnicodeEncodeError 로 스크립트가 죽는다.
 콘솔에 그냥 찍을 때는 파이썬이 WriteConsoleW 를 써서 멀쩡하다. 그래서 화면으로
 볼 때는 멀쩡하다가 **로그로 남기려는 순간** 실패한다 — 발견이 늦어 더 나쁘다.
 
-    python tools\inspect_session.py sessions\<id>            정상
-    python tools\inspect_session.py sessions\<id> > log.txt  UnicodeEncodeError
+    python -m core.pipeline --source sim            정상
+    python -m core.pipeline --source sim > log.txt  깨지거나 죽는다
+
+tools/ 가 아니라 core/ 에 있는 이유는 core.pipeline 이 CLI 라서다. 진입점이
+여기 있는 한 이 함수도 같이 있어야 한다.
 """
 
 from __future__ import annotations

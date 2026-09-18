@@ -7,6 +7,10 @@ sessions/
 # 리플레이 재처리 출력 (§11)
 out/
 
+# 프론트 빌드 산출물. api/openapi.json 과 web/fixtures/ 는 계약이라 커밋한다.
+web/node_modules/
+web/dist/
+
 # 캘리브 결과는 기기마다 다르다 (§3)
 config/calib.json
 

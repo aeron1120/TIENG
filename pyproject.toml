@@ -36,13 +36,14 @@ pi = [
 ]
 dev = [
     "pytest>=8.0",
+    "httpx>=0.27",  # fastapi.testclient 가 요구한다 (tests/test_api.py)
     "ruff>=0.5",
     "mypy>=1.10",
     "types-PyYAML",
 ]
 
 [tool.setuptools]
-packages = ["core"]
+packages = ["core", "core.adapters", "api"]
 
 [tool.ruff]
 line-length = 100
@@ -68,6 +69,8 @@ exclude = ["legacy"]
 module = [
     "scipy.*", "cv2.*", "spidev.*", "gpiozero.*",
     "picamera2.*", "libcamera.*",
+    # pyarrow 는 설치돼 있지만 py.typed 를 넣지 않는다. 세션 기록이 이걸 쓴다 (§8).
+    "pyarrow.*",
 ]
 ignore_missing_imports = true
 

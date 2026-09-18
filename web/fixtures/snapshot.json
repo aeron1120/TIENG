@@ -1,0 +1,50 @@
+{
+  "device_id": "pi5-01",
+  "session_id": "2026-09-18T22-14-03_pi5-01",
+  "t": 12.4,
+  "mode": "simulated",
+  "fused": null,
+  "indicators": [
+    {
+      "key": "peak_g",
+      "value": 1.12,
+      "unit": "g",
+      "state": "ok",
+      "sqi": null,
+      "t": 12.4
+    },
+    {
+      "key": "bank_angle",
+      "value": 0.41,
+      "unit": "rad",
+      "state": "ok",
+      "sqi": 0.88,
+      "t": 12.4
+    },
+    {
+      "key": "speed_drop",
+      "value": null,
+      "unit": "m/s",
+      "state": "low_quality",
+      "sqi": 0.12,
+      "t": 12.4
+    },
+    {
+      "key": "flow_loss",
+      "value": null,
+      "unit": "s",
+      "state": "no_adapter",
+      "sqi": null,
+      "t": 12.4
+    }
+  ],
+  "recent_events": [],
+  "health": {
+    "imu_sim.dropped": 0.0,
+    "imu_sim.errors": 0.0,
+    "imu_sim.queued": 40.0,
+    "imu.samples": 20.0,
+    "tick.count": 620.0,
+    "tick.max_late_ms": 1.8
+  }
+}

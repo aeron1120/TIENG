@@ -22,6 +22,9 @@ legacy/touchfree_vitals/web/node_modules/
 legacy/tieng_rppg/confidence/calibration_*.json
 legacy/tieng_rppg/confidence/coverage_mae_curve.png
 
+# 옛 프로젝트 개요 PDF. 공개 저장소라 올리지 않는다. 파일은 로컬에 그대로 있다.
+legacy/touchfree_vitals/TouchFree-Vitals-overview.pdf
+
 # 옛 대시보드의 기기별 런타임 상태. 설정이 아니라 사용 흔적이다.
 state/
 

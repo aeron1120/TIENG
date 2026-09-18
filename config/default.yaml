@@ -25,6 +25,7 @@ detection:
   enabled: false      # Phase 1에서는 절대 true로 두지 말 것
 
 recording:
+  enabled: true
   ring_seconds: 10
   frame_ring_fps: 15
   dump_pre_s: 5

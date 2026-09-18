@@ -72,3 +72,21 @@ def test_snapshot_invents_nothing(tmp_path: Path) -> None:
     assert pipeline.latest.indicators == []
     assert pipeline.latest.mode == "simulated"
     assert pipeline.latest.health["imu_sim.errors"] == 0.0
+
+
+def test_recording_can_be_turned_off(tmp_path: Path) -> None:
+    """클라우드 데모(Render)는 화면만 띄운다. 디스크에 아무것도 남기지 않아야 한다.
+
+    빈 세션 디렉터리조차 만들지 않는다 — 쌓이면 진짜 주행 기록과 구분이 안 된다.
+    """
+    cfg = _config(tmp_path)
+    cfg = cfg.model_copy(update={"recording": cfg.recording.model_copy(update={"enabled": False})})
+
+    pipeline = Pipeline(cfg, "sim")
+    out = pipeline.run(seconds=0.2)
+
+    assert not out.exists(), "기록을 껐는데 세션 디렉터리가 생겼다"
+    # 화면으로 나가는 것은 그대로다. 기록과 표시는 별개다.
+    assert pipeline.latest is not None
+    assert pipeline.latest.mode == "simulated"
+    assert pipeline.latest.health

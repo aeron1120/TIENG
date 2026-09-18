@@ -58,6 +58,11 @@ class Pipeline:
         return self.recorder.dir.name
 
     def open(self) -> None:
+        if not self.cfg.recording.enabled:
+            # 디렉터리조차 만들지 않는다. 빈 세션 폴더가 쌓이면 나중에 진짜
+            # 주행 기록과 구분이 안 된다.
+            self.imu.start()
+            return
         self.recorder.open({
             "started_wall": self.clock.started_wall,
             "device_id": self.cfg.device_id,
@@ -71,12 +76,14 @@ class Pipeline:
 
     def close(self) -> None:
         self.imu.stop()
-        self.recorder.add("imu", self.imu.drain())  # 마지막 남은 것까지
-        self.recorder.close()
+        tail = self.imu.drain()  # 마지막 남은 것까지
+        if self.cfg.recording.enabled:
+            self.recorder.add("imu", tail)
+            self.recorder.close()
 
     def tick(self) -> Snapshot:
         samples = self.imu.drain()
-        if samples:
+        if samples and self.cfg.recording.enabled:
             self.recorder.add("imu", samples)
 
         health = dict(self.imu.health())
@@ -137,7 +144,10 @@ def main(argv: list[str] | None = None) -> None:
     out = pipeline.run(args.seconds)
 
     health: dict[str, Any] = pipeline.latest.health if pipeline.latest else {}
-    print(f"세션 {out}")
+    if cfg.recording.enabled:
+        print(f"세션 {out}")
+    else:
+        print("기록 꺼짐 — 디렉터리를 만들지 않았다 (recording.enabled: false)")
     for key in sorted(health):
         print(f"  {key:<22}{health[key]:.3f}")
 

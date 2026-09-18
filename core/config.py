@@ -120,6 +120,12 @@ class DetectionConfig(_Section):
 
 
 class RecordingConfig(_Section):
+    # 클라우드 데모(Render)는 화면만 띄우므로 기록하지 않는다. 컨테이너 디스크는
+    # 재배포마다 사라져서, 켜 두면 디스크를 채우기만 하고 남는 것이 없다.
+    #
+    # §10 에 없는 키라 기본값을 true 로 둔다 — 이 줄이 없는 설정 파일은 지금까지와
+    # 똑같이 동작해야 한다 (§0-1).
+    enabled: bool = True
     ring_seconds: float
     frame_ring_fps: int
     dump_pre_s: float

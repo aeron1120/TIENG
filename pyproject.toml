@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moto-crash-sensing"
+version = "0.1.0"
+description = "이륜차 사고 감지 — 카메라·IMU·폰 융합 온디바이스 센싱"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "structlog>=24.1",
+    "numpy>=1.23",
+    "scipy>=1.9",
+    "opencv-python>=4.7",
+    # 세션 기록 포맷 (CLAUDE.md §8). parquet 하나 쓰자고 pandas 를 끌고 오지 않는다.
+    "pyarrow>=16.0",
+]
+
+[project.optional-dependencies]
+# 라즈베리파이에서만 설치한다. SPI/GPIO 라이브러리라 Windows/macOS 에서는
+# 설치도 import 도 실패한다. 어댑터가 이 라이브러리를 start() 안에서 늦게
+# import 하므로, 없으면 해당 어댑터만 error 로 강등되고 나머지는 그대로 돈다.
+#   Pi:  pip install -e ".[dev,pi]"
+#
+# picamera2 는 여기 없다. libcamera 파이썬 바인딩에 묶여 있어 pip 로는 안 깔리고,
+# 넣어 두면 pi extras 설치가 통째로 실패한다. apt 로 깔고 venv 를
+# --system-site-packages 로 만들어 가져온다 (CLAUDE.md §11).
+pi = [
+    "spidev>=3.6",     # ICM42688 / ADXL372 (SPI)
+    "gpiozero>=2.0",   # tools/mark.py 의 물리 버튼
+    "lgpio>=0.2",      # Pi 5 의 gpiozero 백엔드
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML",
+]
+
+[tool.setuptools]
+packages = ["core"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# legacy/ 는 이전 프로젝트의 아카이브다. 발췌만 하고 손대지 않는다.
+extend-exclude = ["legacy"]
+
+[tool.ruff.lint]
+# W 를 켠 이유: 잘못된 이스케이프 시퀀스(W605)를 놓쳐 SyntaxWarning 이 났다.
+# 그 경고는 사용자 코드보다 먼저 stderr 로 나가서 출력 인코딩 설정을 우회한다.
+select = ["E", "W", "F", "I", "UP", "B"]
+
+[tool.mypy]
+# 코드 자체는 3.11 을 지킨다. 이 값만 3.12 인 이유는 numpy 2.5 의 스텁이
+# 3.12 문법(type 문)을 써서 3.11 로 두면 스텁 파싱에서 먼저 죽기 때문이다.
+python_version = "3.12"
+strict = true
+exclude = ["legacy"]
+
+[[tool.mypy.overrides]]
+# scipy/cv2 는 스텁이 불완전하고, 나머지는 파이에서만 설치되는 하드웨어 드라이버라
+# 개발 PC 에는 아예 없다. picamera2/libcamera 는 pip 이 아니라 apt 로 온다.
+module = [
+    "scipy.*", "cv2.*", "spidev.*", "gpiozero.*",
+    "picamera2.*", "libcamera.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

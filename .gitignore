@@ -2,25 +2,20 @@
 __pycache__/
 *.pyc
 
-# confidence 셀프테스트 산출물 (실행할 때마다 cwd 에 재생성 — 경로 고정 불가)
-calibration_*.json
-coverage_mae_curve.png
+# 주행 기록. 한 세션에 수백 MB 다 (CLAUDE.md §8)
+sessions/
+# 리플레이 재처리 출력 (§11)
+out/
 
-# web
-node_modules/
-dist/
+# 캘리브 결과는 기기마다 다르다 (§3)
+config/calib.json
 
-# 런타임 로그 (Phase 2부터 생성)
-logs/*.csv
+# 아카이브가 돌면서 남긴 런타임 로그. 코드가 아니라 사용 흔적이다.
+legacy/touchfree_vitals/logs/*.csv
 
-# 화면 배치 등 기기별 런타임 상태. 설정이 아니라 사용 흔적이다
-state/
-
-# DATABASE_URL 에 DB 비밀번호가 들어간다
 .env
 
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-*.tsbuildinfo

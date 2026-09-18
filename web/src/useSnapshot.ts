@@ -10,9 +10,16 @@ import type { Snapshot } from './types'
 // (tools/export_contract.py).
 
 const STALE_MS = 3000
-const RETRY_MS = 2000
 /** 이 시간 안에 한 번도 못 붙으면 픽스처로 간다. */
 const FALLBACK_MS = 1200
+
+// 재연결 간격은 늘려 가되 상한을 둔다.
+//
+// 고정 2초로 두면 백엔드가 아예 없는 정적 배포(Cloudflare Pages)에서 방문자마다
+// 없는 주소를 2초마다 영원히 두드린다. 그렇다고 아주 포기하면 로컬에서 화면을
+// 먼저 띄우고 백엔드를 나중에 켜는 흔한 순서가 깨진다 — 늘리되 멈추지는 않는다.
+const RETRY_MIN_MS = 2000
+const RETRY_MAX_MS = 30000
 
 export type Feed = 'live' | 'fixture' | 'connecting'
 
@@ -27,6 +34,7 @@ export function useSnapshot(): SnapshotFeed {
   const [feed, setFeed] = useState<Feed>('connecting')
   const [stale, setStale] = useState(false)
   const lastRecv = useRef(0)
+  const backoff = useRef(RETRY_MIN_MS)
 
   useEffect(() => {
     let socket: WebSocket | null = null
@@ -37,6 +45,9 @@ export function useSnapshot(): SnapshotFeed {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
       socket = new WebSocket(`${proto}://${location.host}/ws`)
 
+      socket.onopen = () => {
+        backoff.current = RETRY_MIN_MS
+      }
       socket.onmessage = (event) => {
         const next = JSON.parse(event.data as string) as Snapshot
         lastRecv.current = Date.now()
@@ -45,7 +56,9 @@ export function useSnapshot(): SnapshotFeed {
         setStale(false)
       }
       socket.onclose = () => {
-        if (!disposed) retry = window.setTimeout(connect, RETRY_MS)
+        if (disposed) return
+        retry = window.setTimeout(connect, backoff.current)
+        backoff.current = Math.min(backoff.current * 2, RETRY_MAX_MS)
       }
     }
     connect()

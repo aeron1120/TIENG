@@ -1,0 +1,32 @@
+device_id: "pi5-01"
+
+adapters:
+  imu:    { enabled: true, backend: "icm42688", odr_hz: 1000, fifo_batch_ms: 20 }
+  hi_g:   { enabled: false, backend: "adxl372", odr_hz: 800 }
+  camera: { enabled: true, fps: 60, width: 640, height: 480,
+            shutter_us_day: 2000, shutter_us_night: 8000, gain_max: 8.0 }
+  phone:  { enabled: true, port: 8000 }
+
+vision:
+  road_roi:    { y_top_ratio: 0.60, y_bot_ratio: 0.95, x_margin_ratio: 0.15 }
+  horizon_roi: { y_top_ratio: 0.05, y_bot_ratio: 0.40 }
+  flow: { max_features: 200, min_inliers: 30, residual_max_px: 1.5 }
+
+fusion:
+  loop_hz: 50
+  attitude: { beta: 0.05, gyro_only_max_s: 10.0 }
+  speed:    { flow_sqi_min: 0.5, gps_acc_max_m: 15.0 }
+
+indicators:
+  delta_v_window_ms: 200
+  impact_threshold_g: 2.0
+
+detection:
+  enabled: false      # Phase 1에서는 절대 true로 두지 말 것
+
+recording:
+  ring_seconds: 10
+  frame_ring_fps: 15
+  dump_pre_s: 5
+  dump_post_s: 5
+  session_dir: "./sessions"

@@ -10,8 +10,16 @@ out/
 # 캘리브 결과는 기기마다 다르다 (§3)
 config/calib.json
 
-# 아카이브가 돌면서 남긴 런타임 로그. 코드가 아니라 사용 흔적이다.
+# 아카이브가 남긴 산출물. 코드가 아니라 실행 흔적이라 따라 들어올 이유가 없다.
 legacy/touchfree_vitals/logs/*.csv
+legacy/touchfree_vitals/web/dist/
+legacy/touchfree_vitals/web/node_modules/
+*.tsbuildinfo
+legacy/tieng_rppg/confidence/calibration_*.json
+legacy/tieng_rppg/confidence/coverage_mae_curve.png
+
+# 옛 대시보드의 기기별 런타임 상태. 설정이 아니라 사용 흔적이다.
+state/
 
 .env
 

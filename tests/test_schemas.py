@@ -96,3 +96,14 @@ def test_combine_skips_unmeasured_components() -> None:
     """잴 수 없는 성분이 confidence 를 깎지 않는다."""
     weights = {"inliers": 1.0, "residual": 1.0}
     assert combine({"inliers": 0.8}, weights) == pytest.approx(0.8)
+
+
+def test_cloud_config_records_nothing_and_detects_nothing() -> None:
+    """Render 에 올라가는 설정. 공개 주소라 둘 다 꺼져 있어야 한다."""
+    cfg = config.load(CONFIG_PATH.parent / "cloud.yaml")
+
+    assert cfg.recording.enabled is False
+    assert cfg.detection.enabled is False
+    # 붙어 있지 않은 것을 켜 두면 값을 지어낼 자리가 생긴다 (§0-4).
+    assert cfg.adapters.camera.enabled is False
+    assert cfg.adapters.phone.enabled is False

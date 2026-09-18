@@ -1,0 +1,44 @@
+# 클라우드 데모 설정 (Render). 센서가 하나도 없다.
+#
+# 파이프라인은 --source sim 으로 돌고 스냅샷의 mode 가 "simulated" 로 나간다.
+# 화면이 그 배지를 띄우므로 보는 사람이 실측으로 오해하지 않는다 (CLAUDE.md §0-4).
+# 배지가 "live" 로 뜨면 구성이 잘못된 것이다.
+#
+# config/default.yaml 과 다른 점은 셋뿐이다.
+#   device_id           파이가 아니라는 것이 이름에서 보여야 한다
+#   recording.enabled   컨테이너 디스크는 재배포마다 사라진다
+#   camera/phone        붙어 있지 않으므로 켜지 않는다
+
+device_id: "cloud-demo"
+
+adapters:
+  imu:    { enabled: true, backend: "icm42688", odr_hz: 1000, fifo_batch_ms: 20 }
+  hi_g:   { enabled: false, backend: "adxl372", odr_hz: 800 }
+  camera: { enabled: false, fps: 60, width: 640, height: 480,
+            shutter_us_day: 2000, shutter_us_night: 8000, gain_max: 8.0 }
+  phone:  { enabled: false, port: 8000 }
+
+vision:
+  road_roi:    { y_top_ratio: 0.60, y_bot_ratio: 0.95, x_margin_ratio: 0.15 }
+  horizon_roi: { y_top_ratio: 0.05, y_bot_ratio: 0.40 }
+  flow: { max_features: 200, min_inliers: 30, residual_max_px: 1.5 }
+
+fusion:
+  loop_hz: 50
+  attitude: { beta: 0.05, gyro_only_max_s: 10.0 }
+  speed:    { flow_sqi_min: 0.5, gps_acc_max_m: 15.0 }
+
+indicators:
+  delta_v_window_ms: 200
+  impact_threshold_g: 2.0
+
+detection:
+  enabled: false      # 공개 주소다. Phase 1 에서는 더더욱 true 로 두지 않는다.
+
+recording:
+  enabled: false      # 디스크를 채우기만 하고 재배포하면 사라진다
+  ring_seconds: 10
+  frame_ring_fps: 15
+  dump_pre_s: 5
+  dump_post_s: 5
+  session_dir: "./sessions"

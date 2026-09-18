@@ -86,6 +86,16 @@ app = FastAPI(title="Moto crash sensing", lifespan=lifespan)
 app.include_router(ws_router)
 
 
+@app.get("/api/health")
+async def health() -> dict[str, str]:
+    """Render 헬스체크용. 첫 틱 전에도 200 이어야 한다.
+
+    /api/snapshot 을 걸면 안 된다 — 그쪽은 첫 틱 전에 503 을 내므로 (§0-4) Render 가
+    기동 중인 서비스를 죽은 것으로 보고 계속 재시작한다.
+    """
+    return {"status": "ok"}
+
+
 @app.get("/api/snapshot")
 async def snapshot() -> Snapshot:
     latest: Snapshot | None = app.state.pipeline.latest

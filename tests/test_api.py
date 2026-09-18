@@ -64,6 +64,14 @@ def test_no_snapshot_is_better_than_a_made_up_one(client: TestClient) -> None:
     assert response.status_code in (200, 503)
 
 
+def test_health_answers_without_waiting_for_a_tick(client: TestClient) -> None:
+    """Render 헬스체크가 보는 경로. /api/snapshot 은 503 을 내므로 쓸 수 없다 —
+    걸면 Render 가 기동 중인 서비스를 죽은 것으로 보고 무한 재시작한다."""
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+
 def test_ws_pushes_the_same_contract(client: TestClient) -> None:
     _wait_for_snapshot(client)
     with client.websocket_connect("/ws") as ws:

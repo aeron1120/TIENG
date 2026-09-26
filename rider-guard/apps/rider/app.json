@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "Rider Guard",
+    "slug": "rider-guard",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-splash-screen",
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "운행 중에만 위치를 수집해, 사고가 나면 비상연락처와 관제센터에 현재 위치를 알려요."
+        }
+      ]
+    ],
+    "scheme": "riderguard",
+    "backgroundColor": "#F4F1EA",
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

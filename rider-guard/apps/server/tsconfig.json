@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    // Node 24 가 .ts 를 직접 실행(type stripping)하므로 지워지는 문법만 허용한다.
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "paths": {
+      "@rider-guard/contract": ["../../packages/contract/index.ts"]
+    }
+  },
+  "include": ["src", "test", "scripts"]
+}

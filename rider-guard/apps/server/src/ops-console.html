@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rider Guard 관제</title>
+<style>
+  :root { --bg:#F4F1EA; --ink:#16181D; --muted:#5B5E66; --line:#DDD6C8; --accent:#C2410C; --soft:#FDE3D3; --info:#DBE4FB; --infoText:#1D3FA8 }
+  * { box-sizing: border-box }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 system-ui,-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif }
+  header { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:14px 20px; background:var(--ink); color:#fff }
+  header b { font-size:16px; margin-right:auto }
+  header input { height:34px; padding:0 10px; border-radius:8px; border:0; font:inherit; width:160px }
+  main { display:grid; grid-template-columns:minmax(260px,340px) 1fr; gap:16px; padding:16px 20px }
+  @media (max-width:760px) { main { grid-template-columns:1fr } }
+  .panel { background:#fff; border:1px solid var(--line); border-radius:14px; overflow:hidden }
+  .item { display:flex; flex-direction:column; gap:2px; padding:12px 14px; border-bottom:1px solid #EDE9E0; cursor:pointer }
+  .item:last-child { border-bottom:0 } .item.sel { background:#FBF8F2 }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  .pill { padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; background:#EDE9E0; color:#45474D }
+  .pill.escalated { background:var(--soft); color:#9A3412 } .pill.reviewing { background:var(--info); color:var(--infoText) }
+  .pill.urgent { background:var(--accent); color:#fff }
+  .muted { color:var(--muted) } .mono { font-family:ui-monospace,Menlo,Consolas,monospace }
+  #detail { padding:18px; display:flex; flex-direction:column; gap:14px }
+  h2 { margin:0; font-size:20px } h3 { margin:0 0 6px; font-size:14px }
+  dl { display:grid; grid-template-columns:110px 1fr; gap:4px 10px; margin:0 } dt { color:var(--muted) } dd { margin:0 }
+  button { height:38px; padding:0 14px; border-radius:10px; border:1.5px solid var(--ink); background:#fff; font:inherit; font-weight:700; cursor:pointer }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff } button.dark { background:var(--ink); color:#fff }
+  button:disabled { opacity:.4; cursor:default }
+  pre { margin:0; padding:12px; background:#FBF8F2; border:1px solid var(--line); border-radius:10px; white-space:pre-wrap }
+  ol { margin:0; padding-left:18px } .empty { padding:24px; text-align:center; color:var(--muted) }
+  #error { color:var(--accent); font-weight:700 }
+</style>
+</head>
+<body>
+<header>
+  <b>Rider Guard 관제</b>
+  <input id="operator" placeholder="상담원 이름" autocomplete="name">
+  <input id="token" placeholder="관제 토큰" type="password">
+  <span id="error"></span>
+</header>
+<main>
+  <section class="panel" id="list"><div class="empty">불러오는 중…</div></section>
+  <section class="panel" id="detail"><div class="empty">왼쪽에서 사고를 선택하세요.</div></section>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const STATUS = { escalated: '접수 대기', reviewing: '확인 중', resolved: '종료' };
+  const EVENT = {
+    detected: '충격 감지', rider_help: '라이더 도움 요청', rider_ok: '라이더 괜찮아요',
+    rider_ok_after_escalation: '라이더 괜찮아요 (에스컬레이션 후)', escalated: '에스컬레이션',
+    contact_notified: '비상연락 문자 발송', contact_acknowledged: '연락처가 확인함', contact_notify_failed: '문자 발송 실패',
+    no_contacts: '등록된 비상연락처 없음', order_held: '주문 보류 · 대체배차 요청', order_reassigned: '대체배차 완료',
+    center_reviewing: '상담원 배정', emergency_reported: '119 신고', resolved: '대응 종료', sensor_log_saved: '센서 로그 저장',
+  };
+  const REASON = { no_response: '무응답', rider_requested: '라이더 도움 요청' };
+  const ORDER = { assigned: '배달 중', held: '보류됨', reassigned: '대체배차 완료', delivered: '배달 완료' };
+  let selected = null;
+  const reports = {}; // 3초마다 다시 그려도 119 신고문이 사라지지 않게
+
+  for (const id of ['operator', 'token']) {
+    $(id).value = localStorage.getItem('ops.' + id) || (id === 'token' ? 'dev-ops-token' : '');
+    $(id).addEventListener('change', () => { localStorage.setItem('ops.' + id, $(id).value); refresh(); });
+  }
+
+  async function api(path, method = 'GET', body) {
+    const res = await fetch('/ops/api' + path, {
+      method,
+      headers: { authorization: 'Bearer ' + $('token').value, 'x-operator': encodeURIComponent($('operator').value || ''), 'content-type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error?.message || res.statusText);
+    return json;
+  }
+
+  const time = (iso) => (iso ? new Date(iso).toLocaleTimeString('ko-KR', { hour12: false }) : '-');
+  const el = (tag, props = {}, ...children) => {
+    const node = Object.assign(document.createElement(tag), props);
+    node.append(...children.filter((c) => c != null));
+    return node;
+  };
+
+  async function refresh() {
+    if (!$('operator').value) { $('error').textContent = '상담원 이름을 입력하세요.'; return; }
+    try {
+      const { items } = await api('/incidents');
+      $('error').textContent = '';
+      $('list').replaceChildren(...(items.length ? items.map(renderItem) : [el('div', { className: 'empty', textContent: '처리할 사고가 없어요.' })]));
+      if (selected) await showDetail(selected);
+    } catch (e) { $('error').textContent = e.message; }
+  }
+
+  function renderItem(it) {
+    const node = el('div', { className: 'item' + (it.id === selected ? ' sel' : ''), onclick: () => { selected = it.id; refresh(); } },
+      el('div', { className: 'row' },
+        el('span', { className: 'pill ' + it.status, textContent: STATUS[it.status] || it.status }),
+        it.urgent ? el('span', { className: 'pill urgent', textContent: '도움 요청' }) : null,
+        el('b', { textContent: it.rider.name })),
+      el('div', { className: 'muted', textContent: `감지 ${time(it.detectedAt)} · ${REASON[it.escalationReason] || ''}${it.operatorName ? ' · ' + it.operatorName : ''}` }));
+    return node;
+  }
+
+  async function showDetail(id) {
+    const d = await api('/incidents/' + id);
+    const act = (label, cls, fn, disabled) => el('button', { className: cls, textContent: label, disabled: !!disabled, onclick: async () => {
+      try { await fn(); await refresh(); } catch (e) { alert(e.message); } } });
+    const open = d.status === 'escalated' || d.status === 'reviewing';
+    const r = reports[id];
+    const reportBox = el('div', {}, r ? el('h3', { textContent: r.mode === 'sms' ? '119 문자 신고를 보냈어요' : '자동 신고가 꺼져 있어요 — 아래 내용으로 119에 전화하세요' }) : null, r ? el('pre', { textContent: r.report }) : null);
+    const m = d.rider.medical;
+    $('detail').replaceChildren(
+      el('div', { className: 'row' }, el('h2', { textContent: d.rider.name }), el('span', { className: 'pill ' + d.status, textContent: STATUS[d.status] || d.status })),
+      el('dl', {},
+        el('dt', { textContent: '연락처' }), el('dd', { className: 'mono', textContent: d.rider.phone }),
+        el('dt', { textContent: '감지' }), el('dd', { textContent: `${time(d.detectedAt)} · ${REASON[d.escalationReason] || ''}` }),
+        el('dt', { textContent: '위치' }), el('dd', {}, d.location
+          ? el('a', { href: `https://map.kakao.com/link/map/사고,${d.location.lat},${d.location.lng}`, target: '_blank', rel: 'noreferrer',
+              textContent: `${d.location.lat.toFixed(6)}, ${d.location.lng.toFixed(6)} (${time(d.location.recordedAt)})` })
+          : '확인 불가'),
+        el('dt', { textContent: '차량' }), el('dd', { textContent: d.rider.vehicle ? [d.rider.vehicle.plate, d.rider.vehicle.model].filter(Boolean).join(' ') : '-' }),
+        el('dt', { textContent: '의료정보' }), el('dd', { textContent: m ? `혈액형 ${m.bloodType || '-'} / 기저질환 ${m.conditions || '-'} / 알레르기 ${m.allergies || '-'}` : '미등록 또는 미동의' }),
+        el('dt', { textContent: '주문' }), el('dd', { textContent: d.order ? `${d.order.storeName} → ${d.order.destination} (${ORDER[d.order.status] || d.order.status})` : '-' })),
+      el('div', {}, el('h3', { textContent: '비상연락망' }), el('ol', {}, ...d.contacts.map((c) =>
+        el('li', { textContent: `${c.name} — ${c.notifiedAt ? '문자 ' + time(c.notifiedAt) : '미발송'}${c.acknowledgedAt ? ' · 확인 ' + time(c.acknowledgedAt) : ''}` })))),
+      el('div', { className: 'row' },
+        act('배정받기', 'dark', () => api(`/incidents/${id}/claim`, 'POST'), d.status !== 'escalated'),
+        act('119 신고', 'primary', async () => { reports[id] = await api(`/incidents/${id}/emergency`, 'POST'); }, d.status !== 'reviewing'),
+        act('대체배차 완료', '', () => api(`/incidents/${id}/order-reassigned`, 'POST'), !(d.order && d.order.status === 'held')),
+        act('오탐으로 종료', '', () => api(`/incidents/${id}/resolve`, 'POST', { outcome: 'false_alarm' }), !open),
+        act('대응 완료', '', () => api(`/incidents/${id}/resolve`, 'POST', { outcome: 'handled' }), !open)),
+      reportBox,
+      el('div', {}, el('h3', { textContent: '타임라인' }), el('ol', {}, ...d.timeline.map((e) =>
+        el('li', { textContent: `${time(e.at)} ${EVENT[e.type] || e.type}${e.data && e.data.priority ? ` (${e.data.priority}순위 ${e.data.name || ''})` : ''}${e.data && e.data.operator ? ` — ${e.data.operator}` : ''}` })))),
+    );
+  }
+
+  refresh();
+  setInterval(refresh, 3000);
+</script>
+</body>
+</html>

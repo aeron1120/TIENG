@@ -1,0 +1,125 @@
+import type { Config } from './config.ts';
+import type { Db } from './db.ts';
+import type { Clock } from './lib.ts';
+import type { Logger, Providers } from './providers.ts';
+
+export type AppContext = { db: Db; config: Config; clock: Clock; providers: Providers; log: Logger };
+
+// DB 행 타입 (db.ts 스키마와 1:1)
+
+export type RiderRow = { id: string; phone: string; name: string | null; vehicleJson: string | null; medicalJson: string | null; createdAt: number };
+
+export type ContactRow = {
+  id: string;
+  riderId: string;
+  priority: number;
+  name: string;
+  relation: 'family' | 'coworker' | 'other';
+  phone: string;
+  shareLevel: 'realtime' | 'on_anomaly' | 'on_incident';
+  createdAt: number;
+};
+
+export type DeviceRow = {
+  id: string;
+  tokenHash: string;
+  kind: 'tag' | 'webcam';
+  name: string;
+  pairingCode: string;
+  riderId: string | null;
+  battery: number | null;
+  lastSeenAt: number | null;
+  createdAt: number;
+  pairedAt: number | null;
+};
+
+export type SessionRow = {
+  id: string;
+  riderId: string;
+  startedAt: number;
+  endedAt: number | null;
+  endReason: 'rider' | 'auto_expired' | null;
+  expiresAt: number;
+};
+
+export type LocationRow = {
+  id: number;
+  riderId: string;
+  sessionId: string;
+  recordedAt: number;
+  lat: number;
+  lng: number;
+  accuracy: number | null;
+  speed: number | null;
+  heading: number | null;
+};
+
+export type OrderRow = {
+  id: string;
+  riderId: string;
+  storeName: string;
+  destination: string;
+  status: 'assigned' | 'held' | 'reassigned' | 'delivered';
+  incidentId: string | null;
+  reassignRequestedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type IncidentRow = {
+  id: string;
+  riderId: string;
+  sessionId: string | null;
+  deviceId: string | null;
+  source: 'tag' | 'phone' | 'device' | 'test';
+  kind: 'impact' | 'fall';
+  detectedAt: number;
+  receivedAt: number;
+  countdownSeconds: number;
+  deadlineAt: number;
+  status: 'countdown' | 'cancelled' | 'escalated' | 'reviewing' | 'resolved';
+  urgent: number;
+  riderResponse: 'ok' | 'help' | null;
+  respondedAt: number | null;
+  escalationReason: 'no_response' | 'rider_requested' | null;
+  escalatedAt: number | null;
+  operatorName: string | null;
+  reviewingAt: number | null;
+  resolution: 'false_alarm' | 'handled' | null;
+  resolutionNote: string | null;
+  resolvedAt: number | null;
+  lat: number | null;
+  lng: number | null;
+  accuracy: number | null;
+  locationAt: number | null;
+  address: string | null;
+  metricsJson: string | null;
+  sensorLogJson: string | null;
+};
+
+export type IncidentEventRow = { id: number; incidentId: string; type: string; at: number; dataJson: string | null };
+
+export type NotificationRow = {
+  id: string;
+  incidentId: string;
+  contactId: string | null;
+  purpose: 'contact_alert' | 'contact_update';
+  recipient: string;
+  body: string;
+  dueAt: number;
+  status: 'pending' | 'sending' | 'sent' | 'failed' | 'cancelled';
+  attempts: number;
+  sentAt: number | null;
+  error: string | null;
+};
+
+export type ShareLinkRow = {
+  tokenHash: string;
+  riderId: string;
+  contactId: string;
+  incidentId: string | null;
+  scope: 'incident' | 'standing';
+  createdAt: number;
+  expiresAt: number;
+  acknowledgedAt: number | null;
+};

@@ -305,12 +305,13 @@ const styles = StyleSheet.create({
   mapLinkPressed: { backgroundColor: colors.curb },
   mapLinkText: { ...font.sans(700), fontSize: 13, lineHeight: 18, letterSpacing: -0.4, color: colors.text },
 
-  countdown: { marginTop: 13, paddingTop: 12.5, paddingBottom: 12, paddingHorizontal: 16 },
+  // 상자 87.5 · 막대는 상자 아래에서 14.5 위 (v3·9 측정)
+  countdown: { marginTop: 13, paddingTop: 12.5, paddingBottom: 14.5, paddingHorizontal: 16 },
   // 알린 뒤 문구가 한 줄이 돼도 상자 높이가 흔들리지 않게 두 줄 높이를 잡아 둔다
   countdownRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, minHeight: 40 },
   countdownTime: { ...font.mono(800), fontSize: 22, lineHeight: 24, letterSpacing: -0.2, color: colors.redInk },
   countdownText: { ...font.sans(400), flex: 1, fontSize: 14, lineHeight: 20, letterSpacing: -0.15, color: colors.redInk, marginTop: 3 },
-  countdownBar: { marginTop: 16.5 },
+  countdownBar: { marginTop: 13.5 },
   ackBox: {
     marginTop: 13,
     flexDirection: 'row',
@@ -325,7 +326,7 @@ const styles = StyleSheet.create({
   ackTitle: { ...font.sans(700), fontSize: 16, lineHeight: 22, letterSpacing: -0.2, color: colors.text },
   ackBody: { ...font.sans(400), fontSize: 14, lineHeight: 20, color: colors.textMuted },
 
-  actions: { marginTop: 30.5, gap: 10 },
+  actions: { marginTop: 28, gap: 10 },
   pair: { flexDirection: 'row', gap: 10 },
   pairButton: { flex: 1, paddingHorizontal: 8 },
   pairLabel: { letterSpacing: -0.3 },

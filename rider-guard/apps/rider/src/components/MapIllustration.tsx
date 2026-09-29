@@ -138,8 +138,12 @@ const MemoScene = memo(Scene);
 
 // ── 가운데 핀 ─────────────────────────────────────────────────
 
-const PIN_W = 28;
-const PIN_H = 38;
+/** 핀 아이콘 상자 (머리 폭 ≈ 27, 높이 ≈ 35 — v3·5 측정) · 머리 오른쪽 끝(가운데 기준) */
+const PIN_H = 43;
+const PIN_HALF_W = (PIN_H * 7.5) / 24;
+/** 말풍선 높이 · 핀 머리와의 간격 */
+const BUBBLE_H = 25;
+const BUBBLE_GAP = 3;
 const ACCURACY = 48;
 
 const PIN_COLORS: Record<MapPinTone, { pin: string; fill: string; ring: string }> = {
@@ -290,16 +294,17 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(29,30,34,0.16)',
   },
   pin: { position: 'absolute', left: -PIN_H / 2, top: -PIN_H + 1, width: PIN_H, height: PIN_H },
+  // 핀 머리(원) 가운데 높이에 맞춘다
   bubble: {
     position: 'absolute',
-    left: PIN_W / 2 + 4,
-    top: -PIN_H + 1 + PIN_H * 0.41 - 13,
-    height: 26,
-    paddingHorizontal: 10,
+    left: PIN_HALF_W + BUBBLE_GAP,
+    top: -PIN_H + 1 + PIN_H * 0.41 - BUBBLE_H / 2,
+    height: BUBBLE_H,
+    paddingHorizontal: 9,
     borderRadius: radius.pill,
     backgroundColor: colors.asphalt,
     justifyContent: 'center',
     boxShadow: shadow.mapPill,
   },
-  bubbleText: { ...font.sans(700), fontSize: 13, lineHeight: 18, color: colors.textOnDark },
+  bubbleText: { ...font.sans(700), fontSize: 12, lineHeight: 16, letterSpacing: -0.2, color: colors.textOnDark, fontVariant: ['tabular-nums'] },
 });

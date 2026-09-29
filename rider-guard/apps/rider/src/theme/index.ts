@@ -93,6 +93,19 @@ export const colors = {
   /** 잠금화면 그라데이션 위 → 아래 */
   lockTop: '#383A42',
   lockBottom: '#0F1013',
+  /** 잠금화면 위 반투명 알림 카드 · 테두리 · 누름 · 배터리 트랙 · 홈 인디케이터 (그라데이션 위에 겹쳐야 해서 반투명) */
+  lockCard: 'rgba(255,255,255,0.13)',
+  lockCardEdge: 'rgba(255,255,255,0.08)',
+  lockCardPressed: 'rgba(255,255,255,0.17)',
+  lockTrack: 'rgba(255,255,255,0.15)',
+  homeIndicator: 'rgba(255,255,255,0.7)',
+  /** 실제 지도 — 큰길 테두리 · 건물 윤곽 · 철길 · 보호 꺼짐 흐림 · 출처 표시 */
+  mapRoadCasing: '#EDEDE9',
+  mapBuildingLine: '#D0D0CB',
+  mapRail: '#D6D6D2',
+  mapDim: 'rgba(241,241,238,0.55)',
+  mapAttributionBg: 'rgba(255,255,255,0.6)',
+  mapAttributionText: 'rgba(29,30,34,0.5)',
 
   // ── 바탕 · 표면 ──
   bg: palette.concrete,
@@ -165,7 +178,7 @@ export const colors = {
   /** 카드 안 구분선 */
   divider: palette.curb,
   /** 탭바 위 선 */
-  navLine: '#E7E7E3',
+  navLine: '#DCDCD7',
   /** '+ 연락처 추가'·개발용 버튼 점선 */
   borderDashed: palette.borderDashed,
   /** 아직 안 한 단계 원 · 꺼진 스위치 트랙 */
@@ -233,13 +246,24 @@ export type MonoWeight = 500 | 600 | 700 | 800;
 
 const TABULAR: TextStyle['fontVariant'] = ['tabular-nums'];
 
+/** 웹 — Pretendard(woff2)를 못 받아도 명조가 아닌 고딕으로 그리게 대체 글꼴 목록을 붙인다 */
+const WEB_FALLBACK = "system-ui, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif";
+
 /**
- * 굵기에 맞는 fontFamily 스타일. fontWeight 를 따로 주면 안드로이드에서 가짜 볼드가 생기므로 쓰지 않는다.
+ * 네이티브는 fontFamily 만 — fontWeight 를 따로 주면 안드로이드에서 가짜 볼드가 생긴다.
+ * 웹은 대체 글꼴 목록 + fontWeight 를 함께 준다(대체 글꼴도 굵기가 살게). 굵기가 겹쳐 가짜 볼드가 생기지 않게
+ * theme/fonts.web.ts 가 Pretendard 각 굵기를 모든 굵기(100~900)에 맞는 글꼴로 한 번 더 등록한다.
+ */
+const face = (family: string, weight: SansWeight): TextStyle =>
+  Platform.OS === 'web' ? { fontFamily: `'${family}', ${WEB_FALLBACK}`, fontWeight: String(weight) as TextStyle['fontWeight'] } : { fontFamily: family };
+
+/**
+ * 굵기에 맞는 글꼴 스타일.
  * mono = 숫자·시각용 — Pretendard 에 고정폭 숫자(tabular-nums)를 켠다. 한글이 섞여도 괜찮다.
  */
 export const font = {
-  sans: (weight: SansWeight = 400): TextStyle => ({ fontFamily: fontFamilies[`sans${weight}`] }),
-  mono: (weight: MonoWeight = 600): TextStyle => ({ fontFamily: fontFamilies[`mono${weight}`], fontVariant: TABULAR }),
+  sans: (weight: SansWeight = 400): TextStyle => face(fontFamilies[`sans${weight}`], weight),
+  mono: (weight: MonoWeight = 600): TextStyle => ({ ...face(fontFamilies[`mono${weight}`], weight), fontVariant: TABULAR }),
 };
 
 /** 모서리. 입력칸 14 · 버튼 16 · 카드 20 · 큰 카드 24 · 지도 16 */

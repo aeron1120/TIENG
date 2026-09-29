@@ -120,7 +120,17 @@ function useBreath(active: boolean, duration: number = motion.breathe) {
 // ── 화면 틀 ──────────────────────────────────────────────────
 
 /** 디자인 프레임의 상단 패딩(56px 등)은 상태바 44px 를 포함한 값이라, 실제 inset 으로 바꿔 계산한다. */
-const DESIGN_STATUS_BAR = 44;
+export const DESIGN_STATUS_BAR = 44;
+/** 디자인 프레임 아래 홈 인디케이터 자리 — 하단 버튼 아래 여백 36 = 34 + 2 */
+export const DESIGN_HOME_INDICATOR = 34;
+
+/**
+ * 디자인 y 좌표(top, 상태바 포함) → 실제 위 여백. 웹은 상태바가 없어 디자인 프레임을 그대로 흉내 낸다(top 그대로).
+ * 네이티브는 상태바 inset 아래로 (top - 44), 상태바에 붙지 않게 최소 8.
+ */
+export function screenTopPadding(top: number, insetTop: number): number {
+  return isWeb ? top : insetTop + Math.max(top - DESIGN_STATUS_BAR, 8);
+}
 
 type ScreenEnter = 'auto' | 'rise' | 'fade' | 'none';
 /** default = 콘크리트 바탕(bg), white = 흰 바탕(연락처 수락 웹·긴급 알림 웹), dark = 사고 확인(alertBg), lock = 잠금화면 아래색 */
@@ -152,7 +162,7 @@ type ScreenProps = {
  * 세로로 쌓이는 화면 틀. 작은 폰에서는 스크롤되고, 큰 폰에서는 <Spacer/> 가 CTA 를 바닥으로 민다.
  * v3 좌우 여백은 24(홈처럼 넓은 카드 화면은 side={16}).
  */
-export function Screen({ children, top = 52, bottom = 32, side = 24, gap = 16, tone, dark, footer, enter = 'auto' }: ScreenProps) {
+export function Screen({ children, top = 46, bottom = 32, side = 24, gap = 16, tone, dark, footer, enter = 'auto' }: ScreenProps) {
   const insets = useSafeAreaInsets();
   const reduced = useReducedMotion();
   const bg = SCREEN_BG[tone ?? (dark ? 'dark' : 'default')];
@@ -169,7 +179,7 @@ export function Screen({ children, top = 52, bottom = 32, side = 24, gap = 16, t
         contentContainerStyle={{
           flexGrow: 1,
           paddingHorizontal: side,
-          paddingTop: insets.top + Math.max(top - DESIGN_STATUS_BAR, 16) + (isWeb ? 12 : 0),
+          paddingTop: screenTopPadding(top, insets.top),
           paddingBottom: (footer ? 0 : insets.bottom) + bottom,
         }}
         keyboardShouldPersistTaps="handled"
@@ -184,13 +194,16 @@ export function Screen({ children, top = 52, bottom = 32, side = 24, gap = 16, t
   );
 }
 
+/** 하단 버튼 아래 여백 — 디자인 36(홈 인디케이터 34 + 2). 웹·아이폰·안드로이드 제스처바 모두 36, 버튼식 내비게이션 바는 그 위로 */
+export const footerBottomPadding = (insetBottom: number) => Math.max(insetBottom + 2, DESIGN_HOME_INDICATOR + 2);
+
 /**
  * 스크롤 밖 바닥에 고정하는 CTA 영역. <Screen footer={<ScreenFooter><Button …/></ScreenFooter>}>
  * 홈 인디케이터만큼 아래 여백을 더한다. 좌우 여백 24 (style 로 덮을 수 있다).
  */
 export function ScreenFooter({ children, tone = 'default', style }: { children: React.ReactNode; tone?: ScreenTone; style?: StyleProp<ViewStyle> }) {
   const insets = useSafeAreaInsets();
-  return <View style={[styles.footer, { paddingBottom: insets.bottom + 16, backgroundColor: SCREEN_BG[tone] }, style]}>{children}</View>;
+  return <View style={[styles.footer, { paddingBottom: footerBottomPadding(insets.bottom), backgroundColor: SCREEN_BG[tone] }, style]}>{children}</View>;
 }
 
 export const Spacer = () => <View style={{ flexGrow: 1 }} />;

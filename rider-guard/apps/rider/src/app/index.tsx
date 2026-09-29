@@ -1,7 +1,7 @@
-// 시작 화면 = 로그인 (v2·1 톤: 로고 줄 · 큰 제목 · 입력칸 · 하단 보라 버튼). 가입 정보·동의는 /onboarding
+// 시작 화면 = 로그인 (디자인에 없는 화면 — v3·1 톤: 로고 줄 · 큰 제목 · 흰 입력칸 · 하단 아스팔트 버튼). 가입 정보·동의는 /onboarding
 import type { SocialProvider } from '@rider-guard/contract';
 import { useMutation } from '@tanstack/react-query';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, View, type TextInput } from 'react-native';
 
@@ -27,8 +27,14 @@ export default function LoginScreen() {
 function LoginForm() {
   const { signIn } = useAuth();
   const providers = useAuthProviders();
-  const [email, setEmail] = useState('');
+  // 가입 화면에서 '이미 가입된 이메일'로 돌아오면 그 이메일을 채워 둔다
+  const params = useLocalSearchParams<{ email?: string }>();
+  const [prefilled] = useState(() => (typeof params.email === 'string' ? params.email : ''));
+  const [email, setEmail] = useState(prefilled);
   const [password, setPassword] = useState('');
+  // 빈 칸으로 '로그인'을 누른 뒤에만 칸 아래에 알려 준다
+  const [tried, setTried] = useState(false);
+  const emailRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
   const login = useEmailLogin();
   const social = useMutation({
@@ -39,13 +45,20 @@ function LoginForm() {
   });
 
   const busy = login.isPending || social.isPending;
-  const filled = !!email.trim() && !!password;
   const socialProviders = SOCIAL_ORDER.filter((p) => providers.data?.social.includes(p));
   const error = login.error ?? social.error;
+  const emailMissing = tried && !email.trim() ? '이메일을 입력해 주세요.' : null;
+  const passwordMissing = tried && !password ? '비밀번호를 입력해 주세요.' : null;
 
   const submit = () => {
     // 키보드 '이동'과 버튼이 겹쳐 두 번 보내지 않게
-    if (busy || !filled) return;
+    if (busy) return;
+    // 버튼은 늘 아스팔트 — 빈 칸이 있으면 그 칸으로 데려가 알려 준다
+    if (!email.trim() || !password) {
+      setTried(true);
+      (email.trim() ? passwordRef : emailRef).current?.focus();
+      return;
+    }
     social.reset();
     login.mutate({ email: email.trim(), password }, { onSuccess: ({ token }) => signIn(token) });
   };
@@ -56,21 +69,22 @@ function LoginForm() {
   };
 
   return (
-    <Screen top={56} side={24} gap={28} enter="none">
+    <Screen top={63} side={24} gap={0} bottom={16} enter="none">
       <FadeIn style={styles.brand}>
-        <LogoIcon size={40} />
+        <LogoIcon size={28} />
         <Txt style={styles.brandName}>Rider Guard</Txt>
       </FadeIn>
 
       <FadeIn delay={40} style={styles.intro}>
         <Txt accessibilityRole="header" style={typography.display}>
-          {'달리는 동안\n곁에서 지켜볼게요'}
+          {'다시 오셨네요\n보호를 이어갈게요'}
         </Txt>
-        <Txt style={styles.lead}>사고가 감지되면 먼저 라이더님께 묻고, 답이 없을 때만 가까운 사람에게 알려요.</Txt>
+        <Txt style={typography.lead}>{'가입한 이메일로 로그인해 주세요.\n처음이면 아래에서 바로 가입할 수 있어요.'}</Txt>
       </FadeIn>
 
       <FadeIn delay={80} style={styles.form}>
         <Field
+          ref={emailRef}
           label="이메일"
           value={email}
           onChangeText={edit(setEmail)}
@@ -83,6 +97,7 @@ function LoginForm() {
           returnKeyType="next"
           submitBehavior="submit"
           onSubmitEditing={() => passwordRef.current?.focus()}
+          error={emailMissing}
         />
         <Field
           ref={passwordRef}
@@ -96,6 +111,8 @@ function LoginForm() {
           textContentType="password"
           returnKeyType="go"
           onSubmitEditing={submit}
+          autoFocus={!!prefilled}
+          error={passwordMissing}
         />
         <Notice error={error} />
       </FadeIn>
@@ -103,7 +120,7 @@ function LoginForm() {
       <Spacer />
 
       <FadeIn delay={120} style={styles.actions}>
-        <Button label="로그인" loading={login.isPending} disabled={!filled || social.isPending} onPress={submit} />
+        <Button label="로그인" loading={login.isPending} disabled={social.isPending} onPress={submit} />
         <SignupLink onPress={() => router.push('/signup')} disabled={busy} />
       </FadeIn>
 
@@ -132,14 +149,14 @@ function LoginForm() {
   );
 }
 
-/** '처음이신가요? 이메일로 가입하기' — 앞은 회색, 뒤는 보라 굵게 */
+/** '처음이신가요? 이메일로 가입하기' — 앞은 회색, 뒤는 진한 굵은 밑줄(v3 글자 링크) */
 function SignupLink({ onPress, disabled }: { onPress: () => void; disabled?: boolean }) {
   const press = usePressScale(0.96);
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel="이메일로 가입하기"
-      accessibilityHint="처음이면 이메일과 비밀번호로 계정을 만들어요"
+      accessibilityHint="처음이면 이름과 이메일로 계정을 만들어요"
       accessibilityState={{ disabled: !!disabled }}
       disabled={disabled}
       onPress={onPress}
@@ -158,18 +175,17 @@ function SignupLink({ onPress, disabled }: { onPress: () => void; disabled?: boo
 }
 
 const styles = StyleSheet.create({
-  brand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  brandName: { ...font.sans(700), fontSize: 18, lineHeight: 24, letterSpacing: -0.2, color: colors.text },
-  intro: { gap: 8 },
-  // v2·1 설명은 15 — lead(16)로 쓰면 '때만'이 다음 줄로 밀린다
-  lead: { ...typography.body, color: colors.textMuted },
-  form: { gap: 16 },
-  actions: { gap: 4 },
+  // v3·1 과 같은 자리 — 로고 줄(타일 28 + 'Rider Guard' 16 굵게, 사이 8) · 제목 · 입력칸이 시작·동의 화면과 겹친다
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  brandName: { ...font.sans(700), fontSize: 16, lineHeight: 22, letterSpacing: -0.2, color: colors.text },
+  intro: { marginTop: 28, gap: 10 },
+  form: { marginTop: 28, gap: 20 },
+  actions: { marginTop: 24, gap: 4 },
   link: { minHeight: 44, alignItems: 'center', justifyContent: 'center', alignSelf: 'center', paddingHorizontal: 12 },
   linkText: { fontSize: 14, lineHeight: 20, color: colors.textMuted },
-  linkStrong: { ...font.sans(700), color: colors.primaryInk },
-  social: { gap: 10, marginTop: -12 },
+  linkStrong: { ...font.sans(700), color: colors.text, textDecorationLine: 'underline' },
+  social: { marginTop: 8, gap: 10 },
   divider: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingBottom: 2 },
   rule: { flex: 1, height: 1, backgroundColor: colors.divider },
-  dividerText: { ...typography.small },
+  dividerText: { ...typography.meta },
 });

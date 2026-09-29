@@ -24,7 +24,7 @@ type InputProps = TextInputProps & {
 };
 
 /**
- * 공통 입력칸 (v3·1: 높이 52, 17px, radius 14, 흰 바탕). 비포커스는 연석 테두리, 포커스는 아스팔트 1.5 테두리.
+ * 공통 입력칸 (v3·1: 높이 52, 16px, radius 14, 흰 바탕). 비포커스는 연석 테두리, 포커스는 아스팔트 1.5 테두리.
  * error 면 아스팔트 테두리 + 옅은 링. secureTextEntry 면 오른쪽에 비밀번호 보기 버튼이 붙는다.
  * 숫자 입력은 style={font.mono(500)} (Pretendard 고정폭 숫자).
  */
@@ -164,17 +164,19 @@ type HeaderProps = {
   /** onClose 가 없을 때 오른쪽에 둘 노드 */
   right?: React.ReactNode;
   closeLabel?: string;
+  /** 디자인에 없는 닫기 — 작고 옅게(20, 흐린 글자색) 두어 눈에 덜 띄게 */
+  subtleClose?: boolean;
   /** 다크 화면 — 아이콘을 흰색으로 */
   onDark?: boolean;
 };
 
-/** 화면 맨 위 44 높이 행 — 뒤로/닫기 버튼. 아이콘이 본문 좌우 선에 맞도록 좌우 -10, left/right 노드는 본문 선에 맞춘다 */
-export function Header({ onBack, onClose, left, right, closeLabel = '닫기', onDark }: HeaderProps) {
+/** 화면 맨 위 44 높이 행 — 뒤로/닫기 버튼. 좌우 -10(뒤로 chevron 은 글리프가 본문 선에 오게 더 뺀다), left/right 노드는 본문 선에 맞춘다 */
+export function Header({ onBack, onClose, left, right, closeLabel = '닫기', subtleClose, onDark }: HeaderProps) {
   const iconColor = onDark ? colors.textOnDark : colors.text;
   return (
     <View style={styles.header}>
       {onBack ? (
-        <IconButton label="뒤로" onPress={onBack}>
+        <IconButton label="뒤로" onPress={onBack} style={styles.backInHeader}>
           <ChevronLeftIcon color={iconColor} />
         </IconButton>
       ) : left ? (
@@ -184,7 +186,7 @@ export function Header({ onBack, onClose, left, right, closeLabel = '닫기', on
       )}
       {onClose ? (
         <IconButton label={closeLabel} onPress={onClose}>
-          <CloseIcon size={24} color={iconColor} />
+          <CloseIcon size={subtleClose ? 20 : 24} color={subtleClose ? colors.textFaint : iconColor} />
         </IconButton>
       ) : right ? (
         <View style={styles.headerSlot}>{right}</View>
@@ -509,7 +511,7 @@ const styles = StyleSheet.create({
     borderColor: colors.inputBorder,
     borderRadius: radius.input,
     backgroundColor: colors.surface,
-    fontSize: 17,
+    fontSize: 16,
     color: colors.text,
     ...font.sans(400),
   },
@@ -523,10 +525,12 @@ const styles = StyleSheet.create({
   errorIcon: { paddingTop: 2 },
   fieldError: { ...font.sans(500), flex: 1, fontSize: 13, lineHeight: 18, color: colors.error },
   iconButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  back: { marginLeft: -10 },
+  // chevron 글리프 왼쪽이 본문 선(x 24.5)에 오게 — 44 터치 영역은 그대로 두고 왼쪽으로 뺀다
+  back: { marginLeft: -16.5 },
+  backInHeader: { marginLeft: -6.5 },
   header: { height: 44, marginHorizontal: -10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerSlot: { paddingHorizontal: 10 },
-  step: { ...font.sans(600), fontSize: 15, color: colors.textFaint },
+  step: { ...font.sans(600), fontSize: 13, lineHeight: 18, color: colors.textFaint },
   textButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center', alignSelf: 'center', paddingHorizontal: 8 },
   underline: { textDecorationLine: 'underline' },
   notice: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 14, paddingHorizontal: 16, borderRadius: radius.xl },
@@ -536,9 +540,10 @@ const styles = StyleSheet.create({
   noticeAction: { minHeight: 22, paddingHorizontal: 0, alignSelf: 'flex-start' },
   checkPress: { flex: 1 },
   checkWithDetail: { flexDirection: 'row', alignItems: 'center' },
-  checkDetail: { marginRight: -12 },
-  checkRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 44, paddingVertical: 10 },
-  checkRowLg: { paddingVertical: 12, gap: 12 },
+  // v3·1 측정: 상자→꼬리표 8.5 · 꼬리표→문구 14 · '모두 동의' 상자→글자 10 · > 는 카드 안쪽 선에 붙는다
+  checkDetail: { marginRight: -14 },
+  checkRow: { flexDirection: 'row', alignItems: 'center', gap: 8.5, minHeight: 44, paddingVertical: 10 },
+  checkRowLg: { paddingVertical: 12, gap: 10 },
   box: {
     width: 20,
     height: 20,
@@ -551,10 +556,10 @@ const styles = StyleSheet.create({
   },
   boxLg: { width: 22, height: 22, borderRadius: 6 },
   boxOn: { backgroundColor: colors.asphalt, borderColor: colors.asphalt },
-  checkLabelRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  checkTag: { ...font.sans(700), fontSize: 13, lineHeight: 20 },
-  checkText: { flex: 1, fontSize: 14, lineHeight: 20, color: colors.text },
-  checkTextLg: { ...font.sans(700), fontSize: 16, lineHeight: 24 },
+  checkLabelRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 14 },
+  checkTag: { ...font.sans(700), fontSize: 12, lineHeight: 20 },
+  checkText: { flex: 1, fontSize: 14, lineHeight: 20, color: colors.noticeText },
+  checkTextLg: { ...font.sans(700), fontSize: 16, lineHeight: 24, color: colors.text },
   toggleHit: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   track: { width: TRACK_W, height: TRACK_H, borderRadius: TRACK_H / 2, padding: (TRACK_H - THUMB) / 2 },
   thumb: { width: THUMB, height: THUMB, borderRadius: THUMB / 2, backgroundColor: colors.surface, boxShadow: shadow.thumb },

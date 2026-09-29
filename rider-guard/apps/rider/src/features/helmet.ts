@@ -128,6 +128,7 @@ export function useHelmet(): HelmetApi {
 // ── 헬멧 표시 정보 ────────────────────────────────────────────
 
 export type HelmetInfo = {
+  /** 늘 '헬멧 모듈' (디자인 문구) — 실제 기기 종류는 detail 에 */
   name: string;
   /** '개발용 웹캠 detector' · '헬멧 태그' */
   detail: string;
@@ -137,15 +138,20 @@ export type HelmetInfo = {
   simulated: boolean;
 };
 
-const VIRTUAL_HELMET: HelmetInfo = { name: '헬멧 모듈', detail: '개발용 웹캠 detector', connected: true, battery: SIM.battery, simulated: true };
+const HELMET_NAME = '헬멧 모듈';
+const VIRTUAL_HELMET: HelmetInfo = { name: HELMET_NAME, detail: '개발용 웹캠 detector', connected: true, battery: SIM.battery, simulated: true };
 
-/** 실제로 페어링된 기기(me.device)가 있으면 그 값을, 없으면 가상 헬멧을 보여 준다. 배터리를 모르면 시뮬레이션 값. */
-export function helmetInfo(device: DeviceDto | null | undefined): HelmetInfo {
+/**
+ * 헬멧 모듈 표시 정보. 헬멧 연결·배터리는 시뮬레이션이라 페어링된 기기(me.device)가 없으면 가상 헬멧을 보여 준다.
+ * 기기가 있으면 종류·배터리는 그 값을 쓰고, 연결은 기기 신호와 착용(시뮬레이션)을 합친다 — 쓰고 있으면(보호 중) 연결됨.
+ * worn = useHelmet().worn (잠금화면 상시 알림처럼 보호 중에만 보이는 곳은 true)
+ */
+export function helmetInfo(device: DeviceDto | null | undefined, worn: boolean): HelmetInfo {
   if (!device) return VIRTUAL_HELMET;
   return {
-    name: device.name,
+    name: HELMET_NAME,
     detail: device.kind === 'webcam' ? '개발용 웹캠 detector' : '헬멧 태그',
-    connected: device.connected,
+    connected: device.connected || worn,
     battery: device.battery ?? SIM.battery,
     simulated: false,
   };

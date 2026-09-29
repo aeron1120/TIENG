@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 import { api, getApiToken, setApiToken, setUnauthorizedHandler } from '@/api/client';
 import { stopLocationTracking } from '@/features/location';
 import { unregisterPush } from '@/features/push';
+import { clearPendingName } from '@/features/sim';
 import { resetTo } from '@/lib/nav';
 import { KEYS, storage } from '@/lib/storage';
 
@@ -47,6 +48,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void unregisterPush(token).then(() => token && api('POST', '/auth/logout', undefined, { token }).catch(() => undefined));
     // 위치 수집도 멈춘다
     void stopLocationTracking();
+    // 가입 화면에서 받아 둔 이름은 그 계정 것 — 같은 기기로 다른 계정에 들어가 시작·동의를 마쳐도 섞이지 않게
+    clearPendingName();
     queryClient.clear();
     setStatus('signedOut');
     void tokenStore.set(null);

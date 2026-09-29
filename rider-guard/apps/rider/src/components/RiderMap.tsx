@@ -1,7 +1,8 @@
 /**
  * 지도 카드 안의 실제 지도 (v3·5 홈 · v3·9 긴급 알림 웹).
  *
- *   아래층  MapIllustration — 가상 거리 지도. 실제 지도가 뜨기 전, 그리고 오프라인·타일 실패·웹뷰 오류일 때 보인다.
+ *   아래층  불러오는 동안은 무늬 없는 블록색 + 옅은 스켈레톤 숨쉬기(실제 위치와 무관한 가짜 거리를 보이지 않게).
+ *           오프라인·타일 실패·웹뷰 오류일 때만 MapIllustration(가상 거리 지도).
  *   가운데  MapCanvas('use dom') — MapLibre + OpenFreeMap. 웹은 DOM 그대로, 안드로이드는 react-native-webview 안.
  *           준비되면 페이드인. 조작 없는 미리보기.
  *   위층    핀 · 정확도 원 · 말풍선(MapCenterMarker) · 알약(topLeft/bottomLeft/topRight · children) · '© OpenStreetMap'
@@ -13,7 +14,7 @@ import { Animated, Platform, StyleSheet, TurboModuleRegistry, UIManager, View, t
 
 import { MapCenterMarker, MapIllustration, type MapPinTone, type MapVariant } from '@/components/MapIllustration';
 import type { MapCanvasPalette, MapCanvasStatus } from '@/components/map/MapCanvas';
-import { Txt, useReducedMotion } from '@/components/ui';
+import { Skeleton, Txt, useReducedMotion } from '@/components/ui';
 import { SIM } from '@/features/sim';
 import { colors, font, motion, radius, shadow } from '@/theme';
 
@@ -28,14 +29,14 @@ const PALETTE: MapCanvasPalette = {
   block: colors.mapBlock,
   gap: colors.mapGap,
   road: colors.mapRoad,
-  roadCasing: '#EDEDE9',
+  roadCasing: colors.mapRoadCasing,
   building: colors.mapBuilding,
-  buildingLine: '#D0D0CB',
+  buildingLine: colors.mapBuildingLine,
   park: colors.mapPark,
   water: colors.mapRiver,
   label: colors.mapLabel,
   labelHalo: colors.mapGap,
-  rail: '#D6D6D2',
+  rail: colors.mapRail,
 };
 
 /** 이 기기에서 실제 지도를 띄울 수 있는가 — 웹은 WebGL, 네이티브는 웹뷰 모듈이 들어 있는 빌드인지 */
@@ -81,15 +82,22 @@ type MapPillProps = {
   icon?: React.ReactNode;
   /** 앞 점 색 (예: colors.green — '● 보호 중') */
   dot?: string;
+  /** 점 둘레 옅은 원 색 (예: colors.greenSoft) */
+  halo?: string;
   style?: StyleProp<ViewStyle>;
 };
 
-/** 지도 위 흰 알약 (v3·5 '● 보호 중' · '🔒 사고 때만 비상연락처에 전달돼요') */
-export function MapPill({ label, icon, dot, style }: MapPillProps) {
+/** 지도 위 흰 알약 (v3·5 '● 보호 중' · '🔒 사고 때만 비상연락처에 전달돼요') — 높이 26, 12 SemiBold */
+export function MapPill({ label, icon, dot, halo, style }: MapPillProps) {
   return (
-    <View style={[styles.pill, style]}>
-      {dot ? <View style={[styles.pillDot, { backgroundColor: dot }]} /> : null}
-      {icon}
+    <View style={[styles.pill, !dot && icon ? styles.pillWithIcon : null, style]}>
+      {dot ? (
+        <View style={[styles.pillHalo, { backgroundColor: halo ?? 'transparent' }]}>
+          <View style={[styles.pillDot, { backgroundColor: dot }]} />
+        </View>
+      ) : (
+        icon
+      )}
       <Txt numberOfLines={1} style={styles.pillText}>
         {label}
       </Txt>
@@ -130,7 +138,7 @@ export type RiderMapProps = {
  * 사용 (v3·5 홈):
  * const pos = useRiderPosition();
  * <RiderMap location={pos} label="지금 여기" height={228} dim={!active}
- *   topLeft={<MapPill dot={colors.green} label="보호 중" />}
+ *   topLeft={<MapPill dot={colors.green} halo={colors.greenSoft} label="보호 중" />}
  *   bottomLeft={<MapPill icon={<LockIcon size={15} color={colors.text} />} label="사고 때만 비상연락처에 전달돼요" />} />
  * 사용 (v3·9 긴급 알림 웹): <RiderMap tone="red" label="21:42 마지막 위치" location={incident.location} height={150} />
  */
@@ -197,7 +205,11 @@ export function RiderMap({
       accessibilityLabel={accessibilityLabel ?? (label ? `지도, ${label}` : '지도')}
       style={[styles.box, { height, borderRadius: rounded }, style]}
     >
-      <MapIllustration variant={variant ?? (tone === 'red' ? 'emergency' : 'home')} marker={false} rounded={0} />
+      {status === 'error' ? (
+        <MapIllustration variant={variant ?? (tone === 'red' ? 'emergency' : 'home')} marker={false} rounded={0} />
+      ) : status === 'loading' ? (
+        <Skeleton width="100%" height={height} radius={0} style={styles.loading} />
+      ) : null}
       {status !== 'error' ? (
         <Animated.View style={[StyleSheet.absoluteFill, styles.passThrough, { opacity: fade }]}>
           <MapBoundary onError={onBoundaryError}>
@@ -227,7 +239,8 @@ const SLOT = 12;
 const styles = StyleSheet.create({
   box: { overflow: 'hidden', backgroundColor: colors.mapBlock },
   passThrough: { pointerEvents: 'none' },
-  dim: { backgroundColor: 'rgba(241,241,238,0.55)', pointerEvents: 'none' },
+  loading: { position: 'absolute', left: 0, top: 0 },
+  dim: { backgroundColor: colors.mapDim, pointerEvents: 'none' },
   slot: { position: 'absolute', maxWidth: '100%' },
   topLeft: { left: SLOT, top: SLOT, right: SLOT, alignItems: 'flex-start' },
   topRight: { right: SLOT, top: SLOT, alignItems: 'flex-end' },
@@ -235,23 +248,26 @@ const styles = StyleSheet.create({
   pill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    height: 32,
-    paddingHorizontal: 12,
+    gap: 4,
+    height: 26,
+    paddingLeft: 5,
+    paddingRight: 11,
     borderRadius: radius.pill,
     backgroundColor: colors.surface,
     boxShadow: shadow.mapPill,
   },
+  pillWithIcon: { paddingLeft: 7, gap: 5 },
+  pillHalo: { width: 14, height: 14, borderRadius: 7, alignItems: 'center', justifyContent: 'center' },
   pillDot: { width: 8, height: 8, borderRadius: 4 },
-  pillText: { ...font.sans(600), fontSize: 14, lineHeight: 20, color: colors.text, flexShrink: 1 },
+  pillText: { ...font.sans(600), fontSize: 12, lineHeight: 16, letterSpacing: -0.3, color: colors.text, flexShrink: 1 },
   attribution: {
     position: 'absolute',
     right: 4,
     bottom: 3,
     paddingHorizontal: 3,
     borderRadius: 3,
-    backgroundColor: 'rgba(255,255,255,0.6)',
+    backgroundColor: colors.mapAttributionBg,
     pointerEvents: 'none',
   },
-  attributionText: { ...font.sans(500), fontSize: 8, lineHeight: 11, color: 'rgba(29,30,34,0.5)' },
+  attributionText: { ...font.sans(500), fontSize: 8, lineHeight: 11, color: colors.mapAttributionText },
 });

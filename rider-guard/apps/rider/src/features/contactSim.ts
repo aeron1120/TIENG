@@ -111,9 +111,26 @@ export function setAcceptance(id: string, status: Acceptance) {
   void storage.set(KEYS.contactSimAt, JSON.stringify(stamps));
 }
 
+/**
+ * 저장값이 없는 연락처의 지금 상태(기본값 규칙)를 저장값으로 고정한다 — 시각은 남기지 않는다(알림 목록 'N분 전'이 흔들리지 않게).
+ * 순위를 바꾸거나 지우기 전에 부른다: 서버가 순위를 당기면 기본값 규칙(1순위 = 수락함) 때문에 수락하지 않은 사람이 수락함으로 보이지 않게.
+ * 저장값을 아직 못 읽었으면(네이티브 첫 순간) 읽은 값을 덮어쓰지 않게 건너뛴다.
+ */
+export function pinAcceptance(contacts: ContactDto[]) {
+  if (!ready) return;
+  const missing = contacts.filter((c) => !overrides[c.id]);
+  if (!missing.length) return;
+  touched = true;
+  overrides = { ...overrides, ...Object.fromEntries(missing.map((c) => [c.id, defaultAcceptance(c.priority)])) };
+  emit();
+  void storage.set(KEYS.contactSim, JSON.stringify(overrides));
+}
+
 export type ContactAcceptance = {
   statusOf: (id: string) => Acceptance;
   set: (id: string, status: Acceptance) => void;
+  /** 순위가 바뀌기 전에 지금 보이는 상태를 고정 (pinAcceptance) */
+  pin: () => void;
   /** 수락 상태가 바뀐 시각(ISO). 저장값 없이 기본으로 수락인 1순위는 null */
   changedAt: (id: string) => string | null;
   summary: Record<Acceptance, number>;
@@ -137,7 +154,8 @@ export function useContactAcceptance(contacts: ContactDto[] | null | undefined):
     for (const c of list) counts[snap.overrides[c.id] ?? defaultAcceptance(c.priority)] += 1;
     return counts;
   }, [snap, list]);
-  return { statusOf, set: setAcceptance, changedAt, summary, ready: snap.ready };
+  const pin = useCallback(() => pinAcceptance(list), [list]);
+  return { statusOf, set: setAcceptance, pin, changedAt, summary, ready: snap.ready };
 }
 
 // ── v3 요약 문구 ──────────────────────────────────────────────

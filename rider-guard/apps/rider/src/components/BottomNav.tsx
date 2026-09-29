@@ -4,7 +4,7 @@ import { Animated, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DocIcon, GearIcon, ShieldIcon, type IconComponent } from '@/components/Icons';
-import { Txt, usePressScale, useReducedMotion } from '@/components/ui';
+import { DESIGN_HOME_INDICATOR, Txt, usePressScale, useReducedMotion } from '@/components/ui';
 import { colors, font, motion } from '@/theme';
 
 export type TabKey = 'home' | 'records' | 'settings';
@@ -20,10 +20,16 @@ const TABS: { key: TabKey; label: string; Icon: IconComponent; go: () => void }[
   { key: 'settings', label: '설정', Icon: GearIcon, go: () => router.replace('/settings') },
 ];
 
+/** 탭 위 선에서 아이콘 가운데 21 · 라벨 가운데 43, 전체 높이 83 (v3·5, 홈 인디케이터 34 포함) */
+const NAV_TOP = 5;
+const TAB_H = 48;
+/** 탭 칸 아래 남는 자리(3)만큼 빼서 — 아이폰(34)에서 디자인 83 그대로, 웹·제스처바도 같은 높이 */
+const navBottom = (insetBottom: number) => Math.max(insetBottom, DESIGN_HOME_INDICATOR) - (TAB_H - 42) / 2 - 2;
+
 export function BottomNav({ active }: { active: TabKey }) {
   const insets = useSafeAreaInsets();
   return (
-    <View accessibilityRole="tablist" accessibilityLabel="하단 메뉴" style={[styles.nav, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+    <View accessibilityRole="tablist" accessibilityLabel="하단 메뉴" style={[styles.nav, { paddingBottom: navBottom(insets.bottom) }]}>
       {TABS.map(({ key, label, Icon, go }) => (
         <Tab key={key} label={label} Icon={Icon} go={go} selected={key === active} />
       ))}
@@ -45,7 +51,7 @@ function Tab({ label, Icon, go, selected }: { label: string; Icon: IconComponent
       style={styles.tab}
     >
       <Animated.View style={[styles.iconSlot, { transform: [{ scale: press.scale }] }]}>
-        {selected ? <SelectedIcon Icon={Icon} /> : <Icon size={22} color={color} strokeWidth={1.8} />}
+        {selected ? <SelectedIcon Icon={Icon} /> : <Icon size={24} color={color} strokeWidth={1.7} />}
       </Animated.View>
       {/* 굵기는 고정하고 색만 바꿔 글자 폭이 흔들리지 않게 */}
       <Txt style={[styles.label, { color }]}>{label}</Txt>
@@ -69,21 +75,21 @@ function SelectedIcon({ Icon }: { Icon: IconComponent }) {
   const scale = useMemo(() => progress.interpolate({ inputRange: [0, 1], outputRange: [0.82, 1] }), [progress]);
   return (
     <Animated.View style={{ transform: [{ scale }] }}>
-      <Icon size={22} color={colors.asphalt} strokeWidth={1.8} />
+      <Icon size={24} color={colors.asphalt} strokeWidth={2} />
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
+  // 탭 가운데 x 65 · 195 · 325 (좌우 여백 없이 삼등분)
   nav: {
     flexDirection: 'row',
-    paddingTop: 8,
-    paddingHorizontal: 12,
+    paddingTop: NAV_TOP,
     backgroundColor: colors.surface,
     borderTopWidth: 1,
     borderTopColor: colors.navLine,
   },
-  tab: { flex: 1, minHeight: 52, alignItems: 'center', justifyContent: 'center', gap: 4 },
+  tab: { flex: 1, minHeight: TAB_H, alignItems: 'center', justifyContent: 'center', gap: 2 },
   iconSlot: { width: 44, height: 24, alignItems: 'center', justifyContent: 'center' },
   label: { ...font.sans(600), fontSize: 12, lineHeight: 16 },
 });

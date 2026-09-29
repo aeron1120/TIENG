@@ -95,10 +95,14 @@ function AppShell({ fontsReady }: { fontsReady: boolean }) {
               }}
             />
             <Stack.Screen name="status" options={{ animation: 'fade', gestureEnabled: false }} />
-            {/* 비상연락처가 받는 긴급 알림 웹(v3·9) 미리보기 — 흰 바탕 전체 화면 */}
+            {/* 비상연락처가 받는 긴급 알림 웹(v3·9) 미리보기 — 흰 바탕 전체 화면. 닫기 버튼이 없어(디자인) iOS 는 쓸어내려 닫는 모달로 */}
             <Stack.Screen
               name="emergency"
-              options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom', contentStyle: { backgroundColor: colors.surface } }}
+              options={{
+                presentation: Platform.OS === 'ios' ? 'modal' : 'fullScreenModal',
+                animation: 'slide_from_bottom',
+                contentStyle: { backgroundColor: colors.surface },
+              }}
             />
             {/* 잠금화면 상시 알림(v3·6) 미리보기 — 어두운 전체 화면 */}
             <Stack.Screen

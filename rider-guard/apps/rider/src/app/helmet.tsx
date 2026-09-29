@@ -1,6 +1,6 @@
-// 헬멧 (spec-v2 02 'v2·2 헬멧 자동 시작'). ?flow=onboarding 이면 가입 흐름 1/2(다음 → 비상연락처 2/2),
-// 아니면 설정·홈에서 연 헬멧 화면 — 착용 상태도 여기서 바꿀 수 있다.
-// 실제 헬멧 연동은 아직 없다. 착용·음성 응답은 시뮬레이션(features/helmet)이고, 페어링된 기기가 없으면 가상 헬멧을 보여 준다.
+// 헬멧 자동 시작 (spec-v3 02 'v3·2 헬멧 자동 시작'). ?flow=onboarding 이면 가입 흐름 1/2(다음 → 비상연락처 2/2),
+// 아니면 설정에서 연 같은 화면(단계 표시 없이 뒤로).
+// 실제 헬멧 연동은 아직 없다. 페어링된 기기가 없으면 가상 헬멧(배터리 시뮬레이션), 음성 응답은 시뮬레이션이다(features/helmet).
 import type { DeviceDto } from '@rider-guard/contract';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
@@ -10,9 +10,9 @@ import { useMe, usePairDevice } from '@/api/hooks';
 import { ErrorText, Header, Input, Notice, StepHeader, TextButton, Toggle } from '@/components/forms';
 import { HelmetIcon } from '@/components/Icons';
 import { useToast } from '@/components/Toast';
-import { Button, Card, Divider, FadeIn, IconHalo, Screen, ScreenFooter, Sheet, SimBadge, Skeleton, Txt } from '@/components/ui';
-import { helmetInfo, useHelmet, useProtection, type HelmetInfo, type ProtectionState } from '@/features/helmet';
-import { batteryText, hm } from '@/lib/format';
+import { Button, Card, Divider, FadeIn, IconHalo, Screen, ScreenFooter, Sheet, Skeleton, Txt } from '@/components/ui';
+import { helmetInfo, helmetTitle, useHelmet, useProtection, type HelmetInfo } from '@/features/helmet';
+import { batteryText } from '@/lib/format';
 import { backOr } from '@/lib/nav';
 import { colors, font, typography } from '@/theme';
 
@@ -24,88 +24,49 @@ export default function HelmetScreen() {
   const protection = useProtection();
   const [changing, setChanging] = useState(false);
   // me 를 받기 전에는 가상 헬멧을 그리지 않는다 — 실제 기기가 있으면 이름이 바뀌며 깜빡이므로
-  const info = me ? helmetInfo(me.device) : null;
-  // '시뮬레이션' 칩은 화면에 하나만: 가상 헬멧이면 헬멧 행, 실제 기기면 착용(또는 음성) 행
-  const simOn: 'helmet' | 'worn' | 'voice' = !info || info.simulated ? 'helmet' : onboarding ? 'voice' : 'worn';
+  const info = me ? helmetInfo(me.device, helmet.worn) : null;
 
-  const back = () => backOr(onboarding ? '/onboarding' : '/home');
+  const back = () => backOr(onboarding ? '/onboarding' : '/settings');
   const next = () => (onboarding ? router.push({ pathname: '/setup', params: { flow: 'onboarding' } }) : back());
-  // 설정에서 열었으면 지금 상태를 보여 준다 — 벗으면 회색, 보호 중이면 숨쉬기
-  const lit = onboarding || helmet.worn;
 
   return (
     <>
       <Screen
-        top={52}
-        side={24}
         gap={0}
         bottom={24}
         enter="none"
         footer={
-          <ScreenFooter style={styles.footer}>
+          <ScreenFooter>
             <Button label={onboarding ? '다음' : '확인'} onPress={next} />
           </ScreenFooter>
         }
       >
-        {onboarding ? (
-          <StepHeader onBack={back} current={1} total={2} />
-        ) : (
-          <View>
-            <Header onBack={back} />
-            <Txt accessibilityRole="header" style={styles.navTitle}>
-              헬멧
-            </Txt>
-          </View>
-        )}
+        {onboarding ? <StepHeader onBack={back} current={1} total={2} /> : <Header onBack={back} />}
 
         <FadeIn style={styles.halo}>
-          <IconHalo
-            color={lit ? colors.primary : colors.textFaint}
-            rings={lit ? undefined : [colors.divider]}
-            breathing={onboarding || protection.active}
-          >
-            <HelmetIcon size={56} strokeWidth={1.25} color={colors.textOnDark} />
+          {/* 보호 중이면 링이 천천히 숨쉰다 (가입 흐름에서는 늘) */}
+          <IconHalo breathing={onboarding || protection.active}>
+            <HelmetIcon size={46} color={colors.textOnDark} />
           </IconHalo>
         </FadeIn>
 
         <FadeIn delay={40} style={styles.intro}>
           <Txt accessibilityRole="header" style={[typography.title, styles.center]}>
-            헬멧을 쓰면{'\n'}보호가 자동으로 켜져요
+            {'헬멧을 쓰면\n보호가 자동으로 켜져요'}
           </Txt>
-          <Txt style={[typography.lead, styles.center]}>운행 시작 버튼은 없어요. 헬멧을 벗으면{'\n'}위치 수집도 함께 멈춰요.</Txt>
+          <Txt style={[typography.lead, styles.center, styles.lead]}>{'운행 시작 버튼은 없어요.\n헬멧을 벗으면 위치 수집도 함께 멈춰요.'}</Txt>
         </FadeIn>
 
         <FadeIn delay={80} style={styles.cardWrap}>
           <Card style={styles.card}>
-            {!onboarding && (
-              <>
-                <View style={styles.row}>
-                  <View style={styles.rowMain}>
-                    <View style={styles.titleLine}>
-                      <Txt style={styles.rowTitle}>헬멧 착용</Txt>
-                      {simOn === 'worn' && <SimBadge />}
-                    </View>
-                    <Txt style={styles.rowSub}>{protectionText(protection, me?.onboarded ?? true)}</Txt>
-                  </View>
-                  <Toggle value={helmet.worn} onValueChange={helmet.setWorn} accessibilityLabel="헬멧 착용 (시뮬레이션)" />
-                </View>
-                <Divider inset={ROW_SIDE} />
-              </>
-            )}
-
-            {info ? <HelmetRow info={info} sim={simOn === 'helmet'} onChange={() => setChanging(true)} /> : <HelmetRowSkeleton />}
-
+            {info ? <HelmetRow info={info} onChange={() => setChanging(true)} /> : <HelmetRowSkeleton />}
             <Divider inset={ROW_SIDE} />
-
             <View style={styles.row}>
               <View style={styles.rowMain}>
-                <View style={styles.titleLine}>
-                  <Txt style={styles.rowTitle}>말로 응답하기</Txt>
-                  {simOn === 'voice' && <SimBadge />}
-                </View>
-                <Txt style={styles.rowSub}>사고 시 헬멧 스피커로 묻고 음성으로 답해요</Txt>
+                <Txt style={styles.rowTitle}>말로 응답하기</Txt>
+                <Txt style={styles.rowSub}>사고 때 헬멧 스피커로 묻고 음성으로 답해요</Txt>
               </View>
-              <Toggle value={helmet.voice} onValueChange={helmet.setVoice} accessibilityLabel="말로 응답하기" />
+              <Toggle value={helmet.voice} onValueChange={helmet.setVoice} accessibilityLabel="말로 응답하기" style={styles.toggle} />
             </View>
           </Card>
         </FadeIn>
@@ -118,37 +79,22 @@ export default function HelmetScreen() {
   );
 }
 
-/** 착용 행 보조 줄 — 보호(운행 세션)가 지금 어떤지. 켜고 끄는 일은 useAutoProtection 이 한다. */
-function protectionText(p: ProtectionState, onboarded: boolean): string {
-  if (p.heldByIncident) return '사고 대응이 끝날 때까지 보호를 유지해요';
-  if (p.pending === 'start') return '보호를 켜는 중이에요';
-  if (p.pending === 'end') return '보호를 끄는 중이에요';
-  // 실패하면 자동 보호가 잠시 뒤 다시 시도한다
-  if (p.error) return p.worn ? '보호를 켜지 못했어요. 잠시 뒤 다시 시도해요' : '보호를 끄지 못했어요. 잠시 뒤 다시 시도해요';
-  if (p.active) return `보호 중 · ${hm(p.startedAt)}부터`;
-  if (p.worn) return onboarded ? '보호를 켜는 중이에요' : '가입 정보를 마치면 보호가 켜져요';
-  return '보호 꺼짐 · 헬멧을 쓰면 켜져요';
-}
-
-function HelmetRow({ info, sim, onChange }: { info: HelmetInfo; sim: boolean; onChange: () => void }) {
-  // 실제 태그는 이름과 종류가 같은 '헬멧 태그'일 수 있어 겹치면 한 번만
-  const sub = [info.detail !== info.name ? info.detail : null, info.battery != null ? `배터리 ${batteryText(info.battery)}` : null]
-    .filter(Boolean)
-    .join(' · ');
-  const state = info.connected ? '연결됨' : '신호 없음';
+/** '헬멧 모듈 연결됨' / '개발용 웹캠 detector, 배터리 78%' / 밑줄 '변경' */
+function HelmetRow({ info, onChange }: { info: HelmetInfo; onChange: () => void }) {
+  const battery = `배터리 ${batteryText(info.battery)}`;
+  const sub = info.detail !== info.name ? `${info.detail}, ${battery}` : battery;
+  const title = helmetTitle(info);
   return (
     <View style={styles.row}>
-      <View style={[styles.dot, { backgroundColor: info.connected ? colors.primary : colors.textFaint }]} />
-      <View style={styles.rowMain} accessible accessibilityLabel={`${info.name} ${state}${sub ? `, ${sub}` : ''}${sim ? ', 시뮬레이션' : ''}`}>
-        <View style={styles.titleLine}>
-          <Txt style={styles.rowTitle}>
-            {info.name} {state}
-          </Txt>
-          {sim && <SimBadge />}
-        </View>
-        {sub ? <Txt style={styles.rowSub}>{sub}</Txt> : null}
+      <View style={styles.dotBox}>
+        <View style={[styles.dotHalo, { backgroundColor: info.connected ? colors.greenSoft : colors.curb }]} />
+        <View style={[styles.dot, { backgroundColor: info.connected ? colors.green : colors.textFaint }]} />
       </View>
-      <TextButton label="변경" accessibilityLabel="헬멧 모듈 변경" color={colors.primaryInk} fontSize={15} weight={700} onPress={onChange} />
+      <View style={styles.rowMain} accessible accessibilityLabel={`${title}, ${sub}`}>
+        <Txt style={styles.rowTitle}>{title}</Txt>
+        <Txt style={styles.rowSub}>{sub}</Txt>
+      </View>
+      <TextButton label="변경" accessibilityLabel="헬멧 모듈 변경" underline onPress={onChange} style={styles.change} />
     </View>
   );
 }
@@ -157,9 +103,9 @@ function HelmetRowSkeleton() {
   return (
     <View style={styles.row}>
       <Skeleton width={8} height={8} radius={4} />
-      <View style={[styles.rowMain, { gap: 8 }]}>
-        <Skeleton width={128} height={16} />
-        <Skeleton width={184} height={12} />
+      <View style={[styles.rowMain, styles.skeletonMain]}>
+        <Skeleton width={120} height={16} />
+        <Skeleton width={190} height={13} />
       </View>
     </View>
   );
@@ -195,7 +141,7 @@ function ChangeSheet({ visible, device, onClose }: { visible: boolean; device: D
       description={
         device
           ? `지금은 ${device.name} 신호로 보여 드려요. 다른 기기의 페어링 코드 6자리를 넣으면 그 기기로 바뀌어요.`
-          : '지금은 시뮬레이션으로 보여 드려요. 개발용 detector나 헬멧 태그의 페어링 코드 6자리가 있으면 연결할 수 있어요.'
+          : '지금은 가상 헬멧으로 보여 드려요. 개발용 detector나 헬멧 태그의 페어링 코드 6자리가 있으면 연결할 수 있어요.'
       }
     >
       <Input
@@ -224,19 +170,25 @@ function ChangeSheet({ visible, device, onClose }: { visible: boolean; device: D
 const ROW_SIDE = 18;
 
 const styles = StyleSheet.create({
-  navTitle: { ...font.sans(700), position: 'absolute', left: 56, right: 56, top: 0, fontSize: 17, lineHeight: 44, textAlign: 'center' },
-  halo: { marginTop: 32 },
-  intro: { marginTop: 30, gap: 10 },
+  halo: { marginTop: 22 },
+  intro: { marginTop: 28 },
   center: { textAlign: 'center' },
-  cardWrap: { marginTop: 24 },
+  lead: { marginTop: 10 },
+  cardWrap: { marginTop: 28 },
   card: { overflow: 'hidden' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 70, paddingVertical: 14, paddingHorizontal: ROW_SIDE },
-  rowMain: { flex: 1, gap: 2 },
-  titleLine: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
-  rowTitle: { ...font.sans(700), fontSize: 15, lineHeight: 22 },
-  rowSub: typography.caption,
+  // 두 줄(21 + 1 + 18) + 위아래 17 = 74
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 17, paddingHorizontal: ROW_SIDE },
+  rowMain: { flex: 1, gap: 1 },
+  rowTitle: { ...font.sans(700), fontSize: 15, lineHeight: 21, color: colors.text },
+  rowSub: { ...typography.caption, lineHeight: 18, letterSpacing: -0.4 },
+  // 초록 점 8 + 연초록 헤일로 14 (헤일로는 자리를 차지하지 않는다)
+  dotBox: { width: 8, height: 8, alignItems: 'center', justifyContent: 'center' },
+  dotHalo: { position: 'absolute', left: -3, top: -3, width: 14, height: 14, borderRadius: 7 },
   dot: { width: 8, height: 8, borderRadius: 4 },
+  // 글자 끝이 카드 오른쪽 여백선에 맞게 · 행 높이를 키우지 않게
+  change: { marginRight: -8, minHeight: 40 },
+  toggle: { minHeight: 40 },
+  skeletonMain: { gap: 8 },
   notice: { marginTop: 16 },
-  footer: { paddingHorizontal: 24 },
   code: { letterSpacing: 4 },
 });

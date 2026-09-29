@@ -101,9 +101,13 @@ function paintFor(layer: LayerJson, p: MapCanvasPalette): LayerJson {
     paint['text-halo-color'] = p.labelHalo;
     paint['text-halo-width'] = 1;
     paint['text-halo-blur'] = 0;
+    // 디자인 라벨('중앙로')은 약 7~8pt — 작게, 서로·가장자리에서 넉넉히 떨어뜨리고 못 놓으면 뺀다
     layout['text-field'] = KOREAN_NAME;
-    layout['text-size'] = 10;
-    layout['text-padding'] = 8;
+    layout['text-size'] = 8;
+    layout['text-padding'] = 24;
+    layout['symbol-avoid-edges'] = true;
+    layout['text-optional'] = true;
+    paint['text-opacity'] = 0.85;
   }
   return { ...layer, paint, layout };
 }
@@ -148,7 +152,9 @@ export default function MapCanvas({ lat, lng, zoom, styleUrl, palette, onStatus 
   useEffect(() => {
     report.current = onStatus;
   }, [onStatus]);
-  const initial = useRef({ lat, lng, zoom, styleUrl, palette });
+  const initial = useRef({ styleUrl, palette });
+  // 스타일을 받는 사이 위치가 바뀌어도 지도는 최신 위치로 만든다 (첫 GPS 가 스타일보다 늦게 와도 버려지지 않게)
+  const latest = useRef({ lat, lng, zoom });
 
   useEffect(() => {
     const el = holder.current;
@@ -161,7 +167,7 @@ export default function MapCanvas({ lat, lng, zoom, styleUrl, palette, onStatus 
       void Promise.resolve(report.current?.(status, detail)).catch(() => {});
     };
     const timer = setTimeout(() => settle('error', 'timeout'), LOAD_TIMEOUT_MS);
-    const { lat: lat0, lng: lng0, zoom: zoom0, styleUrl: url, palette: p } = initial.current;
+    const { styleUrl: url, palette: p } = initial.current;
 
     (async () => {
       try {
@@ -170,11 +176,12 @@ export default function MapCanvas({ lat, lng, zoom, styleUrl, palette, onStatus 
         const style = recolor((await res.json()) as StyleJson, p);
         if (cancelled) return;
         ensureWorker();
+        const at = latest.current;
         const m = new MapLibreMap({
           container: el,
           style: style as unknown as MapOptions['style'],
-          center: [lng0, lat0],
-          zoom: zoom0,
+          center: [at.lng, at.lat],
+          zoom: at.zoom,
           interactive: false,
           attributionControl: false,
           fadeDuration: 0,
@@ -184,6 +191,9 @@ export default function MapCanvas({ lat, lng, zoom, styleUrl, palette, onStatus 
         map.current = m;
         m.once('load', () => {
           clearTimeout(timer);
+          // 만드는 동안 들어온 위치로 한 번 더 맞춘다
+          const now = latest.current;
+          m.jumpTo({ center: [now.lng, now.lat], zoom: now.zoom });
           settle('ready');
         });
         m.on('error', (e) => {
@@ -204,8 +214,9 @@ export default function MapCanvas({ lat, lng, zoom, styleUrl, palette, onStatus 
     };
   }, []);
 
-  // 위치가 바뀌면 가운데를 옮긴다 (부드럽게, 줄임 모션이면 바로)
+  // 위치가 바뀌면 가운데를 옮긴다 (부드럽게, 줄임 모션이면 바로). 지도를 만드는 중이면 기억만 해 둔다
   useEffect(() => {
+    latest.current = { lat, lng, zoom };
     const m = map.current;
     if (!m) return;
     const reduce = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;

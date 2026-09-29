@@ -2,17 +2,18 @@ import type { LocationPoint, UploadLocationsResponse } from '@rider-guard/contra
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { Alert, Platform } from 'react-native';
 
 import { API_URL } from '@/api/client';
+import { simPosition, type SimPosition } from '@/features/sim';
 import { KEYS, storage } from '@/lib/storage';
 import { colors } from '@/theme';
 
 /**
- * 운행 중 위치 수집. 운행 세션 동안만 켠다 (설계문서 2.1 — 세션 밖에서는 수집 자체를 하지 않는다).
+ * 보호 중 위치 수집. 운행 세션(= 헬멧을 쓰고 있는 동안의 보호) 동안만 켠다 (설계문서 2.1 — 세션 밖에서는 수집 자체를 하지 않는다).
  *
- *   background  앱을 닫아도 계속 — 안드로이드는 '운행 중' 상시 알림(포그라운드 서비스), iOS 는 상단 위치 표시가 뜬다.
+ *   background  앱을 닫아도 계속 — 안드로이드는 '보호 중' 상시 알림(포그라운드 서비스, v3·6), iOS 는 상단 위치 표시가 뜬다.
  *               보이지 않는 추적은 '감시 도구'로 느껴지므로 일부러 드러낸다.
  *   foreground  백그라운드 권한을 안 줬거나 Expo Go·웹 — 앱을 켜 둔 동안만
  *
@@ -46,6 +47,15 @@ export function recentLocation() {
   const last = state.last;
   if (!last || Date.now() - Date.parse(last.recordedAt) > 120_000) return undefined;
   return { lat: last.lat, lng: last.lng, accuracy: last.accuracy };
+}
+
+/**
+ * 지도 가운데에 둘 위치 — 보호 중 모은 마지막 위치, 없으면 서울 기본 좌표(시뮬레이션, 역삼역).
+ * const pos = useRiderPosition(); <RiderMap location={pos} … />  — pos.simulated 면 시뮬레이션 위치.
+ */
+export function useRiderPosition(): SimPosition {
+  const { last } = useLocationState();
+  return useMemo(() => simPosition(last ? { lat: last.lat, lng: last.lng, accuracy: last.accuracy ?? null, recordedAt: last.recordedAt } : null), [last]);
 }
 
 const toPoint = (pos: Location.LocationObject): LocationPoint => ({
@@ -115,7 +125,7 @@ if (backgroundCapable) {
 
 // ── 시작 · 종료 ────────────────────────────────────────────────
 
-/** 한 번 실행에 한 번만 묻는다 — 운행을 시작할 때마다 설정 화면으로 보내면 앱을 끈다. */
+/** 한 번 실행에 한 번만 묻는다 — 보호가 켜질 때마다 설정 화면으로 보내면 앱을 끈다. */
 let askedThisRun = false;
 
 /**
@@ -127,7 +137,7 @@ function explainBackground(): Promise<boolean> {
   return new Promise((resolve) =>
     Alert.alert(
       '위치 "항상 허용"이 필요해요',
-      '앱을 닫아 두어도 사고를 감지하고 비상연락처에 위치를 알리려면, 다음 화면에서 "항상 허용"을 골라 주세요.\n\n운행 중에만 수집하고, 운행을 종료하면 멈춰요.',
+      '앱을 닫아 두어도 사고를 감지하고 비상연락처에 위치를 알리려면, 다음 화면에서 "항상 허용"을 골라 주세요.\n\n헬멧을 쓰고 있는 동안에만 수집하고, 헬멧을 벗으면 멈춰요.',
       [
         { text: '나중에', style: 'cancel', onPress: () => resolve(false) },
         { text: '설정으로', onPress: () => resolve(true) },
@@ -153,10 +163,11 @@ async function startBackground(): Promise<boolean> {
     distanceInterval: 20,
     // 한 번에 몰아서 받아 깨어나는 횟수를 줄인다
     deferredUpdatesInterval: 15_000,
+    // v3·6 잠금화면 상시 알림 — '보호 중' / '헬멧 연결됨, 앱을 닫아도 계속 보호돼요'
     foregroundService: {
-      notificationTitle: 'Rider Guard 운행 중',
-      notificationBody: '사고 감지와 위치 공유가 켜져 있어요. 운행을 종료하면 꺼져요.',
-      notificationColor: colors.accent,
+      notificationTitle: '보호 중',
+      notificationBody: '헬멧 연결됨, 앱을 닫아도 계속 보호돼요',
+      notificationColor: colors.asphalt,
       killServiceOnDestroy: false,
     },
     pausesUpdatesAutomatically: false,
@@ -166,7 +177,7 @@ async function startBackground(): Promise<boolean> {
   return true;
 }
 
-/** 운행 종료·로그아웃 때. 여러 번 불려도 된다. */
+/** 보호가 꺼질 때(헬멧을 벗음)·로그아웃 때. 여러 번 불려도 된다. */
 export async function stopLocationTracking() {
   await storage.set(KEYS.session, null);
   if (backgroundCapable && (await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false))) {

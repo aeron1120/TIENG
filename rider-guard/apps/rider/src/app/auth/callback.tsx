@@ -1,15 +1,15 @@
 // SNS 로그인 후 서버가 돌려보내는 주소 (riderguard://auth/callback?code=…, 웹은 /auth/callback)
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { Loading } from '@/auth/AfterSignIn';
 import { useAuth } from '@/auth/AuthProvider';
-import { ErrorText } from '@/components/forms';
-import { Button, Screen, Txt } from '@/components/ui';
+import { Notice } from '@/components/forms';
+import { Button, Screen, Spacer, Txt } from '@/components/ui';
 import { completeSocialLogin, isAuthPopup } from '@/features/socialLogin';
 import { backOr } from '@/lib/nav';
-import { font } from '@/theme';
+import { typography } from '@/theme';
 
 export default function AuthCallbackScreen() {
   const params = useLocalSearchParams<{ code?: string; error?: string }>();
@@ -32,14 +32,20 @@ export default function AuthCallbackScreen() {
 
   if (!error) return <Loading />;
   return (
-    <Screen top={56} side={24} gap={16}>
-      <Txt style={styles.h1}>로그인하지 못했어요</Txt>
-      <ErrorText error={error} />
-      <Button label="돌아가기" variant="outline" onPress={() => backOr('/')} />
+    <Screen top={56} side={24} gap={24}>
+      <View style={styles.intro}>
+        <Txt accessibilityRole="header" style={typography.title}>
+          로그인하지 못했어요
+        </Txt>
+        <Txt style={typography.lead}>잠시 뒤 다시 시도하거나 이메일로 로그인해 주세요.</Txt>
+      </View>
+      <Notice error={error} />
+      <Spacer />
+      <Button label="로그인 화면으로" onPress={() => backOr('/')} />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  h1: { ...font.sans(700), fontSize: 22, letterSpacing: -0.4 },
+  intro: { gap: 8 },
 });

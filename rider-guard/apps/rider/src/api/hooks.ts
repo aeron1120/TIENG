@@ -62,9 +62,15 @@ export function useIncident(id: string | undefined) {
   });
 }
 
+/** 진행 중인 사고가 목록에 있으면 5초마다 다시 받는다 — 보고 있는 동안 '대응 중'이 '대응 완료'로 바뀌도록. */
 export function useIncidents() {
   const enabled = useSignedIn();
-  return useQuery({ queryKey: keys.list, queryFn: () => api<IncidentListResponse>('GET', '/me/incidents'), enabled });
+  return useQuery({
+    queryKey: keys.list,
+    queryFn: () => api<IncidentListResponse>('GET', '/me/incidents'),
+    enabled,
+    refetchInterval: (q) => (q.state.data?.items.some((i) => isOpenStatus(i.status)) ? 5000 : false),
+  });
 }
 
 // ── 변경 ───────────────────────────────────────────────────────

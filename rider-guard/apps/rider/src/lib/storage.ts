@@ -10,6 +10,18 @@ export const KEYS = {
   session: 'rider-guard.session',
   /** 진행 중인 SNS 로그인의 sessionKey — 브라우저에 가 있는 동안 앱 프로세스가 죽어도 이어서 마치려고 저장한다 */
   oauth: 'rider-guard.oauth',
+  /** 헬멧 시뮬레이션 {"worn":boolean,"voice":boolean} — 실제 헬멧 연동이 없어 착용 상태를 앱이 흉내 낸다 (features/helmet) */
+  helmetSim: 'rider-guard.helmet-sim',
+  /** 비상연락처 수락 시뮬레이션 {[contactId]: 'accepted'|'pending'|'declined'} — 화면에서만 쓴다 (features/contactSim) */
+  contactSim: 'rider-guard.contact-sim',
+  /** 수락 상태가 바뀐 시각 {[contactId]: ISO} — 알림 목록 'N분 전' (features/contactSim) */
+  contactSimAt: 'rider-guard.contact-sim-at',
+  /** 가입 화면에서 받은 이름(문자열 그대로) — v3·1 시작·동의에서 가입 정보로 저장하고 지운다 (features/sim) */
+  pendingName: 'rider-guard.pending-name',
+  /** 선택 동의 시뮬레이션 {"falsePositive": boolean} — '오탐 구간을 정확도 개선에 제공' (features/sim) */
+  consentSim: 'rider-guard.consent-sim',
+  /** 알림 목록(종 아이콘)을 마지막으로 연 시각 ISO — 읽지 않은 알림 점 (features/sim) */
+  notifSeen: 'rider-guard.notif-seen',
 } as const;
 
 /**
@@ -19,6 +31,18 @@ export const KEYS = {
 const SECURE_OPTIONS: SecureStore.SecureStoreOptions = { keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK };
 
 export const storage = {
+  /**
+   * 웹에서만 동기로 바로 읽는다 — 첫 화면부터 저장된 시뮬레이션 상태로 그려 깜빡이지 않게.
+   * 네이티브(SecureStore 는 비동기)는 undefined 를 돌려주므로 get 으로 다시 읽는다.
+   */
+  peekWeb(key: string): string | null | undefined {
+    if (Platform.OS !== 'web') return undefined;
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
   async get(key: string): Promise<string | null> {
     if (Platform.OS !== 'web') return SecureStore.getItemAsync(key);
     try {

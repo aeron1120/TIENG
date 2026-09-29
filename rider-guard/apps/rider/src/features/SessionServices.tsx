@@ -5,7 +5,8 @@ import { router, usePathname } from 'expo-router';
 import { useEffect, useRef } from 'react';
 
 import { api } from '@/api/client';
-import { applyIncident, useActiveIncident, useMe } from '@/api/hooks';
+import { applyIncident, isOpenStatus, useActiveIncident, useMe } from '@/api/hooks';
+import { useAutoProtection } from '@/features/helmet';
 import { useLocationTracking } from '@/features/location';
 import { pushSupported, registerPush } from '@/features/push';
 import { resetTo } from '@/lib/nav';
@@ -20,7 +21,8 @@ function presentAlert(id: string, pathname: string) {
 
 /**
  * 로그인 상태에서 항상 떠 있는 백그라운드 역할:
- * - 운행 중 위치 수집 (앱을 닫아도 — 개발 빌드)
+ * - 헬멧 착용(시뮬레이션)에 맞춰 보호(운행 세션)를 자동으로 켜고 끈다 — features/helmet
+ * - 보호 중 위치 수집 (앱을 닫아도 — 개발 빌드)
  * - 푸시 토큰 등록, 알림을 눌러 들어온 경우 처리
  * - 사고가 감지되면(휴대폰·태그·지표 판정 어느 쪽이든) 어느 화면에 있든 사고 확인 화면을 띄운다
  */
@@ -34,6 +36,8 @@ export function SessionServices() {
   }, []);
 
   const { data } = useActiveIncident(!!sessionId);
+  // 진행 중 사고를 아직 받아 보지 못했으면 null — 그동안은 헬멧을 벗어도 보호를 끄지 않는다
+  useAutoProtection(data === undefined ? null : isOpenStatus(data.incident?.status));
   const pathname = usePathname();
   useEffect(() => {
     const incident = data?.incident;

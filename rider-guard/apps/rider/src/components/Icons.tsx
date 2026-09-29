@@ -32,13 +32,6 @@ export function LogoIcon({ size = 32, color = colors.accent }: IconProps) {
   );
 }
 
-export const BellIcon = (p: IconProps) => (
-  <Line {...p}>
-    <Path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z" />
-    <Path d="M10 21h4" />
-  </Line>
-);
-
 export const HelmetIcon = (p: IconProps) => (
   <Line {...p}>
     <Path d="M4 16a8 8 0 0 1 16 0v2H4z" />

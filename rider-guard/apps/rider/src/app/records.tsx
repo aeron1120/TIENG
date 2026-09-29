@@ -1,14 +1,14 @@
 // 디자인: design/Records.dc.html — 사고 기록
 import type { IncidentSummaryDto } from '@rider-guard/contract';
 import { router } from 'expo-router';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, Share, StyleSheet, View } from 'react-native';
 
 import { errorMessage } from '@/api/client';
 import { useIncidents } from '@/api/hooks';
 import { BottomNav } from '@/components/BottomNav';
 import { ChevronRightIcon } from '@/components/Icons';
 import { Badge, Button, Card, Screen, Txt } from '@/components/ui';
-import { contactText, dateTime, orderText, placeText, recordSummary, recordTag, responseText } from '@/lib/format';
+import { contactText, dateTime, orderText, placeText, recordShareText, recordSummary, recordTag, responseText } from '@/lib/format';
 import { colors, font, radius } from '@/theme';
 
 const openStatus = (id: string) => router.push({ pathname: '/status', params: { id } });
@@ -87,11 +87,15 @@ function LatestCard({ record }: { record: IncidentSummaryDto }) {
           </View>
         ))}
       </View>
-      <View style={{ flexDirection: 'row', gap: 8 }}>
-        {/* TODO: 사고기록 PDF 생성(서버) / 공유 — 디자인만 있고 아직 동작하지 않는다 */}
-        <Button label="사고기록 PDF 받기" variant="dark" height={48} rounded={radius.lg} fontSize={14} style={{ flex: 1 }} />
-        <Button label="공유" variant="outline" height={48} rounded={radius.lg} fontSize={14} weight={600} style={{ paddingHorizontal: 16 }} />
-      </View>
+      {/* 디자인의 'PDF 받기'는 서버 PDF 생성이 없어 빼고, 기록을 글로 공유한다 */}
+      <Button
+        label="기록 공유"
+        variant="dark"
+        height={48}
+        rounded={radius.lg}
+        fontSize={14}
+        onPress={() => Share.share({ message: recordShareText(record) }).catch(() => {})}
+      />
     </Card>
   );
 }

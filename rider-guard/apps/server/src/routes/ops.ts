@@ -4,6 +4,7 @@ import type { OpsEmergencyResponse, OpsIncidentDetailDto, OpsIncidentDto, OpsJud
 import { Hono } from 'hono';
 import { z } from 'zod';
 
+import { DEV_OPS_TOKEN } from '../config.ts';
 import type { AppContext } from '../context.ts';
 import { ApiError, readBody, safeEqual } from '../lib.ts';
 import { claimIncident, listForOps, markOrderReassigned, opsDetail, reportEmergency, resolveIncident } from '../services/incidents.ts';
@@ -18,7 +19,11 @@ const resolveSchema = z.object({ outcome: z.enum(['false_alarm', 'handled']), no
 export function opsRoutes(ctx: AppContext) {
   const app = new Hono<OpsEnv>();
 
-  app.get('/', (c) => c.html(consoleHtml));
+  // 개발용 기본 토큰은 서버가 그 토큰으로 떴을 때만 미리 채운다 — 운영 콘솔에 엉뚱한 값이 들어가지 않게
+  const page = ctx.config.opsToken === DEV_OPS_TOKEN
+    ? consoleHtml.replace("/*DEFAULT_TOKEN*/''", JSON.stringify(DEV_OPS_TOKEN))
+    : consoleHtml;
+  app.get('/', (c) => c.html(page));
 
   app.use('/api/*', async (c, next) => {
     const header = c.req.header('authorization') ?? '';

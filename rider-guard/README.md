@@ -38,7 +38,13 @@ npm start
 2. 서버 — Render 대시보드 → New → Blueprint → 이 저장소, Blueprint 경로 `rider-guard/render.yaml`.
    `DATABASE_URL`·`DATABASE_AUTH_TOKEN` 은 이때 대시보드에 넣는다(저장소에 적지 않는다). `OPS_TOKEN` 은 Render 가 만들고,
    `PUBLIC_BASE_URL` 은 비워 두면 Render 주소(`https://<이름>.onrender.com`)를 쓴다. `Justin` 브랜치에 올리면 다시 배포된다.
-3. 앱 — `EXPO_PUBLIC_API_URL=<Render 주소>` 로 preview 빌드(APK)를 만든다. Metro 없이 어디서나 동작한다.
+3. 앱 — `cd apps/rider && npm run build:android:preview` — `eas.json` preview 프로필의 `EXPO_PUBLIC_API_URL`(Render 주소)이
+   들어간 APK 를 만든다. Metro 없이 어디서나 동작한다. 개발 빌드와 패키지 이름이 같아 설치하면 개발 빌드를 대신한다.
+   시연용이라 `EXPO_PUBLIC_SHOW_DEV_TOOLS` 로 홈의 '개발용 · 사고 감지 테스트' 버튼을 켜 둔다 (production 프로필에는 없음).
+
+지금 배포된 서버: `https://rider-guard-api.onrender.com` (관제 콘솔 `/ops`, 토큰은 Render 대시보드의 `OPS_TOKEN`).
+관제 콘솔의 '상담원 이름'은 인증이 아니라 누가 배정·신고했는지 남기는 이름이다. 토큰 칸은 서버가 `OPS_TOKEN` 없이 떴을 때(로컬)만 미리 채워진다.
+공개 저장소 주소로 연결한 서비스라 `Justin` 에 올려도 자동 배포되지 않는다 — Render 에서 Manual Deploy.
 
 - 무료 Render 는 15분 동안 요청이 없으면 잠들고, 첫 요청이 30~60초 걸린다. 운행 중에는 위치를 15초마다 보내 깨어 있다.
 - Turso 는 읽은 행 수로 무료 한도를 센다 — 자주 도는 조회는 전부 인덱스를 타게 해 두었다(스키마 v3). `GET /me` 는 조회를 한 번에 묶어 보낸다.
@@ -137,8 +143,8 @@ npm run sim -- ../../../results/2_frontal.csv                                   
 | `/auth/callback` | — | SNS 로그인 뒤 돌아오는 딥링크. 로그인 처리 후 `/` |
 | `/setup` | `Setup.dc.html` 기기 연결과 비상연락망 | 뒤로 → 이전 화면, 연락처 추가/편집 → `/contact`, 설정 완료 → `/home` |
 | `/contact` | (디자인 없음) 비상연락처 추가·편집 | 저장·삭제 → `/setup` |
-| `/home` | `Home.dc.html` 홈 운행 중 (+ 운행 전 상태) | 수정 → `/setup`, 하단 탭 |
-| `/records` | `Records.dc.html` 사고 기록 | 기록 → `/status` |
+| `/home` | `Home.dc.html` 홈 운행 중 (+ 운행 전 상태). 알림 벨은 알림 목록 화면이 없어 뺐다 | 수정 → `/setup`, 하단 탭 |
+| `/records` | `Records.dc.html` 사고 기록. 'PDF 받기' 대신 기록을 글로 공유(시스템 공유 시트) | 기록 → `/status` |
 | `/alert` | `Alert.dc.html` 사고 확인 | 사고 감지 시 어느 화면에서든 자동으로 뜸. 도움이 필요해요 → `/status`, 괜찮아요 → `/home` |
 | `/status` | `Status.dc.html` 사고 대응 진행 상황 | 119 / 관제센터 전화, 닫기 → `/home` |
 | `/settings` | (디자인 없음) 계정 · 알림 상태 · 로그아웃 · 회원 탈퇴 | 가입 정보 수정 → `/onboarding?mode=edit` |
@@ -166,7 +172,7 @@ npm run sim -- ../../../results/2_frontal.csv                                   
 ## 검사
 
 ```bash
-cd apps/server && npm test && npm run typecheck && npm run lint   # 가입·SNS·에스컬레이션·권한·기기·지표 판정 64개
+cd apps/server && npm test && npm run typecheck && npm run lint   # 가입·SNS·에스컬레이션·권한·기기·지표 판정·관제 콘솔 65개
 cd apps/rider && npm run typecheck && npm run lint
 ```
 
@@ -177,7 +183,7 @@ cd apps/rider && npm run typecheck && npm run lint
 - 휴대폰 번호 인증, 비밀번호 찾기·변경, 이메일 계정과 SNS 계정 합치기
 - 탈퇴 시 네이버·구글 연동 해제 — 사용자 토큰을 보관하지 않아 서버에서 끊을 수 없다. 사용자가 각 계정 설정에서 끊는다
 - 로그인·가입 요청 수 제한(IP 단위) — 배포할 때 프록시에서
-- 경보음(진동만 구현), QR 스캔(코드 입력으로 대체), 사고기록 PDF·공유, 설정 화면 디자인
+- 경보음(진동만 구현), QR 스캔(코드 입력으로 대체), 사고기록 PDF(지금은 글로 공유), 알림 목록 화면, 설정 화면 디자인
 - 실제 시뮬레이션 결과로 임계값 확정 (지금 값은 설계문서·moto-sensing 설정에서 가져온 추정치)
 - 신체 착용 태그의 BLE 연동, 근접 사고 자가 보고(8.3), 음성·회복 신호(5.4, 6.3.5), 개인화 임계값
 - 위치정보사업 신고 등 법적 절차(9.1) — 운영 전 필수

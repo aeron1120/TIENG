@@ -115,3 +115,17 @@ export const orderText = (r: IncidentSummaryDto) => (r.orderStatus ? ORDER_LABEL
 
 export const placeText = (r: IncidentSummaryDto) =>
   r.location ? (r.location.address ?? `${r.location.lat.toFixed(4)}, ${r.location.lng.toFixed(4)}`) : '위치 없음';
+
+/** 기록 화면 '기록 공유' — 보험·산재 접수 때 문자·메신저로 보낼 수 있는 글 */
+export function recordShareText(r: IncidentSummaryDto): string {
+  const map = r.location ? `\n지도: https://maps.google.com/?q=${r.location.lat},${r.location.lng}` : '';
+  return [
+    '[Rider Guard 사고 기록]',
+    `감지 시각: ${dateTime(r.detectedAt)}`,
+    `내용: ${recordSummary(r)} (${recordTag(r)})`,
+    `감지 위치: ${placeText(r)}${map}`,
+    `라이더 응답: ${responseText(r)}`,
+    `비상연락: ${contactText(r)}`,
+    `주문 처리: ${orderText(r)}`,
+  ].join('\n');
+}

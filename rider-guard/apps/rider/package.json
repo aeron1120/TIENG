@@ -43,7 +43,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "expo lint",
     "start:go": "expo start --go",
-    "build:android": "node scripts/eas-build.js"
+    "build:android": "node scripts/eas-build.js",
+    "build:android:preview": "node scripts/eas-build.js --profile preview"
   },
   "private": true
 }

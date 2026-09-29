@@ -46,7 +46,7 @@ export type Config = {
   appScheme: string;
 };
 
-const DEV_OPS_TOKEN = 'dev-ops-token';
+export const DEV_OPS_TOKEN = 'dev-ops-token';
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const mode = env.NODE_ENV === 'production' ? 'production' : env.NODE_ENV === 'test' ? 'test' : 'development';

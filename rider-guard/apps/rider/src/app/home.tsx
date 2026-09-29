@@ -6,11 +6,14 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { errorMessage } from '@/api/client';
 import { useCreateIncident, useEndSession, useMe, useStartSession } from '@/api/hooks';
 import { BottomNav } from '@/components/BottomNav';
-import { BatteryIcon, BellIcon, HelmetIcon, PhoneIcon, PinIcon } from '@/components/Icons';
+import { BatteryIcon, HelmetIcon, PhoneIcon, PinIcon } from '@/components/Icons';
 import { Button, Card, Screen, Txt } from '@/components/ui';
 import { recentLocation, useLocationState } from '@/features/location';
 import { duration } from '@/lib/format';
 import { colors, font, radius } from '@/theme';
+
+// 사고 감지 테스트 버튼 — 개발 빌드, 또는 시연용 preview 빌드(eas.json 의 EXPO_PUBLIC_SHOW_DEV_TOOLS)에서만
+const showDevTools = __DEV__ || process.env.EXPO_PUBLIC_SHOW_DEV_TOOLS === 'true';
 
 export default function HomeScreen() {
   // 기기 연결·배터리 표시를 위해 홈에 있는 동안 15초마다 새로 받는다.
@@ -57,14 +60,10 @@ export default function HomeScreen() {
 
   return (
     <Screen top={48} bottom={20} footer={<BottomNav active="home" />}>
-      <View style={styles.header}>
-        <View style={{ gap: 2 }}>
-          <Txt style={styles.muted13}>안녕하세요</Txt>
-          <Txt style={[font.sans(700), { fontSize: 22, letterSpacing: -0.4 }]}>{me?.rider.name ?? '라이더'}님</Txt>
-        </View>
-        <Pressable accessibilityRole="button" accessibilityLabel="알림" style={styles.bell}>
-          <BellIcon size={20} />
-        </Pressable>
+      {/* 디자인의 알림 벨은 알림 목록 화면이 없어 뺐다 — 사고 알림은 푸시와 확인 화면으로 온다 */}
+      <View style={{ gap: 2 }}>
+        <Txt style={styles.muted13}>안녕하세요</Txt>
+        <Txt style={[font.sans(700), { fontSize: 22, letterSpacing: -0.4 }]}>{me?.rider.name ?? '라이더'}님</Txt>
       </View>
 
       <View style={styles.drive}>
@@ -115,7 +114,7 @@ export default function HomeScreen() {
         </Pressable>
       </Card>
 
-      {__DEV__ && (
+      {showDevTools && (
         // 사고를 서버에 실제로 만든다. 확인 화면은 SessionServices 가 띄운다.
         <Button
           label="개발용 · 사고 감지 테스트"
@@ -134,9 +133,7 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   muted13: { fontSize: 13, color: colors.textMuted },
-  bell: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' },
   drive: { gap: 18, paddingTop: 22, paddingHorizontal: 20, paddingBottom: 20, borderRadius: radius.panel, backgroundColor: colors.ink },
   row8: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.accentGlow, boxShadow: `0 0 0 4px ${colors.accentGlowHalo}` },

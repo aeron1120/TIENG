@@ -75,8 +75,10 @@
   let selected = null;
   const reports = {}; // 3초마다 다시 그려도 119 신고문이 사라지지 않게
 
+  // 서버가 OPS_TOKEN 없이 떴을 때(로컬 개발)만 개발용 토큰이 들어온다. 운영에서는 빈 값
+  const DEFAULT_TOKEN = /*DEFAULT_TOKEN*/'';
   for (const id of ['operator', 'token']) {
-    $(id).value = localStorage.getItem('ops.' + id) || (id === 'token' ? 'dev-ops-token' : '');
+    $(id).value = localStorage.getItem('ops.' + id) || (id === 'token' ? DEFAULT_TOKEN : '');
     $(id).addEventListener('change', () => { localStorage.setItem('ops.' + id, $(id).value); refresh(); });
   }
 

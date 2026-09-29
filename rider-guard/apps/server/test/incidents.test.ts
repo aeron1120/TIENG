@@ -266,3 +266,13 @@ test('운행 종료를 잊으면 12시간 뒤 자동 종료된다 (4.1.1)', asyn
   assert.equal(me.json.session, null);
   assert.equal(me.json.today.driveSeconds > 0, true);
 });
+
+test('관제 콘솔은 서버가 개발용 토큰으로 떴을 때만 그 토큰을 미리 채운다', async () => {
+  const dev = await setup();
+  assert.match((await dev.call('GET', '/ops')).text, /"dev-ops-token"/);
+
+  const configured = await setup({ OPS_TOKEN: 'x'.repeat(32) });
+  const page = (await configured.call('GET', '/ops')).text;
+  assert.doesNotMatch(page, /dev-ops-token/);
+  assert.doesNotMatch(page, /x{32}/);
+});

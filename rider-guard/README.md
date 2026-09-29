@@ -30,6 +30,19 @@ npm start
 - 푸시 알림·백그라운드 위치는 Expo Go 에서 안 되고 개발 빌드가 필요하다: `cd apps/rider && npm run build:android` (EAS) → 설치 후 `npx expo start --dev-client`.
   빌드 전에 Firebase 콘솔(프로젝트 설정 → Android 앱 `com.tieng.riderguard`)에서 받은 `google-services.json` 을 `apps/rider/` 에 둔다 — API 키가 들어 있어 저장소에는 올리지 않는다.
 
+## 배포 (Render + Turso, 둘 다 무료)
+
+같은 Wi-Fi 가 아니어도 쓰려면 서버와 DB 를 클라우드에 두고, 앱은 코드가 들어간 APK 로 만든다.
+
+1. DB — Turso 에 데이터베이스를 만들고 주소(`libsql://…turso.io`)와 토큰을 받는다. 스키마는 서버가 처음 뜰 때 만든다.
+2. 서버 — Render 대시보드 → New → Blueprint → 이 저장소, Blueprint 경로 `rider-guard/render.yaml`.
+   `DATABASE_URL`·`DATABASE_AUTH_TOKEN` 은 이때 대시보드에 넣는다(저장소에 적지 않는다). `OPS_TOKEN` 은 Render 가 만들고,
+   `PUBLIC_BASE_URL` 은 비워 두면 Render 주소(`https://<이름>.onrender.com`)를 쓴다. `Justin` 브랜치에 올리면 다시 배포된다.
+3. 앱 — `EXPO_PUBLIC_API_URL=<Render 주소>` 로 preview 빌드(APK)를 만든다. Metro 없이 어디서나 동작한다.
+
+- 무료 Render 는 15분 동안 요청이 없으면 잠들고, 첫 요청이 30~60초 걸린다. 운행 중에는 위치를 15초마다 보내 깨어 있다.
+- Turso 는 읽은 행 수로 무료 한도를 센다 — 자주 도는 조회는 전부 인덱스를 타게 해 두었다(스키마 v3). `GET /me` 는 조회를 한 번에 묶어 보낸다.
+
 ## 데모 순서
 
 1. 앱에서 이메일로 가입(또는 SNS 로그인) → 이름·휴대폰·동의 입력 → 설정 화면
@@ -160,7 +173,7 @@ cd apps/rider && npm run typecheck && npm run lint
 ## 아직 없는 것
 
 - 실제 SMS 사업자·119 문자신고·배달대행사 API 연동 (인터페이스만 있음), 주소 변환(역지오코딩)
-- 클라우드 배포 (지금은 PC 에서 서버 실행) — 구글 로그인은 https 서버가 있어야 동작
+- 개발용 주문 만들기(`POST /me/dev/order`)는 운영 서버에서 꺼진다 — 대체배차 흐름은 로컬 서버에서 시연
 - 휴대폰 번호 인증, 비밀번호 찾기·변경, 이메일 계정과 SNS 계정 합치기
 - 탈퇴 시 네이버·구글 연동 해제 — 사용자 토큰을 보관하지 않아 서버에서 끊을 수 없다. 사용자가 각 계정 설정에서 끊는다
 - 로그인·가입 요청 수 제한(IP 단위) — 배포할 때 프록시에서

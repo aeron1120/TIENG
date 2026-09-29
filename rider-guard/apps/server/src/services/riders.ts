@@ -16,10 +16,10 @@ import type {
   Vehicle,
 } from '@rider-guard/contract';
 
-import type { AppContext, ContactRow, DeviceRow, RiderRow } from '../context.ts';
+import type { AppContext, ContactRow, DeviceRow, RiderRow, SessionRow } from '../context.ts';
 import { parseJson } from '../db.ts';
-import { ApiError, iso, newId, notFound } from '../lib.ts';
-import { activeSession, toSessionDto, todayDriveSeconds } from './sessions.ts';
+import { ApiError, iso, newId, notFound, seoulDayStart } from '../lib.ts';
+import { ACTIVE_SESSION_SQL, driveSecondsToday, TODAY_SESSIONS_SQL, toSessionDto, type TodaySessionRow } from './sessions.ts';
 
 export const CONSENT_VERSION = '2026-09';
 export const CONSENT_KEYS: ConsentKey[] = ['locationSensor', 'shareOnIncident', 'insuranceRecords', 'medicalInfo'];
@@ -45,10 +45,10 @@ export const displayName = (r: Pick<RiderRow, 'name' | 'phone'>) => r.name ?? (r
 
 /** 이름·휴대폰·필수 동의를 마쳤는가 — 운행(위치 수집)을 시작할 수 있는 조건 */
 export async function isOnboarded(ctx: AppContext, rider: RiderRow): Promise<boolean> {
-  if (!rider.onboardedAt || !rider.phone) return false;
-  const consents = await consentsOf(ctx, rider.id);
-  return REQUIRED_CONSENTS.every((k) => consents[k]);
+  return onboardedWith(rider, await consentsOf(ctx, rider.id));
 }
+
+const onboardedWith = (rider: RiderRow, consents: Consents) => !!rider.onboardedAt && !!rider.phone && REQUIRED_CONSENTS.every((k) => consents[k]);
 
 /**
  * 가입 정보 입력. SNS·이메일 가입 직후 한 번 거치고, 나중에 다시 불러 이름·번호를 고칠 수도 있다.
@@ -69,12 +69,17 @@ export async function onboard(ctx: AppContext, riderId: string, input: Onboardin
   });
 }
 
+const IDENTITIES_SQL = 'SELECT provider FROM riderIdentities WHERE riderId = :riderId ORDER BY createdAt';
+
 export async function accountOf(ctx: AppContext, rider: RiderRow): Promise<AccountDto> {
-  const identities = await ctx.db.all<{ provider: SocialProvider }>('SELECT provider FROM riderIdentities WHERE riderId = :riderId ORDER BY createdAt', {
-    riderId: rider.id,
-  });
-  return { email: rider.email, hasPassword: !!rider.passwordHash, social: identities.map((i) => i.provider) };
+  return accountWith(rider, await ctx.db.all<{ provider: SocialProvider }>(IDENTITIES_SQL, { riderId: rider.id }));
 }
+
+const accountWith = (rider: RiderRow, identities: { provider: SocialProvider }[]): AccountDto => ({
+  email: rider.email,
+  hasPassword: !!rider.passwordHash,
+  social: identities.map((i) => i.provider),
+});
 
 export async function updateRider(ctx: AppContext, riderId: string, patch: { name?: string; vehicle?: Vehicle | null; medical?: MedicalInfo | null }) {
   const rider = await getRider(ctx, riderId);
@@ -98,8 +103,13 @@ export async function updateRider(ctx: AppContext, riderId: string, patch: { nam
 
 // ── 동의 ───────────────────────────────────────────────────────
 
+const CONSENTS_SQL = 'SELECT key, granted FROM consents WHERE riderId = :riderId';
+
 export async function consentsOf(ctx: AppContext, riderId: string): Promise<Consents> {
-  const rows = await ctx.db.all<{ key: ConsentKey; granted: number }>('SELECT key, granted FROM consents WHERE riderId = :riderId', { riderId });
+  return consentsFrom(await ctx.db.all<{ key: ConsentKey; granted: number }>(CONSENTS_SQL, { riderId }));
+}
+
+function consentsFrom(rows: { key: ConsentKey; granted: number }[]): Consents {
   const out = Object.fromEntries(CONSENT_KEYS.map((k) => [k, false])) as Consents;
   for (const r of rows) out[r.key] = r.granted === 1;
   return out;
@@ -235,19 +245,32 @@ export async function unpairDevice(ctx: AppContext, riderId: string) {
 
 // ── 홈/설정 화면용 집계 ────────────────────────────────────────
 
+/** 앱이 가장 자주 부르는 조회라(홈은 15초마다) 쿼리를 한 번에 보낸다 — 원격 DB 왕복 한 번 */
 export async function buildMe(ctx: AppContext, riderId: string): Promise<MeDto> {
-  const rider = await getRider(ctx, riderId);
-  const session = await activeSession(ctx, riderId);
-  const device = await riderDevice(ctx, riderId);
+  const now = ctx.clock.now();
+  const [riders, sessions, devices, identities, consentRows, contacts, todaySessions] = (await ctx.db.readMany([
+    { sql: 'SELECT * FROM riders WHERE id = :riderId', params: { riderId } },
+    { sql: ACTIVE_SESSION_SQL, params: { riderId } },
+    { sql: 'SELECT * FROM devices WHERE riderId = :riderId', params: { riderId } },
+    { sql: IDENTITIES_SQL, params: { riderId } },
+    { sql: CONSENTS_SQL, params: { riderId } },
+    { sql: 'SELECT * FROM contacts WHERE riderId = :riderId ORDER BY priority', params: { riderId } },
+    { sql: TODAY_SESSIONS_SQL, params: { riderId, dayStart: seoulDayStart(now) } },
+  ])) as [RiderRow[], SessionRow[], DeviceRow[], { provider: SocialProvider }[], { key: ConsentKey; granted: number }[], ContactRow[], TodaySessionRow[]];
+  const rider = riders[0];
+  if (!rider) throw notFound('라이더');
+  const session = sessions[0];
+  const device = devices[0];
+  const consents = consentsFrom(consentRows);
   return {
     rider: toRiderDto(rider),
-    account: await accountOf(ctx, rider),
-    onboarded: await isOnboarded(ctx, rider),
-    consents: await consentsOf(ctx, riderId),
-    contacts: (await listContacts(ctx, riderId)).map(toContactDto),
+    account: accountWith(rider, identities),
+    onboarded: onboardedWith(rider, consents),
+    consents,
+    contacts: contacts.map(toContactDto),
     device: device ? toDeviceDto(ctx, device) : null,
     session: session ? toSessionDto(session) : null,
-    today: { driveSeconds: await todayDriveSeconds(ctx, riderId), asOf: iso(ctx.clock.now()) },
+    today: { driveSeconds: driveSecondsToday(todaySessions, now), asOf: iso(now) },
     centerPhone: ctx.config.centerPhone,
   };
 }

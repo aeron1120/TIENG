@@ -6,8 +6,10 @@ import { ApiError, iso, newId, seoulDayStart } from '../lib.ts';
 /** 휴대폰 시계가 조금 빨라도 받아 주는 여유 */
 const CLOCK_SKEW_MS = 60_000;
 
+export const ACTIVE_SESSION_SQL = 'SELECT * FROM sessions WHERE riderId = :riderId AND endedAt IS NULL';
+
 export async function activeSession(ctx: AppContext, riderId: string): Promise<SessionRow | undefined> {
-  return await ctx.db.get<SessionRow>('SELECT * FROM sessions WHERE riderId = :riderId AND endedAt IS NULL', { riderId });
+  return await ctx.db.get<SessionRow>(ACTIVE_SESSION_SQL, { riderId });
 }
 
 export async function requireActiveSession(ctx: AppContext, riderId: string): Promise<SessionRow> {
@@ -51,13 +53,18 @@ export async function expireSessions(ctx: AppContext): Promise<number> {
   });
 }
 
+export const TODAY_SESSIONS_SQL = 'SELECT startedAt, endedAt FROM sessions WHERE riderId = :riderId AND (endedAt IS NULL OR endedAt > :dayStart)';
+export type TodaySessionRow = Pick<SessionRow, 'startedAt' | 'endedAt'>;
+
 export async function todayDriveSeconds(ctx: AppContext, riderId: string): Promise<number> {
   const now = ctx.clock.now();
+  const rows = await ctx.db.all<TodaySessionRow>(TODAY_SESSIONS_SQL, { riderId, dayStart: seoulDayStart(now) });
+  return driveSecondsToday(rows, now);
+}
+
+/** 오늘(한국 시간) 0시 이후 운행한 초 */
+export function driveSecondsToday(rows: TodaySessionRow[], now: number): number {
   const dayStart = seoulDayStart(now);
-  const rows = await ctx.db.all<Pick<SessionRow, 'startedAt' | 'endedAt'>>(
-    'SELECT startedAt, endedAt FROM sessions WHERE riderId = :riderId AND (endedAt IS NULL OR endedAt > :dayStart)',
-    { riderId, dayStart },
-  );
   const ms = rows.reduce((sum, s) => sum + Math.max(0, Math.min(s.endedAt ?? now, now) - Math.max(s.startedAt, dayStart)), 0);
   return Math.floor(ms / 1000);
 }

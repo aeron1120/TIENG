@@ -56,7 +56,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port,
     databaseUrl: env.DATABASE_URL || 'file:./data/rider-guard-v2.db',
     databaseAuthToken: env.DATABASE_AUTH_TOKEN || undefined,
-    publicBaseUrl: (env.PUBLIC_BASE_URL ?? `http://localhost:${port}`).replace(/\/+$/, ''),
+    // Render 는 서비스 주소를 RENDER_EXTERNAL_URL 로 넣어 준다
+    publicBaseUrl: (env.PUBLIC_BASE_URL || env.RENDER_EXTERNAL_URL || `http://localhost:${port}`).replace(/\/+$/, ''),
     countdownSeconds: int(env.COUNTDOWN_SECONDS, 30),
     contactStaggerSeconds: int(env.CONTACT_STAGGER_SECONDS, 60),
     sessionMaxHours: int(env.SESSION_MAX_HOURS, 12),
@@ -86,7 +87,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (mode === 'production') {
     if (config.opsToken === DEV_OPS_TOKEN || config.opsToken.length < 24) throw new Error('운영 환경에서는 24자 이상의 OPS_TOKEN 이 필요합니다.');
-    if (!env.PUBLIC_BASE_URL) throw new Error('운영 환경에서는 PUBLIC_BASE_URL 이 필요합니다.');
+    if (!env.PUBLIC_BASE_URL && !env.RENDER_EXTERNAL_URL) throw new Error('운영 환경에서는 PUBLIC_BASE_URL 이 필요합니다.');
   }
   return config;
 }

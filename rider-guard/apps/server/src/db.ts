@@ -295,6 +295,23 @@ const MIGRATIONS: string[] = [
   -- 보존 기간이 지난 위치 이용 기록을 스케줄러가 매초 지우므로 시각으로 찾는 인덱스
   CREATE INDEX locationAccessLogs_at ON locationAccessLogs(at);
   `,
+  // v3 — 원격 DB(Turso)는 읽은 행 수로 한도를 센다. 매초·수 초마다 도는 조회와 외래 키 검사가 테이블을 통째로 읽지 않게
+  `
+  -- 스케줄러가 매초 찾는 대체배차 대기 주문, 사고 상세가 찾는 주문
+  CREATE INDEX orders_held ON orders(status, reassignRequestedAt);
+  CREATE INDEX orders_incident ON orders(incidentId);
+  -- 사고 상세의 연락처 확인 여부
+  CREATE INDEX shareLinks_incident ON shareLinks(incidentId);
+  -- 관제 콘솔의 최근 판정 목록 (판정은 지표가 올 때마다 쌓인다)
+  CREATE INDEX judgments_received ON judgments(receivedAt);
+  -- 부모 행을 지울 때 외래 키 검사가 자식 테이블을 통째로 읽지 않게 (탈퇴·연락처 삭제)
+  CREATE INDEX shareLinks_rider ON shareLinks(riderId);
+  CREATE INDEX shareLinks_contact ON shareLinks(contactId);
+  CREATE INDEX pushes_rider ON pushes(riderId);
+  CREATE INDEX pushes_incident ON pushes(incidentId);
+  CREATE INDEX incidents_session ON incidents(sessionId);
+  CREATE INDEX locations_session ON locations(sessionId);
+  `,
 ];
 
 export type Params = Record<string, InValue | undefined>;
@@ -326,6 +343,17 @@ export class Db {
 
   async all<T>(sql: string, params: Params = {}): Promise<T[]> {
     return (await this.exec(sql, params)).rows as unknown as T[];
+  }
+
+  /**
+   * 서로 기다릴 필요 없는 조회 여러 개를 한 번에 보낸다 — 원격 DB(Turso)에서는 왕복 한 번이다.
+   * 쿼리마다 행 배열을 같은 순서로 돌려준다. 트랜잭션 안이면 그 트랜잭션에서 읽는다.
+   */
+  async readMany(queries: { sql: string; params?: Params }[]): Promise<unknown[][]> {
+    const statements = queries.map(({ sql, params = {} }) => ({ sql, args: bind(sql, params) }));
+    const tx = this.current.getStore();
+    const results = tx ? await tx.batch(statements) : await this.serial(() => this.client.batch(statements, 'read'));
+    return results.map((r) => r.rows as unknown[]);
   }
 
   /** 바뀐 행 수를 돌려준다. 조건부 UPDATE 로 상태 전이를 원자적으로 선점할 때 쓴다. */

@@ -7,7 +7,7 @@ import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { errorMessage } from '@/api/client';
 import { useDeleteContact, useMe, useSaveContact } from '@/api/hooks';
 import { Button, Card, Screen, Spacer, Txt } from '@/components/ui';
-import { RELATION_LABEL } from '@/lib/format';
+import { formatMobile, isMobile, RELATION_LABEL } from '@/lib/format';
 import { backOr } from '@/lib/nav';
 import { colors, font, radius } from '@/theme';
 
@@ -24,7 +24,7 @@ export default function ContactScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const existing = useMe().data?.contacts.find((c) => c.id === id);
   const [name, setName] = useState(existing?.name ?? '');
-  const [phone, setPhone] = useState(existing?.phone ?? '010-');
+  const [phone, setPhone] = useState(existing?.phone ? formatMobile(existing.phone) : '010-');
   const [relation, setRelation] = useState<Relation>(existing?.relation ?? 'family');
   const [level, setLevel] = useState<ShareLevel | null>(existing?.shareLevel ?? null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -32,6 +32,8 @@ export default function ContactScreen() {
   const remove = useDeleteContact();
 
   const shareLevel = level ?? DEFAULT_LEVEL[relation];
+  // 가입 정보의 본인 번호와 같은 기준
+  const phoneHint = phone.replace(/\D/g, '').length >= 10 && !isMobile(phone) ? '휴대폰 번호 형식을 확인해 주세요.' : null;
   const error = save.error ?? remove.error;
   const done = () => backOr('/setup');
 
@@ -47,10 +49,11 @@ export default function ContactScreen() {
           <TextInput
             accessibilityLabel="휴대폰 번호"
             value={phone}
-            onChangeText={setPhone}
+            onChangeText={(t) => setPhone(formatMobile(t))}
             keyboardType="phone-pad"
             style={[styles.input, font.mono(500)]}
           />
+          {phoneHint && <Txt style={styles.error}>{phoneHint}</Txt>}
         </Field>
         <Field label="관계">
           <Segmented options={RELATIONS.map((r) => ({ value: r, label: RELATION_LABEL[r] }))} value={relation} onChange={setRelation} />
@@ -67,7 +70,7 @@ export default function ContactScreen() {
       <View style={{ gap: 10 }}>
         <Button
           label="저장"
-          disabled={!name.trim() || save.isPending}
+          disabled={!name.trim() || !isMobile(phone) || save.isPending}
           onPress={() => save.mutate({ id: existing?.id, name: name.trim(), phone, relation, shareLevel }, { onSuccess: done })}
         />
         {existing && (

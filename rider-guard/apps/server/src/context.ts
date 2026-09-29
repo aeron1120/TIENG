@@ -89,16 +89,12 @@ export type IncidentRow = {
   receivedAt: number;
   countdownSeconds: number;
   deadlineAt: number;
-  status: 'countdown' | 'cancelled' | 'escalated' | 'reviewing' | 'resolved';
-  urgent: number;
+  status: 'countdown' | 'cancelled' | 'escalated' | 'resolved';
   riderResponse: 'ok' | 'help' | null;
   respondedAt: number | null;
   escalationReason: 'no_response' | 'rider_requested' | null;
   escalatedAt: number | null;
-  operatorName: string | null;
-  reviewingAt: number | null;
-  resolution: 'false_alarm' | 'handled' | null;
-  resolutionNote: string | null;
+  resolution: 'false_alarm' | 'rider_ok' | 'handled' | null;
   resolvedAt: number | null;
   lat: number | null;
   lng: number | null;
@@ -116,8 +112,10 @@ export type IncidentEventRow = { id: number; incidentId: string; type: string; a
 export type NotificationRow = {
   id: string;
   incidentId: string;
+  /** 119 신고는 연락처가 아니라 null */
   contactId: string | null;
-  purpose: 'contact_alert' | 'contact_update';
+  /** contact_*: 비상연락처 문자 / emergency_report: 119 자동 신고 / emergency_update: 신고 뒤 라이더 상태가 바뀌었다는 119 후속 문자 */
+  purpose: 'contact_alert' | 'contact_update' | 'emergency_report' | 'emergency_update';
   recipient: string;
   body: string;
   dueAt: number;

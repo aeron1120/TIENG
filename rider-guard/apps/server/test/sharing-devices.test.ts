@@ -49,7 +49,7 @@ test('상시 링크는 연락처의 공개 범위에 따라 위치를 보여준�
 
   // 운행 종료 후 평상시: 다시 아무도 (사고 종료 후)
   const inc = (await t.call('GET', '/me/incidents/active', { token })).json.incident;
-  await t.ops('POST', `/incidents/${inc.id}/resolve`, { outcome: 'false_alarm' });
+  await t.call('POST', `/me/incidents/${inc.id}/respond`, { token, body: { response: 'ok' } });
   await t.call('POST', '/me/session/end', { token });
   assert.deepEqual([showsLocation(await html(f)), showsLocation(await html(c)), showsLocation(await html(o))], [false, false, false]);
 });
@@ -64,10 +64,11 @@ test('사고 문자 링크는 사고가 끝나면 위치를 감추고, 잘못된
   const path = t.sms.find((s) => s.to === '01011111111' && s.body.includes('/s/'))!.body.match(/https:\/\/rg\.test(\/s\/[\w-]+)/)![1]!;
   assert.equal(showsLocation((await t.call('GET', path)).text), true);
 
-  await t.ops('POST', `/incidents/${inc.id}/resolve`, { outcome: 'handled' });
+  await t.call('POST', `/me/incidents/${inc.id}/respond`, { token, body: { response: 'ok' } });
   const closed = await t.call('GET', path);
   assert.equal(showsLocation(closed.text), false);
   assert.match(closed.text, /사고 대응이 종료됐어요/);
+  assert.match(closed.text, /괜찮다고 응답했어요/);
 
   assert.equal((await t.call('GET', '/s/not-a-real-token')).status, 404);
 });

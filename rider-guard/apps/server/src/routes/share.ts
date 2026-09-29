@@ -1,9 +1,11 @@
+import type { EmergencyDelivery } from '@rider-guard/contract';
 import { Hono } from 'hono';
 
 import type { AppContext } from '../context.ts';
 import { escapeHtml as h, seoulClock } from '../lib.ts';
+import { emergencyDelivery } from '../services/incidents.ts';
 import { displayName } from '../services/riders.ts';
-import { acknowledgeShareLink, viewShareLink, type ShareView } from '../services/sharing.ts';
+import { OPEN_STATUSES, acknowledgeShareLink, viewShareLink, type ShareView } from '../services/sharing.ts';
 
 /** 비상연락처가 문자로 받은 링크를 여는 공개 페이지. 앱 없이 휴대폰 브라우저에서 열린다. */
 export function shareRoutes(ctx: AppContext) {
@@ -15,7 +17,8 @@ export function shareRoutes(ctx: AppContext) {
     c.header('Cache-Control', 'no-store');
     c.header('Referrer-Policy', 'no-referrer');
     c.header('X-Robots-Tag', 'noindex');
-    return c.html(renderSharePage(ctx, view, c.req.param('token')), status);
+    const emergency = view.kind === 'ok' && view.incident ? (await emergencyDelivery(ctx, view.incident)).delivery : null;
+    return c.html(renderSharePage(ctx, view, c.req.param('token'), emergency), status);
   });
 
   app.post('/:token/ack', async (c) => {
@@ -33,13 +36,23 @@ const LEVEL_HINT = {
   on_incident: '사고가 확정됐을 때만 위치를 볼 수 있어요.',
 } as const;
 
-function renderSharePage(ctx: AppContext, view: ShareView, token: string): string {
+/** 사고 중 안내 — 관제센터가 없으니 119 신고가 어디까지 갔는지 알려 주고, 실패했으면 직접 신고를 부탁한다. */
+const EMERGENCY_LEAD: Record<EmergencyDelivery, string> = {
+  waiting: '라이더의 응답을 기다리고 있어요. 응답이 없으면 119에 자동으로 신고해요.',
+  sending: '119에 자동으로 신고하고 있어요.',
+  retrying: '119 자동 신고가 늦어지고 있어요. 위급해 보이면 바로 119에 신고해 주세요.',
+  sent: '119에 자동으로 신고했어요. 가까이 있다면 현장을 확인해 주세요.',
+  failed: '119 자동 신고가 전송되지 않았어요. 아래 위치로 지금 119에 신고해 주세요.',
+  cancelled: '위급해 보이면 바로 119에 신고해 주세요.',
+};
+
+function renderSharePage(ctx: AppContext, view: ShareView, token: string, emergency: EmergencyDelivery | null): string {
   if (view.kind !== 'ok') {
     return page('Rider Guard', `<h1>${view.kind === 'expired' ? '링크가 만료됐어요' : '링크를 찾을 수 없어요'}</h1><p class="muted">받은 문자의 링크가 맞는지 확인해 주세요.</p>`);
   }
   const { rider, contact, incident, link, location, visible } = view;
   const name = h(displayName(rider));
-  const open = !!incident && ['countdown', 'escalated', 'reviewing'].includes(incident.status);
+  const open = !!incident && (OPEN_STATUSES as readonly string[]).includes(incident.status);
   const now = ctx.clock.now();
 
   let badge = '';
@@ -48,11 +61,16 @@ function renderSharePage(ctx: AppContext, view: ShareView, token: string): strin
   if (link.scope === 'incident' && incident && !open) {
     badge = '<span class="badge done">대응 종료</span>';
     title = `${name}님 사고 대응이 종료됐어요`;
-    lead = incident.resolution === 'false_alarm' ? '관제센터 확인 결과 오탐으로 종료됐어요.' : '관제센터가 대응을 마쳤어요.';
+    lead =
+      incident.resolution === 'rider_ok'
+        ? `${name}님이 괜찮다고 응답했어요.`
+        : incident.resolution === 'false_alarm'
+          ? '오탐으로 종료됐어요.'
+          : '대응 기간이 끝나 위치 공유를 멈췄어요.';
   } else if (incident && open) {
     badge = '<span class="badge">사고 대응 진행 중</span>';
     title = incident.riderResponse === 'help' ? `${name}님이 도움을 요청했어요` : `${name}님에게 사고가 감지됐어요`;
-    lead = incident.status === 'reviewing' ? '관제센터 상담원이 상황을 확인하고 있어요.' : '관제센터에 접수됐어요. 위급해 보이면 바로 119에 신고해 주세요.';
+    lead = EMERGENCY_LEAD[emergency ?? 'cancelled'];
   } else if (!visible) {
     lead = LEVEL_HINT[contact.shareLevel];
   }
@@ -74,7 +92,6 @@ function renderSharePage(ctx: AppContext, view: ShareView, token: string): strin
     incident && open
       ? `<div class="row">
           <a class="btn accent" href="tel:119">119 전화</a>
-          <a class="btn outline" href="tel:${h(ctx.config.centerPhone)}">관제센터 전화</a>
         </div>`
       : '';
 

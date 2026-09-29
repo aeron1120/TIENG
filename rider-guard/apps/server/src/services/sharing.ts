@@ -4,14 +4,15 @@ import type { AppContext, ContactRow, IncidentRow, LocationRow, RiderRow, ShareL
 import { iso, newToken, sha256 } from '../lib.ts';
 import { activeSession, latestLocation } from './sessions.ts';
 
-const INCIDENT_LINK_TTL_MS = 24 * 3_600_000;
+/** 사고 문자 링크 유효 기간. 응답 없는 사고도 이 기간 동안 열어 둔다 (incidents.ts INCIDENT_AUTO_CLOSE_MS). */
+export const INCIDENT_LINK_TTL_MS = 24 * 3_600_000;
 const STANDING_LINK_TTL_MS = 30 * 24 * 3_600_000;
 /** 같은 사람이 링크를 새로고침할 때마다 이용내역이 쌓이지 않게 묶는 간격 */
 const ACCESS_LOG_DEDUPE_MS = 5 * 60_000;
 const RELATION_LABEL = { family: '가족', coworker: '동료', other: '지인' } as const;
 
-export const OPEN_STATUSES = ['countdown', 'escalated', 'reviewing'] as const;
-export const CONFIRMED_STATUSES = ['escalated', 'reviewing'] as const;
+export const OPEN_STATUSES = ['countdown', 'escalated'] as const;
+export const CONFIRMED_STATUSES = ['escalated'] as const;
 
 export async function createShareLink(ctx: AppContext, input: { riderId: string; contactId: string; incidentId: string | null }) {
   const token = newToken();
@@ -50,7 +51,7 @@ export type ShareView =
 
 /**
  * 링크를 연 사람에게 위치를 보여줄 수 있는지 판단한다 (4.1.2 공유 대상 분리 권한).
- * - 사고 링크: 그 사고가 확정(escalated/reviewing) 상태인 동안
+ * - 사고 링크: 그 사고가 확정(escalated) 상태인 동안
  * - 상시 링크: 연락처의 공개 범위에 따라 — 실시간(운행 중) / 이상 감지 시 / 사고 확정 시
  */
 export async function viewShareLink(ctx: AppContext, token: string): Promise<ShareView> {
@@ -64,7 +65,7 @@ export async function viewShareLink(ctx: AppContext, token: string): Promise<Sha
   const incident = link.incidentId
     ? ((await ctx.db.get<IncidentRow>('SELECT * FROM incidents WHERE id = :id', { id: link.incidentId })) ?? null)
     : ((await ctx.db.get<IncidentRow>(
-        `SELECT * FROM incidents WHERE riderId = :riderId AND status IN ('countdown', 'escalated', 'reviewing')`,
+        `SELECT * FROM incidents WHERE riderId = :riderId AND status IN ('countdown', 'escalated')`,
         { riderId: rider.id },
       )) ?? null);
 

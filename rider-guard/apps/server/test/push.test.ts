@@ -105,7 +105,7 @@ test('토큰 등록: 형식 검사, 같은 폰에 다른 라이더가 로그인�
   assert.equal((await t.ctx.db.all('SELECT * FROM pushTokens')).length, 0);
 });
 
-test('토큰이 없으면 푸시 없이 문자·관제는 그대로 진행된다', async () => {
+test('토큰이 없으면 푸시 없이 문자·119 신고는 그대로 진행된다', async () => {
   const t = await setup();
   const token = await t.login();
   await t.call('POST', '/me/contacts', { token, body: { name: '엄마', relation: 'family', phone: '01011111111' } });
@@ -114,4 +114,5 @@ test('토큰이 없으면 푸시 없이 문자·관제는 그대로 진행된다
   await t.advance(30);
   assert.equal(t.pushes.length, 0);
   assert.ok(t.sms.some((s) => s.to === '01011111111'));
+  assert.equal(t.reports.length, 1);
 });

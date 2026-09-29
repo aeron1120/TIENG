@@ -9,7 +9,7 @@ import { openIncident } from './incidents.ts';
  *   보존 기간이 지나면 스케줄러가 지운다 (scheduler.ts).
  * 제공자 연결 끊기: 카카오는 탈퇴 과정에 연결 끊기를 요구한다 — socialUnlinks 에 넣고 스케줄러가 보낸다(실패하면 다시).
  *   네이버·구글은 사용자 토큰이 있어야 끊을 수 있는데 로그인 뒤 토큰을 보관하지 않으므로, 사용자가 각 계정 설정에서 끊는다.
- * 막는 경우: 진행 중인 사고가 있으면 탈퇴하지 않는다 — 비상연락·관제 대응이 도중에 끊긴다.
+ * 막는 경우: 진행 중인 사고가 있으면 탈퇴하지 않는다 — 비상연락·119 신고가 도중에 끊긴다.
  */
 export async function deleteAccount(ctx: AppContext, riderId: string) {
   await ctx.db.tx(async () => {

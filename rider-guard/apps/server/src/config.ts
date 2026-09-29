@@ -21,10 +21,8 @@ export type Config = {
   contactStaggerSeconds: number;
   /** 운행 종료를 잊었을 때 자동 종료까지 (4.1.1) */
   sessionMaxHours: number;
+  /** 운영 모니터(/ops, 읽기 전용) 토큰 */
   opsToken: string;
-  centerPhone: string;
-  /** 119 문자 신고 자동 발송. 로드맵 Phase 2 까지는 꺼 두고 상담원이 직접 신고한다 (10장). */
-  enable119Sms: boolean;
   /**
    * 지표 판정으로 사고를 여는가. 꺼져 있으면 판정만 기록한다 — 로드맵 Phase 1(데이터 수집, 경보 없음).
    * 개발 서버는 켜고, 운영은 DETECTION_ENABLED=true 로 명시해야 켜진다.
@@ -62,8 +60,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     contactStaggerSeconds: int(env.CONTACT_STAGGER_SECONDS, 60),
     sessionMaxHours: int(env.SESSION_MAX_HOURS, 12),
     opsToken: env.OPS_TOKEN ?? DEV_OPS_TOKEN,
-    centerPhone: env.CENTER_PHONE ?? '0000',
-    enable119Sms: env.ENABLE_119_SMS === 'true',
     detectionEnabled: env.DETECTION_ENABLED ? env.DETECTION_ENABLED === 'true' : mode !== 'production',
     thresholds: {
       impactGMin: num(env.IMPACT_G_MIN, DEFAULT_THRESHOLDS.impactGMin),

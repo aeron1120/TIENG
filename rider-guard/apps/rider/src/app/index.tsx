@@ -53,7 +53,7 @@ function LoginForm() {
 
       <View style={{ gap: 10 }}>
         <Txt style={styles.h1}>{'로그인하고\n안전하게 달려요'}</Txt>
-        <Txt style={styles.lead}>운행 중 사고가 감지되면 확인 알림을 보내고, 응답이 없으면 비상연락처와 관제센터에 알려요.</Txt>
+        <Txt style={styles.lead}>운행 중 사고가 감지되면 확인 알림을 보내고, 응답이 없으면 비상연락처와 119에 알려요.</Txt>
       </View>
 
       {socialProviders.length > 0 && (

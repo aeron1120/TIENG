@@ -60,7 +60,7 @@ function OnboardingForm({ me, editing }: { me: MeDto; editing: boolean }) {
 
       <View style={{ gap: 10 }}>
         <Txt style={styles.h1}>{editing ? '가입 정보 수정' : '가입 정보를\n입력해 주세요'}</Txt>
-        <Txt style={styles.lead}>사고가 나면 이 번호로 확인 알림을 보내고, 비상연락처와 관제센터에도 이 이름과 번호로 신원을 알려요.</Txt>
+        <Txt style={styles.lead}>사고가 나면 이 번호로 확인 알림을 보내고, 비상연락처와 119에도 이 이름과 번호로 신원을 알려요.</Txt>
       </View>
 
       <View style={{ gap: 14 }}>

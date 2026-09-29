@@ -40,7 +40,7 @@ export function toRiderDto(r: RiderRow): RiderDto {
   return { id: r.id, email: r.email, phone: r.phone, name: r.name, vehicle: parseJson<Vehicle>(r.vehicleJson), medical: parseJson<MedicalInfo>(r.medicalJson) };
 }
 
-/** 문자·관제 화면에 쓰는 이름. 이름을 등록하지 않았으면 번호 뒷자리로 부른다. */
+/** 문자·119 신고문·운영 모니터에 쓰는 이름. 이름을 등록하지 않았으면 번호 뒷자리로 부른다. */
 export const displayName = (r: Pick<RiderRow, 'name' | 'phone'>) => r.name ?? (r.phone ? `라이더(${r.phone.slice(-4)})` : '라이더');
 
 /** 이름·휴대폰·필수 동의를 마쳤는가 — 운행(위치 수집)을 시작할 수 있는 조건 */
@@ -52,7 +52,7 @@ const onboardedWith = (rider: RiderRow, consents: Consents) => !!rider.onboarded
 
 /**
  * 가입 정보 입력. SNS·이메일 가입 직후 한 번 거치고, 나중에 다시 불러 이름·번호를 고칠 수도 있다.
- * 휴대폰 번호는 사고 때 119 신고문과 관제에 들어가는 연락처라 필수지만, MVP 에서는 인증하지 않는다.
+ * 휴대폰 번호는 사고 때 119 신고문에 들어가는 연락처라 필수지만, MVP 에서는 인증하지 않는다.
  */
 export async function onboard(ctx: AppContext, riderId: string, input: OnboardingRequest) {
   const missing = REQUIRED_CONSENTS.filter((k) => !input.consents[k as keyof OnboardingRequest['consents']]);
@@ -271,6 +271,5 @@ export async function buildMe(ctx: AppContext, riderId: string): Promise<MeDto> 
     device: device ? toDeviceDto(ctx, device) : null,
     session: session ? toSessionDto(session) : null,
     today: { driveSeconds: driveSecondsToday(todaySessions, now), asOf: iso(now) },
-    centerPhone: ctx.config.centerPhone,
   };
 }

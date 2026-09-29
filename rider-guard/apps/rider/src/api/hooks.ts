@@ -31,7 +31,7 @@ export const keys = {
   incident: (id: string) => ['incidents', 'detail', id] as const,
 };
 
-export const isOpenStatus = (s: IncidentStatus | undefined) => s === 'countdown' || s === 'escalated' || s === 'reviewing';
+export const isOpenStatus = (s: IncidentStatus | undefined) => s === 'countdown' || s === 'escalated';
 
 // ── 조회 ───────────────────────────────────────────────────────
 

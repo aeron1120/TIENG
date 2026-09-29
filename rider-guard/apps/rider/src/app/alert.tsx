@@ -77,7 +77,7 @@ export default function AlertScreen() {
   );
 
   const help = () => respond.mutate('help', { onSuccess: () => router.replace({ pathname: '/status', params: { id } }) });
-  // 에스컬레이션 뒤의 '괜찮아요'는 서버가 기록만 하고 관제가 확인한다 (설계문서 6.4).
+  // 비상연락이 시작된 뒤의 '괜찮아요'도 사고를 닫는다 — 서버가 이미 알린 연락처와 119 에 무사하다고 알린다.
   const ok = () => respond.mutate('ok', { onSuccess: () => resetTo('/home') });
   const problem = respond.error ?? error;
 
@@ -120,7 +120,7 @@ export default function AlertScreen() {
       {expired ? (
         <Txt style={[font.sans(700), { fontSize: 16, color: colors.accentOnDark, textAlign: 'center' }]}>응답이 없어 비상연락을 시작했어요</Txt>
       ) : (
-        <Txt style={styles.note}>{'응답이 없으면 비상연락처와 관제센터에\n현재 위치를 자동으로 알려요.'}</Txt>
+        <Txt style={styles.note}>{'응답이 없으면 비상연락처와 119에\n현재 위치를 자동으로 알려요.'}</Txt>
       )}
       {problem && <Txt style={[styles.note, { color: colors.accentOnDark }]}>{errorMessage(problem)}</Txt>}
 
@@ -138,7 +138,7 @@ export default function AlertScreen() {
           onPress={ok}
         />
         <Txt style={{ fontSize: 12, color: colors.textOnDarkFaint, textAlign: 'center' }}>
-          {expired ? '비상연락이 시작된 뒤에는 관제센터가 한 번 더 확인해요.' : "'괜찮아요'를 누르면 오탐으로 기록되고 운행을 계속해요."}
+          {expired ? "지금 '괜찮아요'를 누르면 비상연락처와 119에 괜찮다고 알리고 대응을 마쳐요." : "'괜찮아요'를 누르면 오탐으로 기록되고 운행을 계속해요."}
         </Txt>
       </View>
     </Screen>

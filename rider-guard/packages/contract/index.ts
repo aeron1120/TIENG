@@ -130,7 +130,6 @@ export type MeDto = {
   session: SessionDto | null;
   /** 오늘(한국 시간) 누적 운행 시간. 세션 진행 중이면 asOf 이후 경과분을 더해 표시한다. */
   today: { driveSeconds: number; asOf: ISODate };
-  centerPhone: string;
 };
 
 export type LocationAccessDto = {
@@ -145,13 +144,24 @@ export type LocationAccessDto = {
 export type IncidentSource = 'tag' | 'phone' | 'device' | 'test';
 export type IncidentKind = 'impact' | 'fall';
 /**
+ * 관제 상담원 없이 서버가 끝까지 처리한다.
  * countdown → (괜찮아요) cancelled
- * countdown → (도움 요청 | 무응답) escalated → (상담원 배정) reviewing → resolved
+ * countdown → (도움 요청 | 무응답) escalated [비상연락 문자 + 119 자동 신고 + 대체배차] → (괜찮아요 | 24시간) resolved
  */
-export type IncidentStatus = 'countdown' | 'cancelled' | 'escalated' | 'reviewing' | 'resolved';
+export type IncidentStatus = 'countdown' | 'cancelled' | 'escalated' | 'resolved';
 export type RiderResponse = 'ok' | 'help';
 export type EscalationReason = 'no_response' | 'rider_requested';
-export type Resolution = 'false_alarm' | 'handled';
+/**
+ * false_alarm: 카운트다운 중 '괜찮아요' (예전 기록에는 상담원이 오탐으로 닫은 것도 있다)
+ * rider_ok: 비상연락이 시작된 뒤 라이더가 '괜찮아요'로 닫음
+ * handled: 라이더 응답 없이 24시간이 지나 자동 종료 (예전 기록에는 상담원이 대응 완료로 닫은 것도 있다)
+ */
+export type Resolution = 'false_alarm' | 'rider_ok' | 'handled';
+/**
+ * 119 자동 신고가 어디까지 갔는가.
+ * waiting: 카운트다운 중 / sending·retrying: 보내는 중(retrying 은 한 번 이상 실패) / failed: 끝내 실패 / cancelled: 보내기 전에 사고가 끝남
+ */
+export type EmergencyDelivery = 'waiting' | 'sending' | 'retrying' | 'sent' | 'failed' | 'cancelled';
 export type OrderStatus = 'assigned' | 'held' | 'reassigned' | 'delivered';
 
 export type CreateIncidentRequest = {
@@ -181,8 +191,7 @@ export type IncidentStep =
   | Step<'detected', { source: IncidentSource; kind: IncidentKind }>
   | Step<'response', { response: RiderResponse | 'none' | null; seconds: number | null }>
   | Step<'contacts', { notified: { priority: number; name: string }[]; pending: number; failed: number; acknowledgedBy: string | null; reason: 'no_contacts' | null }>
-  | Step<'center', { phase: 'waiting' | 'queued' | 'reviewing' | 'closed'; outcome: Resolution | null }>
-  | Step<'emergency', { mode: 'sms' | 'manual' }>
+  | Step<'emergency', { delivery: EmergencyDelivery }>
   | Step<'order', { status: OrderStatus }>
   | Step<'record', Record<string, never>>;
 
@@ -328,23 +337,23 @@ export type IndicatorReportResponse = {
   judgmentId: string | null;
 };
 
-// ── 관제 콘솔 API ──────────────────────────────────────────────
+// ── 운영 모니터 API (읽기 전용) ─────────────────────────────────
+//
+// 사고 대응은 전부 자동이라 사람이 누를 버튼이 없다. 자동 대응이 제대로 돌았는지와 판정 근거만 본다.
+// 위치·전화번호·차량·의료정보는 싣지 않는다 — 그 정보는 비상연락처와 119 에만 간다.
 
 export type OpsIncidentDto = {
   id: string;
   status: IncidentStatus;
-  urgent: boolean;
-  rider: { name: string; phone: string };
+  rider: { name: string };
   detectedAt: ISODate;
   escalatedAt: ISODate | null;
   escalationReason: EscalationReason | null;
   riderResponse: RiderResponse | null;
-  operatorName: string | null;
   resolution: Resolution | null;
 };
 export type OpsIncidentDetailDto = OpsIncidentDto & {
-  rider: { name: string; phone: string; vehicle: Vehicle | null; medical: MedicalInfo | null };
-  location: IncidentLocation | null;
+  emergency: EmergencyDelivery;
   contacts: { priority: number; name: string; relation: Relation; notifiedAt: ISODate | null; acknowledgedAt: ISODate | null }[];
   order: OrderDto | null;
   timeline: { type: string; at: ISODate; data: Record<string, unknown> | null }[];
@@ -363,5 +372,3 @@ export type OpsJudgmentDto = {
   incidentId: string | null;
   traces: RuleTrace[];
 };
-export type OpsResolveRequest = { outcome: Resolution; note?: string };
-export type OpsEmergencyResponse = { mode: 'sms' | 'manual'; report: string };

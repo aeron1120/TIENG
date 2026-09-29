@@ -312,6 +312,17 @@ const MIGRATIONS: string[] = [
   CREATE INDEX incidents_session ON incidents(sessionId);
   CREATE INDEX locations_session ON locations(sessionId);
   `,
+  // v4 — 관제 상담원 없이 서버가 끝까지 처리한다. 상담원 배정 단계(reviewing)와 상담원이 쓰던 칸을 없앤다.
+  // 119 신고는 비상연락 문자와 같은 outbox(notifications, purpose = emergency_*)로 보낸다.
+  `
+  UPDATE incidents SET status = 'escalated' WHERE status = 'reviewing';
+  DROP INDEX incidents_one_open;
+  CREATE UNIQUE INDEX incidents_one_open ON incidents(riderId) WHERE status IN ('countdown', 'escalated');
+  ALTER TABLE incidents DROP COLUMN urgent;
+  ALTER TABLE incidents DROP COLUMN operatorName;
+  ALTER TABLE incidents DROP COLUMN reviewingAt;
+  ALTER TABLE incidents DROP COLUMN resolutionNote;
+  `,
 ];
 
 export type Params = Record<string, InValue | undefined>;

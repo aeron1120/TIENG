@@ -10,12 +10,12 @@ export interface SmsSender {
   send(to: string, body: string): Promise<void>;
 }
 
-/** 119 문자 신고 (설계문서 4.3 4단계). 상담원 판단으로만 호출된다. */
+/** 119 문자 신고 (설계문서 4.3 4단계). 관제 상담원 없이 에스컬레이션과 함께 자동으로 보낸다. */
 export interface EmergencyReporter {
   report(text: string): Promise<void>;
 }
 
-/** 배달대행사: 사고 확정 시 진행 중 주문 보류 + 대체배차 요청 */
+/** 배달대행사: 사고 확정 시 진행 중 주문 보류 + 대체배차 요청. 대행사가 받아 주면(정상 반환) 대체배차 완료로 본다. */
 export interface DispatchGateway {
   requestReassignment(order: { id: string; storeName: string; destination: string }, riderId: string): Promise<void>;
 }

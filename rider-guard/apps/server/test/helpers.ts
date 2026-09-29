@@ -89,8 +89,9 @@ export async function setup(env: Record<string, string> = {}) {
     return token;
   }
 
-  const ops = (method: string, path: string, body?: unknown, operator = '김관제') =>
-    call(method, `/ops/api${path}`, { body, headers: { authorization: `Bearer ${ctx.config.opsToken}`, 'x-operator': encodeURIComponent(operator) } });
+  /** 운영 모니터 API (읽기 전용) */
+  const ops = (method: string, path: string, body?: unknown) =>
+    call(method, `/ops/api${path}`, { body, headers: { authorization: `Bearer ${ctx.config.opsToken}` } });
 
   const setPushTicket = (fn: (m: PushMessage) => PushTicket) => {
     pushTicket = fn;

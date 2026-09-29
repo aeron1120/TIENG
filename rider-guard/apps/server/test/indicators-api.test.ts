@@ -42,7 +42,7 @@ test('지표 백엔드가 보낸 사고 지표로 사고가 열리고, 이후는
   assert.equal(active.source, 'device');
   assert.equal(active.kind, 'impact');
 
-  await t.advance(30); // 무응답 → 비상연락 + 관제
+  await t.advance(30); // 무응답 → 비상연락 + 119 자동 신고
   const detail = (await t.ops('GET', `/incidents/${active.id}`)).json;
   assert.equal(detail.evidence.decision, 'alarm');
   assert.equal(detail.evidence.producer, 'tag-v1');

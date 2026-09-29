@@ -1,4 +1,4 @@
-import type { IncidentDetailDto, IncidentStep, IncidentSummaryDto, OrderStatus, Relation } from '@rider-guard/contract';
+import type { EmergencyDelivery, IncidentDetailDto, IncidentStep, IncidentSummaryDto, OrderStatus, Relation } from '@rider-guard/contract';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -39,6 +39,16 @@ export const ORDER_LABEL: Record<OrderStatus, string> = {
   delivered: '배달 완료',
 };
 
+/** 119 자동 신고 단계. 관제센터가 없으니 신고가 막히면 라이더가 직접 걸 수 있게 안내한다. timed: 시각(또는 '진행 중')을 보여 주는가 */
+const EMERGENCY_TEXT: Record<EmergencyDelivery, { label: string; sub: string; timed: boolean }> = {
+  waiting: { label: '119 자동 신고', sub: '응답이 없으면 비상연락과 함께 바로 신고해요', timed: false },
+  sending: { label: '119 자동 신고 중', sub: '신고 문자를 보내고 있어요', timed: true },
+  retrying: { label: '119 신고가 늦어지고 있어요', sub: '위급하면 위의 119 전화로 직접 신고해 주세요', timed: true },
+  sent: { label: '119 자동 신고', sub: '위치와 라이더 정보를 담아 문자로 신고했어요', timed: true },
+  failed: { label: '119 자동 신고 실패', sub: '위의 119 전화로 직접 신고해 주세요', timed: false },
+  cancelled: { label: '119 신고', sub: '신고하지 않았어요', timed: false },
+};
+
 /** Status 화면 '대응 단계' 한 줄 */
 export function stepText(step: IncidentStep, incident: IncidentDetailDto): { label: string; sub: string; time: string } {
   const time = step.state === 'now' ? '진행 중' : clock(step.at);
@@ -63,21 +73,16 @@ export function stepText(step: IncidentStep, incident: IncidentDetailDto): { lab
       if (!d.notified.length) {
         return step.state === 'todo'
           ? { label: '비상연락 문자 발송', sub: '응답이 없으면 1순위부터 순서대로 알려요', time: '' }
-          : { label: '비상연락 문자 발송 중', sub: d.failed ? '문자 발송이 늦어지고 있어요 — 관제센터가 함께 확인해요' : '현재 위치 링크 포함', time };
+          : { label: '비상연락 문자 발송 중', sub: d.failed ? '문자 발송이 늦어지고 있어요 — 119 신고는 따로 진행돼요' : '현재 위치 링크 포함', time };
       }
       const who = d.notified.map((n) => n.priority).join('·');
       const sub = d.acknowledgedBy ? `${d.acknowledgedBy}님이 확인했어요` : d.pending ? '확인이 없으면 다음 순위에게도 알려요' : '현재 위치 링크 포함';
       return { label: `비상연락 ${who}순위 문자 발송`, sub, time };
     }
-    case 'center': {
-      const { phase, outcome } = step.detail;
-      if (phase === 'queued') return { label: '관제센터 접수', sub: '곧 담당자가 확인해요', time };
-      if (phase === 'reviewing') return { label: '관제센터 확인', sub: '담당자가 사고 내용을 검토하고 있어요', time };
-      if (phase === 'closed') return { label: '관제센터 확인 완료', sub: outcome === 'false_alarm' ? '오탐으로 확인됐어요' : '대응을 마쳤어요', time };
-      return { label: '관제센터 확인', sub: step.state === 'skipped' ? '연결하지 않았어요' : '비상연락과 함께 연결돼요', time: '' };
+    case 'emergency': {
+      const { label, sub, timed } = EMERGENCY_TEXT[step.detail.delivery];
+      return { label, sub, time: timed ? time : '' };
     }
-    case 'emergency':
-      return { label: '119 신고', sub: step.detail.mode === 'sms' ? '관제센터가 119에 문자로 신고했어요' : '관제센터가 119에 신고했어요', time };
     case 'order':
       return step.detail.status === 'held'
         ? { label: '대체배차 요청', sub: '다른 라이더에게 주문을 넘기는 중이에요', time }
@@ -90,7 +95,7 @@ export function stepText(step: IncidentStep, incident: IncidentDetailDto): { lab
 // ── 기록 화면 ──────────────────────────────────────────────────
 
 export function recordTag(r: Pick<IncidentSummaryDto, 'status' | 'resolution'>): string {
-  if (r.status === 'countdown' || r.status === 'escalated' || r.status === 'reviewing') return '대응 중';
+  if (r.status === 'countdown' || r.status === 'escalated') return '대응 중';
   return r.resolution === 'false_alarm' ? '오탐' : '대응 완료';
 }
 

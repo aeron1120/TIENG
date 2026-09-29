@@ -46,10 +46,10 @@ function message(kind: PushKind, incident: IncidentRow, to: string): PushMessage
     ? {
         ...common,
         title: incident.kind === 'fall' ? '넘어짐이 감지됐어요' : '강한 충격이 감지됐어요',
-        body: `괜찮으신가요? ${incident.countdownSeconds}초 안에 응답이 없으면 비상연락처와 관제센터에 알려요.`,
+        body: `괜찮으신가요? ${incident.countdownSeconds}초 안에 응답이 없으면 비상연락처와 119에 알려요.`,
         ttl: 600,
       }
-    : { ...common, title: '비상연락을 시작했어요', body: '응답이 없어 비상연락처와 관제센터에 위치를 알렸어요. 괜찮으면 알려 주세요.', ttl: 3600 };
+    : { ...common, title: '비상연락을 시작했어요', body: '응답이 없어 비상연락처와 119에 위치를 알렸어요. 괜찮으면 알려 주세요.', ttl: 3600 };
 }
 
 /** 스케줄러가 부른다. */

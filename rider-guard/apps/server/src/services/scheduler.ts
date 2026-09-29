@@ -1,11 +1,14 @@
 import type { AppContext, ContactRow, IncidentRow, NotificationRow, OrderRow } from '../context.ts';
-import { escalate } from './incidents.ts';
+import { closeStaleIncidents, escalate, queueContactUpdate } from './incidents.ts';
 import { deliverPushes } from './push.ts';
 import { expireSessions } from './sessions.ts';
 import { CONFIRMED_STATUSES, createShareLink } from './sharing.ts';
 
-const MAX_ATTEMPTS = 3;
-const RETRY_BASE_MS = 30_000;
+/** 재시도: 비상연락 문자는 30초·60초 뒤 두 번 더, 119 신고는 10초씩 늘려 가며 아홉 번 더 (약 7분) */
+const RETRY: Record<'contact' | 'emergency', { max: number; baseMs: number }> = {
+  contact: { max: 3, baseMs: 30_000 },
+  emergency: { max: 10, baseMs: 10_000 },
+};
 const DAY_MS = 24 * 60 * 60_000;
 /** 위치정보 이용·제공 사실 확인자료 보존 기간. 위치정보법 제16조는 6개월 이상 — 가장 긴 6개월(184일)을 채우고 지운다. */
 export const LOCATION_ACCESS_RETENTION_MS = 184 * DAY_MS;
@@ -28,19 +31,24 @@ export async function processDue(ctx: AppContext) {
   // 라이더 푸시 — 문자보다 먼저. 라이더가 스스로 취소할 기회가 가장 싸다.
   await deliverPushes(ctx);
 
-  // 배달대행사 대체배차 요청 (outbox)
+  // 배달대행사 대체배차 요청 (outbox). 대행사가 받아 주면 대체배차 완료 — 예전에 상담원이 누르던 단계다.
   const orders = await ctx.db.all<OrderRow>("SELECT * FROM orders WHERE status = 'held' AND reassignRequestedAt IS NULL");
   for (const order of orders) {
     if (!(await ctx.db.run('UPDATE orders SET reassignRequestedAt = :now WHERE id = :id AND reassignRequestedAt IS NULL', { id: order.id, now }))) continue;
     try {
       await ctx.providers.dispatch.requestReassignment(order, order.riderId);
+      await ctx.db.tx(async () => {
+        const at = ctx.clock.now();
+        if (!(await ctx.db.run("UPDATE orders SET status = 'reassigned', updatedAt = :at WHERE id = :id AND status = 'held'", { id: order.id, at }))) return;
+        if (order.incidentId) await addEvent(ctx, order.incidentId, 'order_reassigned', { orderId: order.id }, at);
+      });
     } catch (error) {
       ctx.log.error(`주문 ${order.id} 대체배차 요청 실패 — 다음 주기에 다시 시도`, error);
       await ctx.db.run('UPDATE orders SET reassignRequestedAt = NULL WHERE id = :id', { id: order.id });
     }
   }
 
-  // 문자 발송
+  // 비상연락 문자 · 119 신고
   const due = await ctx.db.all<NotificationRow>("SELECT * FROM notifications WHERE status = 'pending' AND dueAt <= :now ORDER BY dueAt LIMIT 50", {
     now,
   });
@@ -59,6 +67,9 @@ export async function processHousekeeping(ctx: AppContext) {
   await ctx.db.run('DELETE FROM loginCodes WHERE expiresAt < :now', { now });
   // 보존 기간이 지난 위치 이용·제공 기록 파기 (탈퇴 회원 것도 이때 지워진다 — 개인정보보호법 제21조)
   await ctx.db.run('DELETE FROM locationAccessLogs WHERE at < :cutoff', { cutoff: now - LOCATION_ACCESS_RETENTION_MS });
+  // 라이더가 끝내 응답하지 못한 사고는 24시간 뒤 닫는다 (상담원이 닫던 일)
+  const closed = await closeStaleIncidents(ctx);
+  if (closed) ctx.log.info(`응답 없이 24시간이 지난 사고 ${closed}건 자동 종료`);
 
   await unlinkDeletedKakaoAccounts(ctx, now);
 }
@@ -110,7 +121,10 @@ async function deliver(ctx: AppContext, n: NotificationRow) {
 
   const incident = (await ctx.db.get<IncidentRow>('SELECT * FROM incidents WHERE id = :id', { id: n.incidentId }))!;
   const contact = n.contactId ? await ctx.db.get<ContactRow>('SELECT * FROM contacts WHERE id = :id', { id: n.contactId }) : undefined;
-  const stale = n.purpose === 'contact_alert' && (!contact || !(CONFIRMED_STATUSES as readonly string[]).includes(incident.status));
+  const emergency = n.purpose === 'emergency_report' || n.purpose === 'emergency_update';
+  const confirmed = (CONFIRMED_STATUSES as readonly string[]).includes(incident.status);
+  // 그사이 사고가 끝났으면 사고 문자·119 신고는 보내지 않는다 (후속 안내는 사고가 끝난 뒤에 가는 것이라 보낸다)
+  const stale = (n.purpose === 'contact_alert' && (!contact || !confirmed)) || (n.purpose === 'emergency_report' && !confirmed);
   if (stale) {
     await ctx.db.run("UPDATE notifications SET status = 'cancelled' WHERE id = :id", { id: n.id });
     return;
@@ -119,42 +133,54 @@ async function deliver(ctx: AppContext, n: NotificationRow) {
   // 링크는 보낼 때 만든다. 토큰 원문은 문자에만 실리고 DB 에는 해시만 남는다.
   const body = n.body.includes('{link}') ? n.body.replace('{link}', (await createShareLink(ctx, { riderId: incident.riderId, contactId: contact!.id, incidentId: incident.id })).url) : n.body;
   try {
-    await ctx.providers.sms.send(n.recipient, body);
+    if (emergency) await ctx.providers.emergency.report(body);
+    else await ctx.providers.sms.send(n.recipient, body);
     const sentAt = ctx.clock.now();
     await ctx.db.tx(async () => {
       await ctx.db.run("UPDATE notifications SET status = 'sent', sentAt = :sentAt, error = NULL WHERE id = :id", { id: n.id, sentAt });
       if (n.purpose === 'contact_alert' && contact) {
-        await ctx.db.run('INSERT INTO incidentEvents (incidentId, type, at, dataJson) VALUES (:incidentId, :type, :at, :dataJson)', {
-          incidentId: incident.id,
-          type: 'contact_notified',
-          at: sentAt,
-          dataJson: JSON.stringify({ contactId: contact.id, priority: contact.priority, name: contact.name }),
-        });
+        await addEvent(ctx, incident.id, 'contact_notified', { contactId: contact.id, priority: contact.priority, name: contact.name }, sentAt);
       }
+      if (n.purpose === 'emergency_report') await addEvent(ctx, incident.id, 'emergency_reported', null, sentAt);
+      if (n.purpose === 'emergency_update') await addEvent(ctx, incident.id, 'emergency_updated', null, sentAt);
     });
   } catch (error) {
     const attempts = n.attempts + 1;
     const message = error instanceof Error ? error.message : String(error);
-    if (attempts < MAX_ATTEMPTS) {
-      ctx.log.warn(`문자 발송 실패 (${attempts}/${MAX_ATTEMPTS}) → ${n.recipient}: ${message}`);
+    const retry = RETRY[emergency ? 'emergency' : 'contact'];
+    const what = emergency ? '119 신고' : '문자 발송';
+    if (attempts < retry.max) {
+      ctx.log.warn(`${what} 실패 (${attempts}/${retry.max}) → ${n.recipient}: ${message}`);
       await ctx.db.run("UPDATE notifications SET status = 'pending', dueAt = :dueAt, error = :message WHERE id = :id", {
         id: n.id,
-        dueAt: ctx.clock.now() + RETRY_BASE_MS * attempts,
+        dueAt: ctx.clock.now() + retry.baseMs * attempts,
         message,
       });
     } else {
-      ctx.log.error(`문자 발송 최종 실패 → ${n.recipient}`, error);
+      ctx.log.error(`${what} 최종 실패 → ${n.recipient}`, error);
       await ctx.db.tx(async () => {
         await ctx.db.run("UPDATE notifications SET status = 'failed', error = :message WHERE id = :id", { id: n.id, message });
-        await ctx.db.run('INSERT INTO incidentEvents (incidentId, type, at, dataJson) VALUES (:incidentId, :type, :at, :dataJson)', {
-          incidentId: incident.id,
-          type: 'contact_notify_failed',
-          at: ctx.clock.now(),
-          dataJson: JSON.stringify({ contactId: n.contactId, priority: contact?.priority ?? null, error: message }),
-        });
+        if (emergency) {
+          await addEvent(ctx, incident.id, `${n.purpose}_failed`, { error: message });
+          // 관제 상담원이 없으니 신고가 안 됐다는 사실을 사람에게 넘긴다. 아직 문자를 못 받은 연락처는 링크 화면에서 본다.
+          if (n.purpose === 'emergency_report') {
+            await queueContactUpdate(ctx, incident, '119 자동 신고가 전송되지 않았어요. 받은 링크의 위치로 직접 119에 신고해 주세요.');
+          }
+        } else {
+          await addEvent(ctx, incident.id, 'contact_notify_failed', { contactId: n.contactId, priority: contact?.priority ?? null, error: message });
+        }
       });
     }
   }
+}
+
+async function addEvent(ctx: AppContext, incidentId: string, type: string, data: Record<string, unknown> | null, at = ctx.clock.now()) {
+  await ctx.db.run('INSERT INTO incidentEvents (incidentId, type, at, dataJson) VALUES (:incidentId, :type, :at, :dataJson)', {
+    incidentId,
+    type,
+    at,
+    dataJson: data ? JSON.stringify(data) : null,
+  });
 }
 
 /** 발송 도중 서버가 꺼졌던 알림을 되살린다. 한 번 더 갈 수는 있어도 빠뜨리지는 않는 쪽을 택한다. */

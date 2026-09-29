@@ -33,7 +33,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "운행 중에만 위치를 수집해, 사고가 나면 비상연락처와 관제센터에 현재 위치를 알려요.",
+          "locationWhenInUsePermission": "운행 중에만 위치를 수집해, 사고가 나면 비상연락처와 119에 현재 위치를 알려요.",
           "locationAlwaysAndWhenInUsePermission": "운행 중에는 앱을 닫아도 사고를 감지하고 위치를 알릴 수 있게 항상 허용이 필요해요. 운행을 종료하면 수집하지 않아요.",
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true,

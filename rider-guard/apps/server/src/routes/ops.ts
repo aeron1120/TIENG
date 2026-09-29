@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs';
 
-import type { OpsIncidentDetailDto, OpsIncidentDto, OpsJudgmentDto } from '@rider-guard/contract';
+import type { OpsDetectionDto, OpsIncidentDetailDto, OpsIncidentDto, OpsJudgmentDto } from '@rider-guard/contract';
 import { Hono } from 'hono';
 
 import { DEV_OPS_TOKEN } from '../config.ts';
 import type { AppContext } from '../context.ts';
 import { ApiError, safeEqual } from '../lib.ts';
+import { recentDetections } from '../services/detections.ts';
 import { listForOps, opsDetail } from '../services/incidents.ts';
 import { listJudgments } from '../services/judgments.ts';
 
@@ -32,6 +33,8 @@ export function opsRoutes(ctx: AppContext) {
   });
 
   app.get('/api/judgments', async (c) => c.json<{ items: OpsJudgmentDto[] }>({ items: await listJudgments(ctx) }));
+
+  app.get('/api/detections', async (c) => c.json<{ items: OpsDetectionDto[] }>({ items: await recentDetections(ctx) }));
 
   app.get('/api/incidents', async (c) => c.json<{ items: OpsIncidentDto[] }>({ items: await listForOps(ctx) }));
 

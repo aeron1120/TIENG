@@ -1,4 +1,5 @@
 import type {
+  DetectionV1,
   EmergencyDelivery,
   EscalationReason,
   IncidentDetailDto,
@@ -15,9 +16,10 @@ import type {
   Vehicle,
 } from '@rider-guard/contract';
 
-import type { AppContext, ContactRow, IncidentEventRow, IncidentRow, NotificationRow, OrderRow, RiderRow } from '../context.ts';
+import type { AppContext, ContactRow, DetectionRow, IncidentEventRow, IncidentRow, NotificationRow, OrderRow, RiderRow } from '../context.ts';
 import { parseJson } from '../db.ts';
 import { ApiError, formatPhone, iso, newId, notFound, seoulClock } from '../lib.ts';
+import { levelOf } from './levels.ts';
 import { consentsOf, displayName, getRider, listContacts } from './riders.ts';
 import { enqueuePush } from './push.ts';
 import { activeSession, latestLocation } from './sessions.ts';
@@ -56,7 +58,7 @@ async function reload(ctx: AppContext, id: string): Promise<IncidentRow> {
   return (await ctx.db.get<IncidentRow>('SELECT * FROM incidents WHERE id = :id', { id }))!;
 }
 
-async function addEvent(ctx: AppContext, incidentId: string, type: string, data: Record<string, unknown> | null = null) {
+export async function addEvent(ctx: AppContext, incidentId: string, type: string, data: Record<string, unknown> | null = null) {
   await ctx.db.run('INSERT INTO incidentEvents (incidentId, type, at, dataJson) VALUES (:incidentId, :type, :at, :dataJson)', {
     incidentId,
     type,
@@ -87,6 +89,14 @@ export type NewIncident = {
   evidence?: unknown;
   /** 같은 보고를 두 번 받아도 사고를 한 번만 여는 키. 이미 끝난 사고라도 다시 열지 않는다 */
   reportKey?: string;
+  /** 보류·대체배차할 주문. 없으면 에스컬레이션 때 라이더의 최근 배달 중 주문 */
+  orderId?: string;
+  /** 위치 대신 붙일 주소 표시 (데모 위치 등). 119 신고문에도 그대로 들어간다 */
+  address?: string;
+  /** 재생 데이터: 감지 시각이 합성 값이라 너무 오래됐거나 미래여도 받는다 */
+  syntheticTime?: boolean;
+  /** 타임라인 첫 줄(detected)에 덧붙일 내용 */
+  detectedEvent?: Record<string, unknown>;
 };
 
 /**
@@ -99,7 +109,7 @@ export async function createIncident(ctx: AppContext, input: NewIncident): Promi
 
   const now = ctx.clock.now();
   const detectedAt = input.detectedAt ?? now;
-  if (detectedAt > now + CLOCK_SKEW_MS || detectedAt < now - MAX_EVENT_AGE_MS) {
+  if (!input.syntheticTime && (detectedAt > now + CLOCK_SKEW_MS || detectedAt < now - MAX_EVENT_AGE_MS)) {
     throw new ApiError(422, 'stale_event', '감지 시각이 너무 오래됐거나 미래예요.');
   }
 
@@ -138,11 +148,12 @@ export async function createIncident(ctx: AppContext, input: NewIncident): Promi
       lng: input.location?.lng ?? fallback?.lng ?? null,
       accuracy: input.location?.accuracy ?? fallback?.accuracy ?? null,
       locationAt: input.location ? now : (fallback?.recordedAt ?? null),
-      address: null,
+      address: input.location ? (input.address ?? null) : null,
       metricsJson: input.metrics ? JSON.stringify(input.metrics) : null,
       sensorLogJson: null,
       evidenceJson: input.evidence === undefined ? null : JSON.stringify(input.evidence),
       reportKey: input.reportKey ?? null,
+      orderId: input.orderId ?? null,
     };
     await ctx.db.run(
       `INSERT INTO incidents (${Object.keys(incident).join(', ')}) VALUES (${Object.keys(incident)
@@ -150,7 +161,7 @@ export async function createIncident(ctx: AppContext, input: NewIncident): Promi
         .join(', ')})`,
       incident,
     );
-    await addEvent(ctx, incident.id, 'detected', { source: incident.source, kind: incident.kind });
+    await addEvent(ctx, incident.id, 'detected', { source: incident.source, kind: incident.kind, ...input.detectedEvent });
     // 앱이 꺼져 있어도 확인 화면을 띄울 수 있게 (앱이 켜져 있으면 3초 폴링이 먼저 띄운다)
     await enqueuePush(ctx, incident, 'incident_detected');
     return { created: true, incident };
@@ -243,10 +254,15 @@ export async function escalate(ctx: AppContext, incident: IncidentRow, reason: E
     const report = await emergencyReport(ctx, { ...incident, escalationReason: reason });
     await insertNotification(ctx, incident.id, { id: null, phone: EMERGENCY_RECIPIENT }, 'emergency_report', report, now);
 
-    const order = await ctx.db.get<OrderRow>(
-      "SELECT * FROM orders WHERE riderId = :riderId AND status = 'assigned' ORDER BY createdAt DESC LIMIT 1",
-      { riderId: incident.riderId },
-    );
+    // 보내는 쪽이 사고 당시 주문을 알려 줬으면 그 주문, 아니면 라이더의 최근 배달 중 주문
+    const order = incident.orderId
+      ? await ctx.db.get<OrderRow>("SELECT * FROM orders WHERE id = :id AND riderId = :riderId AND status = 'assigned'", {
+          id: incident.orderId,
+          riderId: incident.riderId,
+        })
+      : await ctx.db.get<OrderRow>("SELECT * FROM orders WHERE riderId = :riderId AND status = 'assigned' ORDER BY createdAt DESC LIMIT 1", {
+          riderId: incident.riderId,
+        });
     if (order) {
       await ctx.db.run("UPDATE orders SET status = 'held', incidentId = :incidentId, updatedAt = :now WHERE id = :id", {
         id: order.id,
@@ -331,6 +347,26 @@ async function closeIncident(ctx: AppContext, incident: IncidentRow, outcome: Ex
       const name = displayName(await getRider(ctx, incident.riderId));
       await queueContactUpdate(ctx, incident, `${name}님이 괜찮다고 응답해서 사고 대응을 마쳤어요. 걱정을 끼쳐 죄송해요.`);
     }
+    return true;
+  });
+}
+
+/**
+ * 재생·테스트 사고를 다음 재생이 대신한다 — 시연은 사고를 한 건씩 차례로 열고, 라이더당 진행 중 사고는 하나다.
+ * 카운트다운 중이면 cancelled, 에스컬레이션 뒤면 resolved 로 닫는다. 결과는 앱 기록에서 '대응 완료'로 보이는 handled 를 쓴다
+ * (앱을 다시 빌드하지 않으려고 새 값을 만들지 않았다). 실제 사고는 부르지 않는다.
+ */
+export async function supersedeIncident(ctx: AppContext, incident: IncidentRow, by: { detectionId: string }): Promise<boolean> {
+  return await ctx.db.tx(async () => {
+    const now = ctx.clock.now();
+    const changed = await ctx.db.run(
+      `UPDATE incidents SET status = CASE status WHEN 'countdown' THEN 'cancelled' ELSE 'resolved' END, resolution = 'handled', resolvedAt = :now
+       WHERE id = :id AND status IN ('countdown', 'escalated') AND source = 'test'`,
+      { id: incident.id, now },
+    );
+    if (!changed) return false;
+    await addEvent(ctx, incident.id, 'superseded', { detectionId: by.detectionId });
+    await cancelPendingAlerts(ctx, incident.id);
     return true;
   });
 }
@@ -528,7 +564,9 @@ export async function listIncidentSummaries(ctx: AppContext, riderId: string): P
 
 // ── 운영 모니터 DTO (읽기 전용) ─────────────────────────────────
 
-function toOpsDto(incident: IncidentRow, rider: Pick<RiderRow, 'name' | 'phone'>): OpsIncidentDto {
+function toOpsDto(ctx: AppContext, incident: IncidentRow, rider: Pick<RiderRow, 'name' | 'phone'>, detection: DetectionV1 | null): OpsIncidentDto {
+  const level = detection ? levelOf(incident, detection, ctx.config.thresholds.stillQuietMinS) : null;
+  const replay = detection?.source.replay;
   return {
     id: incident.id,
     status: incident.status,
@@ -538,25 +576,40 @@ function toOpsDto(incident: IncidentRow, rider: Pick<RiderRow, 'name' | 'phone'>
     escalationReason: incident.escalationReason,
     riderResponse: incident.riderResponse,
     resolution: incident.resolution,
+    level: level?.level ?? null,
+    levelLabel: level?.label ?? null,
+    replay: replay ? { runId: replay.run_id, scenarioName: replay.scenario_name } : null,
   };
 }
 
-/** 대응 중인 사고 + 최근 하루 안에 종료된 사고. 카운트다운 중인 사고는 확정 전이라 보이지 않는다 (4.1.2). */
+/**
+ * 대응 중인 사고 + 최근 하루 안에 종료된 사고. 카운트다운 중인 사고는 확정 전이라 보이지 않는다 (4.1.2).
+ * 데모 모드는 시연 화면이라 라이더 확인 전(카운트다운)과 기각된 사고까지 보인다.
+ */
 export async function listForOps(ctx: AppContext): Promise<OpsIncidentDto[]> {
-  const rows = await ctx.db.all<IncidentRow & { riderPhone: string | null; riderName: string | null }>(
-    `SELECT i.*, r.phone AS riderPhone, r.name AS riderName FROM incidents i JOIN riders r ON r.id = i.riderId
-     WHERE i.status = 'escalated' OR (i.status = 'resolved' AND i.resolvedAt > :since)
-     ORDER BY CASE WHEN i.status = 'resolved' THEN 1 ELSE 0 END, i.escalatedAt DESC`,
+  const where = ctx.config.demoMode
+    ? "i.status IN ('countdown', 'escalated') OR i.resolvedAt > :since"
+    : "i.status = 'escalated' OR (i.status = 'resolved' AND i.resolvedAt > :since)";
+  const rows = await ctx.db.all<IncidentRow & { riderPhone: string | null; riderName: string | null; detectionJson: string | null }>(
+    `SELECT i.*, r.phone AS riderPhone, r.name AS riderName, d.bodyJson AS detectionJson
+     FROM incidents i JOIN riders r ON r.id = i.riderId LEFT JOIN detections d ON d.incidentId = i.id
+     WHERE ${where}
+     ORDER BY CASE WHEN i.status IN ('countdown', 'escalated') THEN 0 ELSE 1 END, i.receivedAt DESC`,
     { since: ctx.clock.now() - 24 * 3_600_000 },
   );
-  return rows.map((row) => toOpsDto(row, { phone: row.riderPhone, name: row.riderName }));
+  return rows.map((row) => toOpsDto(ctx, row, { phone: row.riderPhone, name: row.riderName }, parseJson<DetectionV1>(row.detectionJson)));
 }
 
 /** 자동 대응이 어디까지 갔는지와 판정 근거. 위치·연락처 번호·의료정보는 싣지 않으므로 위치 이용 기록 대상이 아니다. */
 export async function opsDetail(ctx: AppContext, id: string): Promise<OpsIncidentDetailDto> {
-  const incident = await ctx.db.get<IncidentRow>('SELECT * FROM incidents WHERE id = :id AND escalatedAt IS NOT NULL', { id });
+  const incident = await ctx.db.get<IncidentRow>(
+    `SELECT * FROM incidents WHERE id = :id${ctx.config.demoMode ? '' : ' AND escalatedAt IS NOT NULL'}`,
+    { id },
+  );
   if (!incident) throw notFound('사고');
   const rider = await getRider(ctx, incident.riderId);
+  const detectionRow = await ctx.db.get<Pick<DetectionRow, 'bodyJson'>>('SELECT bodyJson FROM detections WHERE incidentId = :id', { id });
+  const detection = parseJson<DetectionV1>(detectionRow?.bodyJson);
   const notifications = await ctx.db.all<NotificationRow>(
     "SELECT * FROM notifications WHERE incidentId = :id AND purpose = 'contact_alert' AND status = 'sent'",
     { id },
@@ -567,7 +620,7 @@ export async function opsDetail(ctx: AppContext, id: string): Promise<OpsInciden
   );
   const order = await orderOf(ctx, id);
   return {
-    ...toOpsDto(incident, rider),
+    ...toOpsDto(ctx, incident, rider, detection),
     emergency: (await emergencyDelivery(ctx, incident)).delivery,
     contacts: (await listContacts(ctx, rider.id)).map((c) => ({
       priority: c.priority,
@@ -579,5 +632,10 @@ export async function opsDetail(ctx: AppContext, id: string): Promise<OpsInciden
     order: order ? toOrderDto(order) : null,
     timeline: (await eventsOf(ctx, id)).map((e) => ({ type: e.type, at: iso(e.at), data: parseJson<Record<string, unknown>>(e.dataJson) })),
     evidence: parseJson<unknown>(incident.evidenceJson),
+    // 운영 모니터에는 위치를 싣지 않는다 — 좌표는 빼고 출처·표시(데모 위치 등)만
+    detection: detection
+      ? { ...detection, location: detection.location ? { source: detection.location.source ?? null, label: detection.location.label ?? null } : null }
+      : null,
+    stillnessMinS: ctx.config.thresholds.stillQuietMinS,
   };
 }

@@ -323,6 +323,28 @@ const MIGRATIONS: string[] = [
   ALTER TABLE incidents DROP COLUMN reviewingAt;
   ALTER TABLE incidents DROP COLUMN resolutionNote;
   `,
+  // v5 — 지표 라우터 판정 수신 (/v1/detections). 판정은 라우터가 하고, 서버는 받은 본문과 첫 응답을 그대로 남긴다.
+  `
+  CREATE TABLE detections (
+    -- 보내는 쪽이 정한 detection_id. 같은 id 로 다시 오면 중복(같은 본문) 또는 충돌(다른 본문)
+    id TEXT PRIMARY KEY,
+    -- 키를 정렬한 JSON 의 SHA-256
+    bodyHash TEXT NOT NULL,
+    bodyJson TEXT NOT NULL,
+    -- 첫 응답. 같은 본문을 다시 보내면 이것을 그대로 돌려준다
+    responseJson TEXT NOT NULL,
+    riderId TEXT,
+    incidentId TEXT,
+    mode TEXT NOT NULL,
+    candidate INTEGER NOT NULL,
+    receivedAt INTEGER NOT NULL
+  );
+  CREATE INDEX detections_incident ON detections(incidentId);
+  CREATE INDEX detections_received ON detections(receivedAt);
+  CREATE INDEX detections_rider ON detections(riderId);
+  -- 사고 당시 배달 중이던 주문 (보내는 쪽이 알려 준 경우). 없으면 에스컬레이션 때 라이더의 최근 배달 중 주문
+  ALTER TABLE incidents ADD COLUMN orderId TEXT;
+  `,
 ];
 
 export type Params = Record<string, InValue | undefined>;

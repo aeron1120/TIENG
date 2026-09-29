@@ -29,5 +29,14 @@ services:
       # MVP 시연: 지표 판정으로 사고를 연다 (로드맵 Phase 1 처럼 기록만 하려면 false)
       - key: DETECTION_ENABLED
         value: "true"
+      # 지표 라우터 → /v1/detections 전송 토큰 — Render 가 무작위로 만든다. 지표팀에만 공유
+      - key: INGEST_TOKEN
+        generateValue: true
+      # 발표 시연: 문자·119·배차 외부 발송 차단, 데모 라이더·주문 시드, /v1/demo/reset
+      - key: DEMO_MODE
+        value: "true"
+      # 데모 라이더(demo@riderguard.test)로 앱에 로그인할 비밀번호 — 대시보드에서 넣는다
+      - key: DEMO_RIDER_PASSWORD
+        sync: false
       # PUBLIC_BASE_URL 은 비워 두면 Render 가 주는 https://<이름>.onrender.com 을 쓴다.
       # SNS 로그인 키(KAKAO_…, NAVER_…, GOOGLE_…)와 KAKAO_ADMIN_KEY 는 제공자 콘솔 등록 뒤 대시보드에서 추가한다.

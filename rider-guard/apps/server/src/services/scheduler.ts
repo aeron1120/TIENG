@@ -36,11 +36,14 @@ export async function processDue(ctx: AppContext) {
   for (const order of orders) {
     if (!(await ctx.db.run('UPDATE orders SET reassignRequestedAt = :now WHERE id = :id AND reassignRequestedAt IS NULL', { id: order.id, now }))) continue;
     try {
-      await ctx.providers.dispatch.requestReassignment(order, order.riderId);
+      const incident = order.incidentId ? await ctx.db.get<IncidentRow>('SELECT * FROM incidents WHERE id = :id', { id: order.incidentId }) : undefined;
+      const demo = incident ? isDemoIncident(ctx, incident) : ctx.config.demoMode;
+      if (demo) ctx.log.info(`[데모 — 실제 요청 안 함] 주문 ${order.id} 대체배차`);
+      else await ctx.providers.dispatch.requestReassignment(order, order.riderId);
       await ctx.db.tx(async () => {
         const at = ctx.clock.now();
         if (!(await ctx.db.run("UPDATE orders SET status = 'reassigned', updatedAt = :at WHERE id = :id AND status = 'held'", { id: order.id, at }))) return;
-        if (order.incidentId) await addEvent(ctx, order.incidentId, 'order_reassigned', { orderId: order.id }, at);
+        if (order.incidentId) await addEvent(ctx, order.incidentId, 'order_reassigned', { orderId: order.id, ...(demo ? { demo: true } : null) }, at);
       });
     } catch (error) {
       ctx.log.error(`주문 ${order.id} 대체배차 요청 실패 — 다음 주기에 다시 시도`, error);
@@ -130,19 +133,25 @@ async function deliver(ctx: AppContext, n: NotificationRow) {
     return;
   }
 
+  // 데모 모드와 재생·테스트 사고는 문자·119 를 절대 밖으로 보내지 않는다. 발송 입구는 여기 하나다 — 흐름(단계·타임라인)은 그대로 진행한다.
+  const demo = isDemoIncident(ctx, incident);
   // 링크는 보낼 때 만든다. 토큰 원문은 문자에만 실리고 DB 에는 해시만 남는다.
-  const body = n.body.includes('{link}') ? n.body.replace('{link}', (await createShareLink(ctx, { riderId: incident.riderId, contactId: contact!.id, incidentId: incident.id })).url) : n.body;
+  const body = !n.body.includes('{link}')
+    ? n.body
+    : n.body.replace('{link}', demo ? '(데모 링크)' : (await createShareLink(ctx, { riderId: incident.riderId, contactId: contact!.id, incidentId: incident.id })).url);
   try {
-    if (emergency) await ctx.providers.emergency.report(body);
+    if (demo) ctx.log.info(`[데모 — 실제 발송 안 함] ${emergency ? '119 신고문' : `문자 → ${n.recipient}`}\n${body}`);
+    else if (emergency) await ctx.providers.emergency.report(body);
     else await ctx.providers.sms.send(n.recipient, body);
     const sentAt = ctx.clock.now();
+    const mark = demo ? { demo: true } : null;
     await ctx.db.tx(async () => {
       await ctx.db.run("UPDATE notifications SET status = 'sent', sentAt = :sentAt, error = NULL WHERE id = :id", { id: n.id, sentAt });
       if (n.purpose === 'contact_alert' && contact) {
-        await addEvent(ctx, incident.id, 'contact_notified', { contactId: contact.id, priority: contact.priority, name: contact.name }, sentAt);
+        await addEvent(ctx, incident.id, 'contact_notified', { contactId: contact.id, priority: contact.priority, name: contact.name, ...mark }, sentAt);
       }
-      if (n.purpose === 'emergency_report') await addEvent(ctx, incident.id, 'emergency_reported', null, sentAt);
-      if (n.purpose === 'emergency_update') await addEvent(ctx, incident.id, 'emergency_updated', null, sentAt);
+      if (n.purpose === 'emergency_report') await addEvent(ctx, incident.id, 'emergency_reported', mark, sentAt);
+      if (n.purpose === 'emergency_update') await addEvent(ctx, incident.id, 'emergency_updated', mark, sentAt);
     });
   } catch (error) {
     const attempts = n.attempts + 1;
@@ -173,6 +182,9 @@ async function deliver(ctx: AppContext, n: NotificationRow) {
     }
   }
 }
+
+/** 밖으로 아무것도 보내지 않는 사고 — 데모 모드 전체, 그리고 재생 데이터·개발용 테스트로 연 사고(source test) */
+const isDemoIncident = (ctx: AppContext, incident: Pick<IncidentRow, 'source'>) => ctx.config.demoMode || incident.source === 'test';
 
 async function addEvent(ctx: AppContext, incidentId: string, type: string, data: Record<string, unknown> | null, at = ctx.clock.now()) {
   await ctx.db.run('INSERT INTO incidentEvents (incidentId, type, at, dataJson) VALUES (:incidentId, :type, :at, :dataJson)', {

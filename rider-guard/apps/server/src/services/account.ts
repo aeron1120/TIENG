@@ -23,6 +23,7 @@ export async function deleteAccount(ctx: AppContext, riderId: string) {
       'DELETE FROM pushes WHERE riderId = :riderId',
       'DELETE FROM shareLinks WHERE riderId = :riderId',
       'DELETE FROM judgments WHERE riderId = :riderId',
+      'DELETE FROM detections WHERE riderId = :riderId',
       'DELETE FROM orders WHERE riderId = :riderId',
       'DELETE FROM incidents WHERE riderId = :riderId',
       'DELETE FROM locations WHERE riderId = :riderId',

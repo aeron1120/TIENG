@@ -23,6 +23,15 @@ export type Config = {
   sessionMaxHours: number;
   /** 운영 모니터(/ops, 읽기 전용) 토큰 */
   opsToken: string;
+  /** 지표 라우터 → POST /v1/detections 전송 토큰. 운영 모니터 토큰과 따로 둔다. 없으면 수신을 받지 않는다(모두 401) */
+  ingestToken: string | undefined;
+  /**
+   * 발표 시연 모드. 문자·119·배차를 밖으로 보내지 않고, 데모 라이더(demo-rider-01)와 주문 6건을 시드하고,
+   * /v1/demo/reset 을 연다. 운영 모니터에 라이더 확인 전(카운트다운)·기각된 사고도 보인다.
+   */
+  demoMode: boolean;
+  /** 데모 라이더로 앱에 로그인할 비밀번호 (DEMO_MODE 에서만). 없으면 로그인할 수 없는 계정으로 시드한다 */
+  demoRiderPassword: string | undefined;
   /**
    * 지표 판정으로 사고를 여는가. 꺼져 있으면 판정만 기록한다 — 로드맵 Phase 1(데이터 수집, 경보 없음).
    * 개발 서버는 켜고, 운영은 DETECTION_ENABLED=true 로 명시해야 켜진다.
@@ -45,6 +54,7 @@ export type Config = {
 };
 
 export const DEV_OPS_TOKEN = 'dev-ops-token';
+export const DEV_INGEST_TOKEN = 'dev-ingest-token';
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const mode = env.NODE_ENV === 'production' ? 'production' : env.NODE_ENV === 'test' ? 'test' : 'development';
@@ -60,13 +70,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     contactStaggerSeconds: int(env.CONTACT_STAGGER_SECONDS, 60),
     sessionMaxHours: int(env.SESSION_MAX_HOURS, 12),
     opsToken: env.OPS_TOKEN ?? DEV_OPS_TOKEN,
+    ingestToken: env.INGEST_TOKEN || (mode === 'production' ? undefined : DEV_INGEST_TOKEN),
+    demoMode: env.DEMO_MODE === 'true',
+    demoRiderPassword: env.DEMO_RIDER_PASSWORD || undefined,
     detectionEnabled: env.DETECTION_ENABLED ? env.DETECTION_ENABLED === 'true' : mode !== 'production',
     thresholds: {
       impactGMin: num(env.IMPACT_G_MIN, DEFAULT_THRESHOLDS.impactGMin),
       rotationDpsMin: num(env.ROTATION_DPS_MIN, DEFAULT_THRESHOLDS.rotationDpsMin),
       deltaVMin: num(env.DV_MIN, DEFAULT_THRESHOLDS.deltaVMin),
       bankMinDeg: num(env.BANK_MIN_DEG, DEFAULT_THRESHOLDS.bankMinDeg),
-      stillQuietMinS: num(env.STILL_QUIET_MIN_S, DEFAULT_THRESHOLDS.stillQuietMinS),
+      // STILLNESS_MIN_S 는 라우터 연동 명세의 이름 (서버 2차 확인 기준)
+      stillQuietMinS: num(env.STILLNESS_MIN_S || env.STILL_QUIET_MIN_S, DEFAULT_THRESHOLDS.stillQuietMinS),
     },
     pushProvider: env.PUSH_PROVIDER === 'console' ? 'console' : 'expo',
     expoAccessToken: env.EXPO_ACCESS_TOKEN || undefined,
@@ -84,6 +98,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (mode === 'production') {
     if (config.opsToken === DEV_OPS_TOKEN || config.opsToken.length < 24) throw new Error('운영 환경에서는 24자 이상의 OPS_TOKEN 이 필요합니다.');
+    // 없으면 수신만 꺼진다(서버는 뜬다). 넣었는데 짧으면 실수라 멈춘다
+    if (config.ingestToken !== undefined && (config.ingestToken === DEV_INGEST_TOKEN || config.ingestToken.length < 24)) {
+      throw new Error('INGEST_TOKEN 은 24자 이상이어야 합니다.');
+    }
     if (!env.PUBLIC_BASE_URL && !env.RENDER_EXTERNAL_URL) throw new Error('운영 환경에서는 PUBLIC_BASE_URL 이 필요합니다.');
   }
   return config;

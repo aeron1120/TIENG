@@ -105,9 +105,22 @@ export type IncidentRow = {
   sensorLogJson: string | null;
   evidenceJson: string | null;
   reportKey: string | null;
+  orderId: string | null;
 };
 
-export type IncidentEventRow = { id: number; incidentId: string; type: string; at: number; dataJson: string | null };
+export type DetectionRow = {
+  id: string;
+  bodyHash: string;
+  bodyJson: string;
+  responseJson: string;
+  riderId: string | null;
+  incidentId: string | null;
+  mode: 'live' | 'replay';
+  candidate: number;
+  receivedAt: number;
+};
+
+export type IncidentEventRow ={ id: number; incidentId: string; type: string; at: number; dataJson: string | null };
 
 export type NotificationRow = {
   id: string;

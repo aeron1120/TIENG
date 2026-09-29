@@ -83,7 +83,37 @@ SNS 로그인은 서버가 인가 코드를 받는 방식이다 — 앱이 시�
 | 네이버 | developers.naver.com → 애플리케이션 등록(네이버 로그인), Callback URL | 검수 전에는 '멤버 관리'에 등록한 아이디만 로그인된다 |
 | 구글 | console.cloud.google.com → OAuth 동의 화면, OAuth 클라이언트 ID(웹 애플리케이션) | 콜백이 https 여야 한다(localhost 제외) — PC IP 로는 안 되고 클라우드 서버가 필요. 테스트 모드면 테스트 사용자만 |
 
-## 지표 백엔드 연결
+## 지표 라우터 연동 (`POST /v1/detections`)
+
+지표팀 연동 명세(2026-09-29)의 계약이다. **판정은 지표 라우터(파이썬, 지표팀)가 하고 서버는 판정하지 않는다** — 후보 여부를 뒤집지 않고,
+`fired` 를 다시 계산하지 않고, 조건 이름·기준값·규칙 문장도 서버 코드에 없다. 받은 본문을 그대로 남기고 운영 모니터가 `evidence` 를 받은 순서대로 그린다.
+지표팀이 조건을 바꿔도 서버를 고치지 않는다. 스키마 원본은 지표팀 계약 묶음의 `schemas/detection.v1.schema.json`, 서버 쪽 정의는 `apps/server/src/services/detections.ts`.
+
+- 인증 `Authorization: Bearer <INGEST_TOKEN>` (운영 모니터 토큰과 따로). 본문 64KB 이하, 모르는 필드는 422.
+- 검사 순서: 인증 401 → 크기 413 → JSON 400 `invalid_json` → 스키마 422 `validation_failed`(+`details[{path,message}]`) → 라이더 422 `unknown_rider` → 중복 200/409 → 사고 201 또는 기록 200.
+- 후보(`result.candidate`)면 앱의 사고로 연다 — `kind` 는 늘 `impact`, `source` 는 live → `device`, replay → `test`. 라이더 휴대폰에 사고 확인 푸시가 가고 기존 흐름(카운트다운 → 괜찮아요/도움 요청 → 비상연락)을 탄다. 후보가 아니면 기록만.
+- 같은 `detection_id` 에 같은 본문(키 정렬 JSON 의 SHA-256)이면 첫 응답을 `duplicate: true` 로 돌려준다. 본문이 다르면 409 `detection_conflict`.
+- 근거가 규칙과 어긋나면(`required` 가 다 발동 + `any_of` 하나 이상 ≠ 후보 여부) 경고 `evidence_inconsistent`. 후보면 사고는 '판정 불가' 등급으로 연다.
+- 운행 중이 아닌 라이더의 후보는 기록만(`rider_not_on_duty`). 재생·테스트 사고가 열려 있으면 다음 판정이 그것을 닫고 새로 연다(시연은 한 건씩). 실제 사고가 열려 있으면 새로 열지 않는다(`open_incident_exists`).
+- **`source: test`(재생 데이터·개발용 테스트 버튼) 사고와 `DEMO_MODE` 에서는 문자·119·배차 요청을 밖으로 보내지 않는다.** 흐름과 타임라인은 그대로 가고 "(데모) … 실제 발송 안 함"으로 남는다. 막는 곳은 발송 입구 한 곳(`scheduler.ts` 의 `deliver`)이다.
+- 등급: 후보 → 라이더 도움 요청이면 경보, 무응답이면 `post_event` 로 서버 2차 확인(사후 무동작 ≥ `STILL_QUIET_MIN_S`, 기준 미검증) — 확인되면 경보,
+  확인 불가면 '경보 (무동작 확인 불가)'(재생 데이터는 늘 여기), 움직임이 있으면 등급은 후보로 두되 대응은 그대로 에스컬레이션한다(상담원이 없으므로). 라이더 '괜찮아요'면 기각.
+- `GET /v1/detections/{id}` 받은 본문과 첫 응답(디버깅), `GET /healthz` 깨우기(인증 없음), `POST /v1/demo/reset` 재생 사고·기록 삭제(데모 모드 전용, 아니면 403).
+- 운영 모니터 사고 상세(`/ops/api/incidents/{id}`)의 `detection` 에 받은 본문이 들어간다 — 위치는 좌표를 빼고 출처·표시만.
+
+**데모 모드 (`DEMO_MODE=true`)** — 데모 라이더 `demo-rider-01`(이름 '데모 라이더', 비상연락처 010-0000-0000, 의료정보 미동의)과
+주문 `demo-order-0001`~`0006`(배달 중)을 서버가 뜰 때 만들고, 판정이 오면 데모 라이더의 운행을 켠다. 운영 모니터에 라이더 확인 전·기각된 사고와 '최근 수신'(사고를 열지 않은 판정 포함)이 보인다.
+`DEMO_RIDER_PASSWORD` 를 넣으면 앱에서 `demo@riderguard.test` 로 로그인해 발표용 폰을 데모 라이더로 쓸 수 있다 — `send_demo --rider-id demo-rider-01` 한 가지로 폰과 운영 모니터가 이어진다.
+
+```bash
+curl https://rider-guard-api.onrender.com/healthz                                    # 발표 5분 전에 깨우기
+python -m tools.send_demo --pause                                                   # 지표팀 계약 묶음 (Enter 한 번에 1건)
+curl -X POST https://rider-guard-api.onrender.com/v1/demo/reset -H "Authorization: Bearer $INGEST_TOKEN"   # 리허설 뒤
+```
+
+## 지표 백엔드 연결 (서버 판정 — 예전 경로)
+
+아래는 라우터가 생기기 전의 경로로, 서버가 헬멧 IMU 규칙으로 직접 판정한다. `fake-detector`·`sim` 스크립트가 쓰고 있어 남겨 두었다.
 
 지표를 계산하는 쪽(지금은 헬멧 IMU MuJoCo 시뮬레이션, 나중에는 헬멧 태그)은 **지표만 보내면** 된다. 판정·기록·경보·에스컬레이션은 이 서버가 한다.
 
@@ -186,7 +216,7 @@ IMU 로 계산한 열(`imu_acc_norm_g`… 또는 `acc_norm_g`…)만 읽는다. 
 ## 검사
 
 ```bash
-cd apps/server && npm test && npm run typecheck && npm run lint   # 가입·SNS·에스컬레이션·119 자동 신고·권한·기기·지표 판정·운영 모니터 75개
+cd apps/server && npm test && npm run typecheck && npm run lint   # 가입·SNS·에스컬레이션·119 자동 신고·권한·기기·지표 판정·라우터 연동 계약·데모 모드·운영 모니터 84개
 cd apps/rider && npm run typecheck && npm run lint
 ```
 

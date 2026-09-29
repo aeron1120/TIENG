@@ -9,17 +9,22 @@ import { deviceRoutes } from './routes/device.ts';
 import { opsRoutes } from './routes/ops.ts';
 import { authRoutes, meRoutes, tooLarge } from './routes/rider.ts';
 import { shareRoutes } from './routes/share.ts';
+import { v1Routes } from './routes/v1.ts';
+import { SCHEMA_VERSION } from './services/detections.ts';
 
 export function createApp(ctx: AppContext) {
   const app = new Hono();
 
   // 라이더 앱(웹 포함)은 토큰을 헤더로 보내고 쿠키를 쓰지 않으므로 출처 제한 없이 연다.
   for (const path of ['/auth/*', '/me', '/me/*']) app.use(path, cors());
-  // 센서 로그 업로드만 1MB(라우트에서 제한), 나머지는 64KB
+  // 센서 로그 업로드만 1MB(라우트에서 제한), 나머지는 64KB. /v1 은 인증을 먼저 보고 나서 크기를 잰다(라우트에서)
   const defaultLimit = bodyLimit({ maxSize: 64 * 1024, onError: tooLarge });
-  app.use('*', (c, next) => (c.req.path.endsWith('/sensor-log') ? next() : defaultLimit(c, next)));
+  app.use('*', (c, next) => (c.req.path.endsWith('/sensor-log') || c.req.path.startsWith('/v1/') ? next() : defaultLimit(c, next)));
 
   app.get('/health', (c) => c.json({ ok: true }));
+  // 발표 전에 서버를 깨우는 용도 — 인증 없음
+  app.get('/healthz', (c) => c.json({ ok: true, schema_version: SCHEMA_VERSION, demo_mode: ctx.config.demoMode }));
+  app.route('/v1', v1Routes(ctx));
   app.route('/auth', authRoutes(ctx));
   app.route('/me', meRoutes(ctx));
   app.route('/device-api', deviceRoutes(ctx));

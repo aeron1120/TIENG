@@ -337,6 +337,103 @@ export type IndicatorReportResponse = {
   judgmentId: string | null;
 };
 
+// ── 지표 라우터 판정 수신 (POST /v1/detections, 스키마 1.0) ────────
+//
+// 판정은 지표 라우터(지표팀)가 한다. 서버는 후보 여부를 뒤집지 않고 fired 를 다시 계산하지 않는다 — 조건 이름·기준값·규칙 문장도
+// 서버에 없다. 받은 본문을 그대로 남기고 운영 모니터가 evidence 를 받은 순서대로 그린다. 지표팀이 조건을 바꿔도 서버를 고치지 않는다.
+// 원본 계약: 지표팀 rider-guard-integration/schemas/detection.v1.schema.json. 모르는 필드는 422 로 거부한다.
+// snake_case 는 보내는 쪽(파이썬) 형식을 그대로 둔 것이다.
+
+export type DetectionEvidence = {
+  /** 지표 식별자 (소문자 스네이크, 예: impact_g) */
+  key: string;
+  /** 화면에 그대로 나간다 — 서버가 이름을 정하지 않는다 */
+  label: string;
+  /** required 가 전부 발동하고 any_of 가 하나 이상 발동하면 사고 후보 */
+  group: 'required' | 'any_of';
+  /** null 이면 '값 없음'. 0 으로 바꾸지 않는다 */
+  value: number | null;
+  threshold: number;
+  /** abs>= 는 절댓값 비교 (기울기) */
+  op: '>=' | 'abs>=';
+  unit: string;
+  /** 표시 자릿수 0~3 */
+  decimals: number;
+  /** 라우터가 계산한다. null 이면 값이 없어 판단 못 함 */
+  fired: boolean | null;
+  /** run_peak: 재생 데이터의 실행 전체 최대값, window: 후보 관찰창 값(실시간) */
+  value_basis: 'window' | 'run_peak';
+};
+
+export type DetectionReplay = {
+  dataset?: string;
+  run_id: string;
+  scenario_id: string;
+  scenario_name: string;
+  split?: string;
+  /** accident(사고) / 그 밖은 정상 */
+  ground_truth: string;
+  event_onset_s?: number | null;
+  detection_delay_s?: number | null;
+  rider_speed_kmh?: number | null;
+  duration_s?: number | null;
+};
+
+export type DetectionV1 = {
+  schema_version: '1.0';
+  /** 8~128자, A-Z a-z 0-9 . _ : - — 중복 판단 키 */
+  detection_id: string;
+  /** 서버의 라이더 ID (앱 계정, 또는 데모 라이더 demo-rider-01) */
+  rider_id: string;
+  /** 보류·대체배차 대상 주문 */
+  order_id?: string | null;
+  /** RFC 3339, 시간대 오프셋 필수 */
+  occurred_at: ISODate;
+  /** source 가 demo 면 실제 위치가 아니다 */
+  location?: { lat: number; lng: number; accuracy_m?: number | null; source?: string | null; label?: string | null } | null;
+  /** replay 는 문자·119 를 보내지 않는다. replay 면 replay 필수 */
+  source: { mode: 'live' | 'replay'; device: 'helmet_tag' | 'phone'; mount: string; replay?: DetectionReplay | null };
+  /** status 가 검증 상태 배지 문구를 정한다 (simulation_candidate_only = 실도로 미검증) */
+  detector: { name: string; version: string; status: string; profile: string; rule: { expression: string; window_s: number; warmup_s: number } };
+  /** 라우터 판정. t_candidate_s 는 스트림 시작 기준 상대 초 — 서버 시각에 더하지 않는다 */
+  result: { candidate: boolean; t_candidate_s: number | null };
+  /** 1~16행. 받은 순서 그대로 그린다 */
+  evidence: DetectionEvidence[];
+  quality?: { sample_rate_hz?: number | null; acc_saturation_fraction?: number | null; gyro_saturation_fraction?: number | null } | null;
+  /** 서버 2차 확인(사후 무동작)의 입력. 지표팀 규칙이 아니고 기준도 검증되지 않았다 */
+  post_event?: { available: boolean; stillness_s?: number | null; observed_s?: number | null; reason?: string | null } | null;
+};
+
+/**
+ * 사고 등급 (상태와 따로). 후보는 자동 신고가 아니다 — 라이더 확인 단계를 거친다.
+ * candidate: 후보(라이더 확인 대기) / alert: 경보(도움 요청, 또는 무응답 + 사후 무동작 확인)
+ * alert_no_stillness: 무응답인데 사후 무동작을 확인할 수 없음(재생 데이터는 항상 여기) / dismissed: 라이더가 괜찮다고 함
+ * undetermined: 후보인데 근거가 규칙과 어긋남 — 가능한 사고를 버리지 않으려고 사고는 연다
+ */
+export type IncidentLevel = 'candidate' | 'alert' | 'alert_no_stillness' | 'dismissed' | 'undetermined';
+/** open: 라이더 확인 대기(카운트다운) / in_progress: 자동 대응 중(에스컬레이션) / closed: 종료 */
+export type DetectionIncidentStatus = 'open' | 'in_progress' | 'closed';
+/**
+ * evidence_inconsistent: 근거(fired)가 후보 여부와 어긋남 / rider_not_on_duty: 운행 중이 아니라 기록만
+ * stale_event: 실시간 사고 시각이 너무 오래됐거나 미래라 기록만 / open_incident_exists: 이미 대응 중인 사고가 있어 새로 열지 않음
+ */
+export type DetectionWarning = 'evidence_inconsistent' | 'rider_not_on_duty' | 'stale_event' | 'open_incident_exists';
+
+export type DetectionResponseV1 = {
+  detection_id: string;
+  duplicate: boolean;
+  incident_created: boolean;
+  incident: {
+    id: string;
+    status: DetectionIncidentStatus;
+    status_label: string;
+    level: IncidentLevel;
+    level_label: string;
+    url: string;
+  } | null;
+  warnings: DetectionWarning[];
+};
+
 // ── 운영 모니터 API (읽기 전용) ─────────────────────────────────
 //
 // 사고 대응은 전부 자동이라 사람이 누를 버튼이 없다. 자동 대응이 제대로 돌았는지와 판정 근거만 본다.
@@ -351,14 +448,35 @@ export type OpsIncidentDto = {
   escalationReason: EscalationReason | null;
   riderResponse: RiderResponse | null;
   resolution: Resolution | null;
+  /** 지표 라우터 판정으로 열린 사고만 */
+  level: IncidentLevel | null;
+  levelLabel: string | null;
+  /** 재생 데이터로 열린 사고면 실행 번호와 시나리오 */
+  replay: { runId: string; scenarioName: string } | null;
 };
 export type OpsIncidentDetailDto = OpsIncidentDto & {
   emergency: EmergencyDelivery;
   contacts: { priority: number; name: string; relation: Relation; notifiedAt: ISODate | null; acknowledgedAt: ISODate | null }[];
   order: OrderDto | null;
   timeline: { type: string; at: ISODate; data: Record<string, unknown> | null }[];
-  /** 지표 판정으로 열린 사고면 그 근거 (producer, mode, decision, traces, indicators) */
+  /** 서버 판정(/device-api/indicators)으로 열린 예전 사고의 근거 (producer, mode, decision, traces, indicators) */
   evidence: unknown;
+  /** 지표 라우터 판정으로 열린 사고면 받은 본문 전체. 판정 근거 패널은 이 값으로 그린다. 위치는 좌표를 빼고 출처·표시만 */
+  detection: OpsDetectionBody | null;
+  /** 서버 2차 확인(사후 무동작) 기준 — 검증되지 않은 값 */
+  stillnessMinS: number;
+};
+export type OpsDetectionBody = Omit<DetectionV1, 'location'> & { location: { source: string | null; label: string | null } | null };
+/** 최근 수신한 라우터 판정 — 사고를 열지 않은 것(후보 아님)까지 */
+export type OpsDetectionDto = {
+  detectionId: string;
+  receivedAt: ISODate;
+  rider: string | null;
+  mode: 'live' | 'replay';
+  replay: { runId: string; scenarioName: string; groundTruth: string } | null;
+  candidate: boolean;
+  incidentId: string | null;
+  warnings: DetectionWarning[];
 };
 export type OpsJudgmentDto = {
   id: string;

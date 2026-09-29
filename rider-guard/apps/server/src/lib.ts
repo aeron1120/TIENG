@@ -41,6 +41,9 @@ export async function readBody<S extends z.ZodType>(c: Context, schema: S): Prom
 
 export const newId = (prefix: string) => `${prefix}_${randomBytes(9).toString('base64url')}`;
 export const newToken = () => randomBytes(32).toString('base64url');
+
+/** 외부 API(푸시·SNS 제공자) 호출 제한 시간. 없으면 응답 없는 서버를 몇 분씩 기다린다. */
+export const externalTimeout = () => AbortSignal.timeout(10_000);
 export const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 export const sixDigits = () => String(randomInt(0, 1_000_000)).padStart(6, '0');
 
@@ -68,7 +71,9 @@ export const mobileSchema = z.string().transform((value, ctx) => {
   return phone;
 });
 
-export function formatPhone(phone: string): string {
+/** 가입 정보를 아직 안 넣은 라이더는 번호가 없다 */
+export function formatPhone(phone: string | null): string {
+  if (!phone) return '번호 미등록';
   return phone.length === 11 ? `${phone.slice(0, 3)}-${phone.slice(3, 7)}-${phone.slice(7)}` : `${phone.slice(0, 3)}-${phone.slice(3, 6)}-${phone.slice(6)}`;
 }
 

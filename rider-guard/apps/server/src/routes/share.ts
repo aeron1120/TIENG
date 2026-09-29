@@ -9,8 +9,8 @@ import { acknowledgeShareLink, viewShareLink, type ShareView } from '../services
 export function shareRoutes(ctx: AppContext) {
   const app = new Hono();
 
-  app.get('/:token', (c) => {
-    const view = viewShareLink(ctx, c.req.param('token'));
+  app.get('/:token', async (c) => {
+    const view = await viewShareLink(ctx, c.req.param('token'));
     const status = view.kind === 'invalid' ? 404 : view.kind === 'expired' ? 410 : 200;
     c.header('Cache-Control', 'no-store');
     c.header('Referrer-Policy', 'no-referrer');
@@ -18,9 +18,9 @@ export function shareRoutes(ctx: AppContext) {
     return c.html(renderSharePage(ctx, view, c.req.param('token')), status);
   });
 
-  app.post('/:token/ack', (c) => {
+  app.post('/:token/ack', async (c) => {
     const token = c.req.param('token');
-    acknowledgeShareLink(ctx, token);
+    await acknowledgeShareLink(ctx, token);
     return c.redirect(`/s/${encodeURIComponent(token)}`, 303);
   });
 

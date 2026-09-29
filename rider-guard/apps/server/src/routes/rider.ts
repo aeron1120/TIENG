@@ -1,27 +1,32 @@
 import type {
   ActiveIncidentResponse,
+  AuthProvidersResponse,
+  AuthResponse,
+  OAuthStartResponse,
   ContactDto,
   CreateIncidentResponse,
   DeviceDto,
   IncidentDetailDto,
   IncidentListResponse,
+  IndicatorReportResponse,
   LocationAccessDto,
   MeDto,
   OrderDto,
-  OtpResponse,
+  PushTokenRequest,
   RiderDto,
   SessionDto,
   ShareLinkResponse,
   UploadLocationsResponse,
-  VerifyResponse,
 } from '@rider-guard/contract';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
 
 import type { AppContext, OrderRow } from '../context.ts';
-import { ApiError, iso, mobileSchema, newId, readBody } from '../lib.ts';
-import { requestOtp, revokeToken, riderIdForToken, verifyOtp } from '../services/auth.ts';
+import { ApiError, escapeHtml, iso, mobileSchema, newId, readBody } from '../lib.ts';
+import { deleteAccount } from '../services/account.ts';
+import { loginWithEmail, revokeToken, riderIdForToken, signupWithEmail } from '../services/auth.ts';
+import { completeOAuth, enabledProviders, exchangeLoginCode, startOAuth } from '../services/oauth.ts';
 import {
   createIncident,
   listIncidentSummaries,
@@ -37,6 +42,9 @@ import {
   createContact,
   deleteContact,
   getContact,
+  getRider,
+  isOnboarded,
+  onboard,
   pairDevice,
   riderDevice,
   setConsents,
@@ -47,8 +55,11 @@ import {
   updateContact,
   updateRider,
 } from '../services/riders.ts';
+import { receiveIndicators } from '../services/judgments.ts';
+import { removePushToken, savePushToken } from '../services/push.ts';
 import { addLocations, endSession, startSession, toSessionDto } from '../services/sessions.ts';
 import { createShareLink, listLocationAccess } from '../services/sharing.ts';
+import { indicatorReportSchema } from './device.ts';
 
 export type RiderEnv = { Variables: { riderId: string } };
 
@@ -58,10 +69,17 @@ const isoDate = z.iso.datetime({ offset: true });
 const name = z.string().trim().min(1, '이름을 입력해 주세요.').max(20);
 
 const schemas = {
-  otp: z.object({ phone: mobileSchema }),
-  verify: z.object({
+  signup: z.object({
+    // 복사해 붙여 넣은 앞뒤 공백은 받아 준다
+    email: z.string().trim().pipe(z.email('이메일 형식이 아니에요.').max(120)),
+    password: z.string().min(8, '비밀번호는 8자 이상이어야 해요.').max(128),
+  }),
+  login: z.object({ email: z.string().trim().min(1, '이메일을 입력해 주세요.').max(120), password: z.string().min(1, '비밀번호를 입력해 주세요.').max(128) }),
+  oauthStart: z.object({ redirectUri: z.string().min(1).max(500) }),
+  oauthExchange: z.object({ code: z.string().min(20).max(200), sessionKey: z.string().min(20).max(200) }),
+  onboarding: z.object({
+    name,
     phone: mobileSchema,
-    code: z.string().regex(/^\d{6}$/, '인증번호 6자리를 입력해 주세요.'),
     consents: z.object({ locationSensor: z.boolean(), shareOnIncident: z.boolean(), insuranceRecords: z.boolean() }),
   }),
   updateMe: z.object({
@@ -111,6 +129,7 @@ const schemas = {
   }),
   respond: z.object({ response: z.enum(['ok', 'help']) }),
   sensorLog: z.unknown(),
+  pushToken: z.object({ token: z.string().regex(/^Expo(nent)?PushToken\[.+\]$/, 'Expo 푸시 토큰 형식이 아니에요.'), platform: z.enum(['ios', 'android']) }),
   devOrder: z.object({ storeName: z.string().max(40).optional(), destination: z.string().max(80).optional() }),
 };
 
@@ -122,20 +141,50 @@ function bearer(c: Context): string | null {
 export function authRoutes(ctx: AppContext) {
   const app = new Hono();
 
-  app.post('/otp', async (c) => {
-    const { phone } = await readBody(c, schemas.otp);
-    return c.json<OtpResponse>(await requestOtp(ctx, phone));
+  /** 앱이 로그인 버튼을 그릴 때 — 서버에 키가 설정된 SNS 만 보인다 */
+  app.get('/providers', (c) => c.json<AuthProvidersResponse>({ email: true, social: enabledProviders(ctx) }));
+
+  // SNS 로그인 — services/oauth.ts 흐름 설명 참고
+  app.post('/oauth/:provider/start', async (c) => {
+    const { redirectUri } = await readBody(c, schemas.oauthStart);
+    return c.json<OAuthStartResponse>(await startOAuth(ctx, c.req.param('provider'), redirectUri));
   });
 
-  app.post('/verify', async (c) => {
-    const body = await readBody(c, schemas.verify);
-    const { token, rider, isNew } = verifyOtp(ctx, body.phone, body.code, body.consents);
-    return c.json<VerifyResponse>({ token, isNew, rider: toRiderDto(rider) }, isNew ? 201 : 200);
+  app.get('/oauth/:provider/callback', async (c) => {
+    const result = await completeOAuth(ctx, c.req.param('provider'), {
+      code: c.req.query('code'),
+      state: c.req.query('state'),
+      error: c.req.query('error'),
+    });
+    c.header('Cache-Control', 'no-store');
+    c.header('Referrer-Policy', 'no-referrer');
+    if (result.kind === 'redirect') return c.redirect(result.location, 302);
+    return c.html(
+      `<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Rider Guard</title><body style="font:16px/1.6 system-ui,sans-serif;padding:32px 20px;background:#F4F1EA;color:#16181D"><h1 style="font-size:20px">Rider Guard</h1><p>${escapeHtml(result.message)}</p></body></html>`,
+      result.status,
+    );
   });
 
-  app.post('/logout', (c) => {
+  app.post('/oauth/exchange', async (c) => {
+    const { code, sessionKey } = await readBody(c, schemas.oauthExchange);
+    return c.json<AuthResponse>(await exchangeLoginCode(ctx, code, sessionKey));
+  });
+
+  app.post('/signup', async (c) => {
+    const { email, password } = await readBody(c, schemas.signup);
+    const { token } = await signupWithEmail(ctx, email, password);
+    return c.json<AuthResponse>({ token, isNew: true, onboarded: false }, 201);
+  });
+
+  app.post('/login', async (c) => {
+    const { email, password } = await readBody(c, schemas.login);
+    const { rider, token } = await loginWithEmail(ctx, email, password);
+    return c.json<AuthResponse>({ token, isNew: false, onboarded: await isOnboarded(ctx, rider) });
+  });
+
+  app.post('/logout', async (c) => {
     const token = bearer(c);
-    if (token) revokeToken(ctx, token);
+    if (token) await revokeToken(ctx, token);
     return c.body(null, 204);
   });
 
@@ -147,18 +196,31 @@ export function meRoutes(ctx: AppContext) {
 
   app.use('*', async (c, next) => {
     const token = bearer(c);
-    const riderId = token ? riderIdForToken(ctx, token) : null;
+    const riderId = token ? await riderIdForToken(ctx, token) : null;
     if (!riderId) throw new ApiError(401, 'unauthorized', '다시 로그인해 주세요.');
     c.set('riderId', riderId);
     await next();
   });
 
   // 프로필 · 동의
-  app.get('/', (c) => c.json<MeDto>(buildMe(ctx, c.var.riderId)));
+  app.get('/', async (c) => c.json<MeDto>(await buildMe(ctx, c.var.riderId)));
+
+  /** 가입 정보(이름·휴대폰·동의). 가입 직후 한 번, 이후 수정할 때도 쓴다. */
+  app.post('/onboarding', async (c) => {
+    const input = await readBody(c, schemas.onboarding);
+    await onboard(ctx, c.var.riderId, input);
+    return c.json<MeDto>(await buildMe(ctx, c.var.riderId));
+  });
+
+  /** 회원 탈퇴 (앱 안에서 탈퇴할 수 있어야 한다 — Google Play 정책) */
+  app.delete('/', async (c) => {
+    await deleteAccount(ctx, c.var.riderId);
+    return c.body(null, 204);
+  });
 
   app.patch('/', async (c) => {
     const patch = await readBody(c, schemas.updateMe);
-    return c.json<RiderDto>(toRiderDto(updateRider(ctx, c.var.riderId, patch)));
+    return c.json<RiderDto>(toRiderDto(await updateRider(ctx, c.var.riderId, patch)));
   });
 
   app.put('/consents/:key', async (c) => {
@@ -167,61 +229,79 @@ export function meRoutes(ctx: AppContext) {
       throw new ApiError(400, 'consent_not_optional', '필수 동의는 여기서 철회할 수 없어요. 서비스 탈퇴로 처리해 주세요.');
     }
     const { granted } = await readBody(c, schemas.consent);
-    setConsents(ctx, c.var.riderId, { [key]: granted });
-    return c.json(consentsOf(ctx, c.var.riderId));
+    await setConsents(ctx, c.var.riderId, { [key]: granted });
+    return c.json(await consentsOf(ctx, c.var.riderId));
   });
 
-  app.get('/location-access', (c) => c.json<{ items: LocationAccessDto[] }>({ items: listLocationAccess(ctx, c.var.riderId) }));
+  /** 앱이 로그인할 때마다 등록한다. 토큰이 바뀌거나 다른 라이더가 같은 폰으로 로그인하면 덮어쓴다. */
+  app.put('/push-token', async (c) => {
+    const { token, platform }: PushTokenRequest = await readBody(c, schemas.pushToken);
+    await savePushToken(ctx, c.var.riderId, token, platform);
+    return c.body(null, 204);
+  });
+
+  app.delete('/push-token/:token', async (c) => {
+    await removePushToken(ctx, c.var.riderId, c.req.param('token'));
+    return c.body(null, 204);
+  });
+
+  app.get('/location-access', async (c) => c.json<{ items: LocationAccessDto[] }>({ items: await listLocationAccess(ctx, c.var.riderId) }));
 
   // 비상연락망
   app.post('/contacts', async (c) => {
     const input = await readBody(c, schemas.createContact);
-    return c.json<ContactDto>(toContactDto(createContact(ctx, c.var.riderId, input)), 201);
+    return c.json<ContactDto>(toContactDto(await createContact(ctx, c.var.riderId, input)), 201);
   });
 
   app.patch('/contacts/:id', async (c) => {
     const patch = await readBody(c, schemas.updateContact);
-    return c.json<ContactDto>(toContactDto(updateContact(ctx, c.var.riderId, c.req.param('id'), patch)));
+    return c.json<ContactDto>(toContactDto(await updateContact(ctx, c.var.riderId, c.req.param('id'), patch)));
   });
 
-  app.delete('/contacts/:id', (c) => {
-    deleteContact(ctx, c.var.riderId, c.req.param('id'));
+  app.delete('/contacts/:id', async (c) => {
+    await deleteContact(ctx, c.var.riderId, c.req.param('id'));
     return c.body(null, 204);
   });
 
   /** 연락처에게 따로 보내 줄 상시 링크. 볼 수 있는 시점은 연락처의 공개 범위를 따른다. */
-  app.post('/contacts/:id/share-link', (c) => {
-    const contact = getContact(ctx, c.var.riderId, c.req.param('id'));
-    const link = createShareLink(ctx, { riderId: c.var.riderId, contactId: contact.id, incidentId: null });
+  app.post('/contacts/:id/share-link', async (c) => {
+    const contact = await getContact(ctx, c.var.riderId, c.req.param('id'));
+    const link = await createShareLink(ctx, { riderId: c.var.riderId, contactId: contact.id, incidentId: null });
     return c.json<ShareLinkResponse>({ url: link.url, expiresAt: iso(link.expiresAt) }, 201);
   });
 
   // 감지 기기
   app.post('/device', async (c) => {
     const { pairingCode } = await readBody(c, schemas.pair);
-    return c.json<DeviceDto>(toDeviceDto(ctx, pairDevice(ctx, c.var.riderId, pairingCode)));
+    return c.json<DeviceDto>(toDeviceDto(ctx, await pairDevice(ctx, c.var.riderId, pairingCode)));
   });
 
-  app.delete('/device', (c) => {
-    unpairDevice(ctx, c.var.riderId);
+  app.delete('/device', async (c) => {
+    await unpairDevice(ctx, c.var.riderId);
     return c.body(null, 204);
   });
 
   // 운행 세션 · 위치
-  app.post('/session', (c) => c.json<SessionDto>(toSessionDto(startSession(ctx, c.var.riderId))));
+  app.post('/session', async (c) => {
+    // 위치 수집 동의 없이 수집을 시작하지 않는다 (9.1)
+    if (!(await isOnboarded(ctx, await getRider(ctx, c.var.riderId)))) {
+      throw new ApiError(403, 'onboarding_required', '가입 정보와 필수 동의를 마쳐야 운행을 시작할 수 있어요.');
+    }
+    return c.json<SessionDto>(toSessionDto(await startSession(ctx, c.var.riderId)));
+  });
 
-  app.post('/session/end', (c) => c.json<SessionDto>(toSessionDto(endSession(ctx, c.var.riderId))));
+  app.post('/session/end', async (c) => c.json<SessionDto>(toSessionDto(await endSession(ctx, c.var.riderId))));
 
   app.post('/sessions/:id/locations', async (c) => {
     const { points } = await readBody(c, schemas.locations);
-    return c.json<UploadLocationsResponse>(addLocations(ctx, c.var.riderId, c.req.param('id'), points));
+    return c.json<UploadLocationsResponse>(await addLocations(ctx, c.var.riderId, c.req.param('id'), points));
   });
 
   // 사고
   app.post('/incidents', async (c) => {
     const body = await readBody(c, schemas.createIncident);
-    const device = body.source === 'tag' ? riderDevice(ctx, c.var.riderId) : undefined;
-    const { created, incident } = createIncident(ctx, {
+    const device = body.source === 'tag' ? await riderDevice(ctx, c.var.riderId) : undefined;
+    const { created, incident } = await createIncident(ctx, {
       riderId: c.var.riderId,
       source: body.source,
       kind: body.kind,
@@ -230,26 +310,33 @@ export function meRoutes(ctx: AppContext) {
       metrics: body.metrics,
       deviceId: device?.id,
     });
-    return c.json<CreateIncidentResponse>({ created, incident: toDetailDto(ctx, incident) }, created ? 201 : 200);
+    return c.json<CreateIncidentResponse>({ created, incident: await toDetailDto(ctx, incident) }, created ? 201 : 200);
   });
 
-  app.get('/incidents', (c) => c.json<IncidentListResponse>({ items: listIncidentSummaries(ctx, c.var.riderId) }));
-
-  app.get('/incidents/active', (c) => {
-    const incident = openIncident(ctx, c.var.riderId);
-    return c.json<ActiveIncidentResponse>({ incident: incident ? toDetailDto(ctx, incident) : null });
+  /** 태그 → BLE → 휴대폰 → 서버 경로 (설계문서 3.1). 판정은 기기 직접 보고와 같다. */
+  app.post('/indicators', async (c) => {
+    const report = await readBody(c, indicatorReportSchema);
+    const device = await riderDevice(ctx, c.var.riderId);
+    return c.json<IndicatorReportResponse>(await receiveIndicators(ctx, { riderId: c.var.riderId, deviceId: device?.id ?? null, via: 'phone' }, report));
   });
 
-  app.get('/incidents/:id', (c) => c.json<IncidentDetailDto>(toDetailDto(ctx, riderIncident(ctx, c.var.riderId, c.req.param('id')))));
+  app.get('/incidents', async (c) => c.json<IncidentListResponse>({ items: await listIncidentSummaries(ctx, c.var.riderId) }));
+
+  app.get('/incidents/active', async (c) => {
+    const incident = await openIncident(ctx, c.var.riderId);
+    return c.json<ActiveIncidentResponse>({ incident: incident ? await toDetailDto(ctx, incident) : null });
+  });
+
+  app.get('/incidents/:id', async (c) => c.json<IncidentDetailDto>(await toDetailDto(ctx, await riderIncident(ctx, c.var.riderId, c.req.param('id')))));
 
   app.post('/incidents/:id/respond', async (c) => {
     const { response } = await readBody(c, schemas.respond);
-    return c.json<IncidentDetailDto>(toDetailDto(ctx, respond(ctx, c.var.riderId, c.req.param('id'), response)));
+    return c.json<IncidentDetailDto>(await toDetailDto(ctx, await respond(ctx, c.var.riderId, c.req.param('id'), response)));
   });
 
   app.put('/incidents/:id/sensor-log', bodyLimit({ maxSize: 1024 * 1024, onError: tooLarge }), async (c) => {
     const log = await readBody(c, schemas.sensorLog);
-    saveSensorLog(ctx, c.var.riderId, c.req.param('id'), log);
+    await saveSensorLog(ctx, c.var.riderId, c.req.param('id'), log);
     return c.body(null, 204);
   });
 
@@ -269,9 +356,9 @@ export function meRoutes(ctx: AppContext) {
         createdAt: now,
         updatedAt: now,
       };
-      ctx.db.tx(() => {
-        ctx.db.run("UPDATE orders SET status = 'delivered', updatedAt = :now WHERE riderId = :riderId AND status = 'assigned'", { riderId: order.riderId, now });
-        ctx.db.run(
+      await ctx.db.tx(async () => {
+        await ctx.db.run("UPDATE orders SET status = 'delivered', updatedAt = :now WHERE riderId = :riderId AND status = 'assigned'", { riderId: order.riderId, now });
+        await ctx.db.run(
           `INSERT INTO orders (id, riderId, storeName, destination, status, incidentId, reassignRequestedAt, createdAt, updatedAt)
            VALUES (:id, :riderId, :storeName, :destination, :status, :incidentId, :reassignRequestedAt, :createdAt, :updatedAt)`,
           order,

@@ -1,13 +1,38 @@
-import type { DeviceEventResponse, DeviceHeartbeatResponse, RegisterDeviceResponse } from '@rider-guard/contract';
+import type { DeviceEventResponse, DeviceHeartbeatResponse, IndicatorReportResponse, RegisterDeviceResponse } from '@rider-guard/contract';
 import { Hono } from 'hono';
 import { z } from 'zod';
 
 import type { AppContext, DeviceRow } from '../context.ts';
 import { ApiError, newId, newToken, readBody, sha256, sixDigits } from '../lib.ts';
 import { createIncident } from '../services/incidents.ts';
+import { receiveIndicators } from '../services/judgments.ts';
 import { activeSession } from '../services/sessions.ts';
 
 type DeviceEnv = { Variables: { device: DeviceRow } };
+
+/**
+ * 지표 보고. 팀의 moto-sensing Snapshot 과 모양이 겹쳐(indicators, mode) 그쪽 스냅샷을 그대로 보내도 읽힌다 —
+ * 모르는 필드는 버린다.
+ */
+export const indicatorReportSchema = z.object({
+  indicators: z
+    .array(
+      z.object({
+        key: z.string().min(1).max(40),
+        value: z.number().nullable(),
+        unit: z.string().max(20).nullable(),
+        state: z.enum(['ok', 'low_quality', 'stale', 'error', 'no_adapter']),
+        sqi: z.number().nullable(),
+        t: z.number(),
+      }),
+    )
+    .max(100),
+  mode: z.enum(['live', 'replay', 'simulated', 'unavailable']).optional(),
+  detectedAt: z.iso.datetime({ offset: true }).optional(),
+  reportId: z.string().min(1).max(200).optional(),
+  dryRun: z.boolean().optional(),
+  producer: z.string().max(80).optional(),
+});
 
 const schemas = {
   register: z.object({ name: z.string().trim().min(1).max(40), kind: z.enum(['tag', 'webcam']) }),
@@ -34,14 +59,14 @@ export function deviceRoutes(ctx: AppContext) {
       tokenHash: sha256(deviceToken),
       kind,
       name,
-      pairingCode: uniquePairingCode(ctx),
+      pairingCode: await uniquePairingCode(ctx),
       riderId: null,
       battery: null,
       lastSeenAt: ctx.clock.now(),
       createdAt: ctx.clock.now(),
       pairedAt: null,
     };
-    ctx.db.run(
+    await ctx.db.run(
       `INSERT INTO devices (id, tokenHash, kind, name, pairingCode, riderId, battery, lastSeenAt, createdAt, pairedAt)
        VALUES (:id, :tokenHash, :kind, :name, :pairingCode, :riderId, :battery, :lastSeenAt, :createdAt, :pairedAt)`,
       device,
@@ -53,7 +78,7 @@ export function deviceRoutes(ctx: AppContext) {
     if (c.req.path.endsWith('/register')) return next();
     const header = c.req.header('authorization') ?? '';
     const token = header.startsWith('Device ') ? header.slice(7).trim() : '';
-    const device = token ? ctx.db.get<DeviceRow>('SELECT * FROM devices WHERE tokenHash = :tokenHash', { tokenHash: sha256(token) }) : undefined;
+    const device = token ? await ctx.db.get<DeviceRow>('SELECT * FROM devices WHERE tokenHash = :tokenHash', { tokenHash: sha256(token) }) : undefined;
     if (!device) throw new ApiError(401, 'unauthorized', '등록되지 않은 기기예요.');
     c.set('device', device);
     await next();
@@ -62,22 +87,29 @@ export function deviceRoutes(ctx: AppContext) {
   app.post('/heartbeat', async (c) => {
     const { battery } = await readBody(c, schemas.heartbeat);
     const device = c.var.device;
-    ctx.db.run('UPDATE devices SET lastSeenAt = :now, battery = COALESCE(:battery, battery) WHERE id = :id', {
+    await ctx.db.run('UPDATE devices SET lastSeenAt = :now, battery = COALESCE(:battery, battery) WHERE id = :id', {
       id: device.id,
       now: ctx.clock.now(),
       battery,
     });
-    return c.json<DeviceHeartbeatResponse>({ paired: !!device.riderId, sessionActive: !!device.riderId && !!activeSession(ctx, device.riderId) });
+    return c.json<DeviceHeartbeatResponse>({ paired: !!device.riderId, sessionActive: !!device.riderId && !!(await activeSession(ctx, device.riderId)) });
+  });
+
+  app.post('/indicators', async (c) => {
+    const report = await readBody(c, indicatorReportSchema);
+    const device = c.var.device;
+    await ctx.db.run('UPDATE devices SET lastSeenAt = :now WHERE id = :id', { id: device.id, now: ctx.clock.now() });
+    return c.json<IndicatorReportResponse>(await receiveIndicators(ctx, { riderId: device.riderId, deviceId: device.id, via: 'device' }, report));
   });
 
   app.post('/events', async (c) => {
     const body = await readBody(c, schemas.event);
     const device = c.var.device;
-    ctx.db.run('UPDATE devices SET lastSeenAt = :now WHERE id = :id', { id: device.id, now: ctx.clock.now() });
+    await ctx.db.run('UPDATE devices SET lastSeenAt = :now WHERE id = :id', { id: device.id, now: ctx.clock.now() });
     if (!device.riderId) return c.json<DeviceEventResponse>({ status: 'ignored', reason: 'not_paired' });
     // 운행 중이 아니면 감지하지 않는다 (9.4) — 오류가 아니라 정상적인 무시.
-    if (!activeSession(ctx, device.riderId)) return c.json<DeviceEventResponse>({ status: 'ignored', reason: 'no_active_session' });
-    const { created, incident } = createIncident(ctx, {
+    if (!(await activeSession(ctx, device.riderId))) return c.json<DeviceEventResponse>({ status: 'ignored', reason: 'no_active_session' });
+    const { created, incident } = await createIncident(ctx, {
       riderId: device.riderId,
       source: 'device',
       kind: body.kind,
@@ -91,9 +123,9 @@ export function deviceRoutes(ctx: AppContext) {
   return app;
 }
 
-function uniquePairingCode(ctx: AppContext): string {
+async function uniquePairingCode(ctx: AppContext): Promise<string> {
   for (;;) {
     const code = sixDigits();
-    if (!ctx.db.get('SELECT 1 FROM devices WHERE pairingCode = :code', { code })) return code;
+    if (!(await ctx.db.get('SELECT 1 FROM devices WHERE pairingCode = :code', { code }))) return code;
   }
 }

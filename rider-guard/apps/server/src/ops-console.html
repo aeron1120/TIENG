@@ -46,12 +46,29 @@
 <script>
   const $ = (id) => document.getElementById(id);
   const STATUS = { escalated: '접수 대기', reviewing: '확인 중', resolved: '종료' };
+  const DECISION = { alarm: '경보', alarm_unverified: '경보 (무동작 확인 불가)', reject: '기각', undetermined: '판정 불가' };
+  const RULE = { impact: '충격 (ΔV)', fall_posture: '전도 (몸통 기울기)', post_still: '사후 무동작' };
+  const fmt = (v) => (v == null ? '—' : Number(v).toFixed(2));
+
+  /** 지표 판정으로 열린 사고의 근거 — 어떤 규칙이 어떤 실측값으로 발동했는지 (설계문서 5장) */
+  function renderEvidence(ev) {
+    if (!ev || !ev.traces) return null;
+    return el('div', {},
+      el('h3', { textContent: `판정 근거 — ${DECISION[ev.decision] || ev.decision}${ev.mode !== 'live' ? ' · ' + ev.mode : ''}${ev.producer ? ' · ' + ev.producer : ''}` }),
+      el('ol', {}, ...ev.traces.map((t) => el('li', { textContent:
+        `[${t.fired ? '발동' : t.blocked_by ? '판정 불가' : '미발동'}] ${RULE[t.rule] || t.rule}: ` +
+        Object.entries(t.inputs).map(([k, v]) => `${k} ${fmt(v)}`).join(', ') + '  / 기준 ' +
+        Object.entries(t.thresholds).map(([k, v]) => `${k} ${v}`).join(', ') +
+        (t.blocked_by ? ` (${t.blocked_by})` : '') }))),
+      el('div', { className: 'muted', textContent: '지표: ' + ev.indicators.map((i) => `${i.key} ${fmt(i.value)}${i.unit ? ' ' + i.unit : ''}${i.state !== 'ok' ? '(' + i.state + ')' : ''}`).join(' · ') }));
+  }
+
   const EVENT = {
     detected: '충격 감지', rider_help: '라이더 도움 요청', rider_ok: '라이더 괜찮아요',
     rider_ok_after_escalation: '라이더 괜찮아요 (에스컬레이션 후)', escalated: '에스컬레이션',
     contact_notified: '비상연락 문자 발송', contact_acknowledged: '연락처가 확인함', contact_notify_failed: '문자 발송 실패',
     no_contacts: '등록된 비상연락처 없음', order_held: '주문 보류 · 대체배차 요청', order_reassigned: '대체배차 완료',
-    center_reviewing: '상담원 배정', emergency_reported: '119 신고', resolved: '대응 종료', sensor_log_saved: '센서 로그 저장',
+    center_reviewing: '상담원 배정', rider_notified: '라이더 휴대폰 알림', emergency_reported: '119 신고', resolved: '대응 종료', sensor_log_saved: '센서 로그 저장',
   };
   const REASON = { no_response: '무응답', rider_requested: '라이더 도움 요청' };
   const ORDER = { assigned: '배달 중', held: '보류됨', reassigned: '대체배차 완료', delivered: '배달 완료' };
@@ -130,6 +147,7 @@
         act('오탐으로 종료', '', () => api(`/incidents/${id}/resolve`, 'POST', { outcome: 'false_alarm' }), !open),
         act('대응 완료', '', () => api(`/incidents/${id}/resolve`, 'POST', { outcome: 'handled' }), !open)),
       reportBox,
+      renderEvidence(d.evidence),
       el('div', {}, el('h3', { textContent: '타임라인' }), el('ol', {}, ...d.timeline.map((e) =>
         el('li', { textContent: `${time(e.at)} ${EVENT[e.type] || e.type}${e.data && e.data.priority ? ` (${e.data.priority}순위 ${e.data.name || ''})` : ''}${e.data && e.data.operator ? ` — ${e.data.operator}` : ''}` })))),
     );

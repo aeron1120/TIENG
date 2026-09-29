@@ -76,3 +76,10 @@ export const radius = {
 
 /** 디자인 기준 화면 크기 (390 × 844). */
 export const designFrame = { width: 390, height: 844 } as const;
+
+/** SNS 로그인 버튼 — 각 사 브랜드 가이드의 색. 앱 강조색과 섞지 않는다. */
+export const socialColors = {
+  kakao: { bg: '#FEE500', fg: 'rgba(0,0,0,0.85)', border: '#FEE500' },
+  naver: { bg: '#03C75A', fg: '#FFFFFF', border: '#03C75A' },
+  google: { bg: '#FFFFFF', fg: '#1F1F1F', border: '#747775' },
+} as const;

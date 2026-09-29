@@ -19,6 +19,17 @@ export function duration(seconds: number): string {
   return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
 }
 
+/** 휴대폰 번호를 입력하는 대로 010-1234-5678 꼴로. 서버는 숫자만 저장한다. */
+export function formatMobile(value: string): string {
+  const d = value.replace(/\D/g, '').slice(0, 11);
+  if (d.length < 4) return d;
+  if (d.length < 8) return `${d.slice(0, 3)}-${d.slice(3)}`;
+  return `${d.slice(0, 3)}-${d.slice(3, -4)}-${d.slice(-4)}`;
+}
+
+/** 서버(normalizeMobile)와 같은 기준 */
+export const isMobile = (value: string) => /^01[016789]\d{7,8}$/.test(value.replace(/\D/g, ''));
+
 export const RELATION_LABEL: Record<Relation, string> = { family: '가족', coworker: '동료 라이더', other: '지인' };
 
 export const ORDER_LABEL: Record<OrderStatus, string> = {

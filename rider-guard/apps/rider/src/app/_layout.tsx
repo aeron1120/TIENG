@@ -61,10 +61,14 @@ function AppShell({ fontsReady }: { fontsReady: boolean }) {
       <StatusBar style="dark" />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
         <Stack.Screen name="index" />
+        <Stack.Screen name="signup" />
+        <Stack.Screen name="auth/callback" options={{ animation: 'none' }} />
+        <Stack.Screen name="onboarding" />
         <Stack.Screen name="setup" />
         <Stack.Screen name="contact" options={{ presentation: 'modal' }} />
         <Stack.Screen name="home" options={{ animation: 'none' }} />
         <Stack.Screen name="records" options={{ animation: 'none' }} />
+        <Stack.Screen name="settings" options={{ animation: 'none' }} />
         <Stack.Screen
           name="alert"
           options={{ presentation: 'fullScreenModal', gestureEnabled: false, contentStyle: { backgroundColor: colors.ink } }}

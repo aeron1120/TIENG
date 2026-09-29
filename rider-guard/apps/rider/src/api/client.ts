@@ -28,18 +28,26 @@ let onUnauthorized: (() => void) | null = null;
 export const setApiToken = (value: string | null) => {
   token = value;
 };
+export const getApiToken = () => token;
 export const setUnauthorizedHandler = (fn: (() => void) | null) => {
   onUnauthorized = fn;
 };
 
-export async function api<T>(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<T> {
+/** options.token: 지금 로그인 토큰 대신 이 토큰으로 (로그아웃 뒤 정리 요청). 이때는 401 이 나도 로그아웃 처리를 하지 않는다. */
+export async function api<T>(
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+  path: string,
+  body?: unknown,
+  options: { token?: string } = {},
+): Promise<T> {
+  const auth = options.token ?? token;
   let res: Response;
   try {
     res = await fetch(`${API_URL}${path}`, {
       method,
       headers: {
         ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(auth ? { authorization: `Bearer ${auth}` } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
@@ -49,7 +57,7 @@ export async function api<T>(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
   if (res.status === 204) return undefined as T;
   const json = (await res.json().catch(() => null)) as (T & Partial<ApiErrorBody>) | null;
   if (!res.ok) {
-    if (res.status === 401 && token) onUnauthorized?.();
+    if (res.status === 401 && !options.token && token) onUnauthorized?.();
     throw new ApiError(res.status, json?.error?.code ?? 'http_error', json?.error?.message ?? `요청에 실패했어요 (${res.status})`);
   }
   return json as T;

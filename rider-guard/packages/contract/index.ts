@@ -14,20 +14,37 @@ export type ApiErrorBody = { error: { code: string; message: string } };
 export type ConsentKey = 'locationSensor' | 'shareOnIncident' | 'insuranceRecords' | 'medicalInfo';
 export type Consents = Record<ConsentKey, boolean>;
 
-export type OtpRequest = { phone: string };
-export type OtpResponse = {
-  expiresInSeconds: number;
-  resendAfterSeconds: number;
-  /** 개발 서버에서만 내려준다. 운영에서는 SMS 로만 전달된다. */
-  devCode?: string;
-};
 
-export type VerifyRequest = {
+// ── 회원가입 · 로그인 (이메일 + SNS) ────────────────────────────
+
+export type SocialProvider = 'kakao' | 'naver' | 'google';
+
+/** 서버에 키가 설정된 로그인 수단만 앱에 버튼으로 보인다. */
+export type AuthProvidersResponse = { email: true; social: SocialProvider[] };
+
+export type EmailSignupRequest = { email: string; password: string };
+export type EmailLoginRequest = { email: string; password: string };
+
+/**
+ * SNS 로그인 시작. 앱은 authorizeUrl 을 시스템 브라우저로 열고, 로그인이 끝나면 서버가
+ * redirectUri?code=… (실패면 ?error=…) 로 돌려보낸다. code 는 60초짜리 1회용이라 /auth/oauth/exchange 로 바로 바꾼다.
+ * sessionKey 는 교환할 때 함께 보낸다 — 코드를 로그인을 시작한 앱에 묶는 열쇠라 앱 밖(주소·로그)으로 내보내지 않는다.
+ */
+export type OAuthStartRequest = { redirectUri: string };
+export type OAuthStartResponse = { authorizeUrl: string; sessionKey: string };
+export type OAuthExchangeRequest = { code: string; sessionKey: string };
+
+/** 로그인·가입 결과. onboarded 가 false 면 가입 정보(이름·휴대폰·동의) 화면으로 보낸다. */
+export type AuthResponse = { token: string; isNew: boolean; onboarded: boolean };
+
+/** 가입 정보 입력 — 휴대폰 번호는 필수지만 인증하지 않는다 (MVP). */
+export type OnboardingRequest = {
+  name: string;
   phone: string;
-  code: string;
   consents: Pick<Consents, 'locationSensor' | 'shareOnIncident' | 'insuranceRecords'>;
 };
-export type VerifyResponse = { token: string; isNew: boolean; rider: RiderDto };
+
+export type AccountDto = { email: string | null; hasPassword: boolean; social: SocialProvider[] };
 
 // ── 라이더 · 연락망 · 기기 ─────────────────────────────────────
 
@@ -37,7 +54,9 @@ export type MedicalInfo = { bloodType?: string; conditions?: string; allergies?:
 
 export type RiderDto = {
   id: string;
-  phone: string;
+  email: string | null;
+  /** 가입 정보 입력 전에는 비어 있다. 인증하지 않은 번호다 (MVP). */
+  phone: string | null;
   name: string | null;
   vehicle: Vehicle | null;
   medical: MedicalInfo | null;
@@ -101,6 +120,9 @@ export type UploadLocationsResponse = { accepted: number; rejected: number };
 
 export type MeDto = {
   rider: RiderDto;
+  account: AccountDto;
+  /** 가입 정보(이름·휴대폰·필수 동의)를 마쳤는가. false 면 운행을 시작할 수 없다. */
+  onboarded: boolean;
   consents: Consents;
   contacts: ContactDto[];
   device: DeviceDto | null;
@@ -204,6 +226,14 @@ export type IncidentSummaryDto = {
 };
 export type IncidentListResponse = { items: IncidentSummaryDto[] };
 
+// ── 푸시 ───────────────────────────────────────────────────────
+
+export type PushTokenRequest = { token: string; platform: 'ios' | 'android' };
+/** 푸시 data. incident → 사고 확인 화면, status → 대응 상황 화면 */
+export type PushData = { type: 'incident' | 'status'; incidentId: string };
+/** 알림 버튼 identifier — 잠금화면에서 바로 응답 (설계문서 4.3) */
+export type PushAction = 'ok' | 'help';
+
 // ── 감지 기기 API (태그 · 테스트용 웹캠 detector) ──────────────
 
 export type RegisterDeviceRequest = { name: string; kind: DeviceKind };
@@ -214,6 +244,83 @@ export type DeviceEventRequest = { kind: IncidentKind; detectedAt?: ISODate; met
 export type DeviceEventResponse =
   | { status: 'created' | 'duplicate'; incidentId: string }
   | { status: 'ignored'; reason: 'not_paired' | 'no_active_session' };
+
+// ── 지표 수신 (지표 백엔드 → Rider Guard) ──────────────────────
+//
+// 판정을 이미 내린 기기는 위의 /device-api/events 로 보내고, 지표만 내는 쪽은 여기로 보낸다.
+// 서버가 설계문서 5장 흐름(충격·전도 → 사후 무동작 → 경보)으로 판정하고, 경보면 사고를 연다.
+// Indicator 모양은 팀의 moto-sensing core/schemas.py 와 같다 — 그쪽 Snapshot 을 그대로 보내도 읽힌다.
+
+export type IndicatorState = 'ok' | 'low_quality' | 'stale' | 'error' | 'no_adapter';
+export type SourceMode = 'live' | 'replay' | 'simulated' | 'unavailable';
+
+/**
+ * 판정에 쓰는 지표 이름과 단위. 단위가 다르면 판정하지 않고 '판정 불가'로 둔다.
+ * MuJoCo 시뮬레이션 요약표(태그·폰·질량중심)와 같은 정의다.
+ */
+export type IndicatorUnits = {
+  delta_v: 'm/s'; //        태그 위치, 100ms 간격 속도 벡터 차이의 최대값 — 충격 판정의 중심 (5.2)
+  delta_v_com: 'm/s'; //    라이더 질량중심 ΔV. 시뮬레이션에서만 나오는 기준값이라 판정에는 쓰지 않는다
+  peak_g: 'g'; //           태그 합성 가속도 피크. 접촉 강성에 크게 흔들려 참고용
+  peak_g_phone: 'g'; //     폰 위치 피크 가속도 (실기기는 ±16g 포화)
+  peak_gyro: 'rad/s'; //    태그 합성 각속도 피크 (로우사이드 미끄러짐·회전)
+  tilt_deg: 'deg'; //       몸통의 수직 대비 기울기 (최종값) — 전도 판정 (5.3)
+  speed: 'm/s'; //          태그 속도 크기 (최종값)
+  accel_var_1s: 'm/s^2'; // 마지막 1초 가속도 크기의 표준편차 — 사후 무동작 (5.4)
+};
+export type IndicatorKey = keyof IndicatorUnits;
+
+export type Indicator = {
+  key: string;
+  /** null 이면 값을 못 구한 것이다. 0 으로 바꿔 보내면 안 된다. */
+  value: number | null;
+  unit: string | null;
+  state: IndicatorState;
+  sqi: number | null;
+  t: number;
+};
+
+export type IndicatorReport = {
+  indicators: Indicator[];
+  /** 기본 live. simulated/replay 는 운영 서버에서 사고를 열지 않는다 — 합성 값으로 실제 연락처를 깨우지 않게. */
+  mode?: SourceMode;
+  /** 지표를 뽑은 구간의 충격 시각. 없으면 수신 시각 */
+  detectedAt?: ISODate;
+  /** 같은 판정을 두 번 보내도 사고가 한 번만 열리게 하는 키 (예: 세션 id + 이벤트 id) */
+  reportId?: string;
+  /** true 면 판정만 돌려주고 기록·사고 생성은 하지 않는다 — 임계값 튜닝용 */
+  dryRun?: boolean;
+  /** 어디서 온 지표인가 (예: "mujoco:2_frontal", "tag-v1") */
+  producer?: string;
+};
+
+export type RuleTrace = {
+  rule: 'impact' | 'fall_posture' | 'post_still';
+  fired: boolean;
+  inputs: Record<string, number | null>;
+  thresholds: Record<string, number>;
+  /** 채워져 있으면 '기각'이 아니라 '판정 불가'다 (예: "low_quality:accel_var_1s") */
+  blocked_by: string | null;
+};
+
+/**
+ * alarm: 경보 — 사고를 연다
+ * alarm_unverified: 충격·전도는 확실한데 무동작을 확인할 수 없음 — 놓침은 되돌릴 수 없어 경보한다(1.3)
+ * reject: 기각 (충격 없음, 또는 충격 뒤 계속 움직임)
+ * undetermined: 충격·전도 지표 자체가 없어 판정 불가
+ */
+export type Decision = 'alarm' | 'alarm_unverified' | 'reject' | 'undetermined';
+
+export type IndicatorReportResponse = {
+  decision: Decision;
+  traces: RuleTrace[];
+  /** 무엇을 했는가 */
+  action: 'incident_created' | 'incident_existing' | 'logged' | 'dry_run';
+  /** logged 인 이유 */
+  reason: 'detection_disabled' | 'not_live' | 'no_active_session' | 'not_paired' | 'stale_event' | null;
+  incidentId: string | null;
+  judgmentId: string | null;
+};
 
 // ── 관제 콘솔 API ──────────────────────────────────────────────
 
@@ -235,6 +342,20 @@ export type OpsIncidentDetailDto = OpsIncidentDto & {
   contacts: { priority: number; name: string; relation: Relation; notifiedAt: ISODate | null; acknowledgedAt: ISODate | null }[];
   order: OrderDto | null;
   timeline: { type: string; at: ISODate; data: Record<string, unknown> | null }[];
+  /** 지표 판정으로 열린 사고면 그 근거 (producer, mode, decision, traces, indicators) */
+  evidence: unknown;
+};
+export type OpsJudgmentDto = {
+  id: string;
+  receivedAt: ISODate;
+  rider: string | null;
+  producer: string | null;
+  mode: SourceMode;
+  decision: Decision;
+  action: IndicatorReportResponse['action'];
+  reason: IndicatorReportResponse['reason'];
+  incidentId: string | null;
+  traces: RuleTrace[];
 };
 export type OpsResolveRequest = { outcome: Resolution; note?: string };
 export type OpsEmergencyResponse = { mode: 'sms' | 'manual'; report: string };

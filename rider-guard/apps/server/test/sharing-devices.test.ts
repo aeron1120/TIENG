@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { setup } from './helpers.ts';
 
-async function withContacts(t: ReturnType<typeof setup>) {
+async function withContacts(t: Awaited<ReturnType<typeof setup>>) {
   const token = await t.login();
   const family = (await t.call('POST', '/me/contacts', { token, body: { name: '엄마', relation: 'family', phone: '01011111111' } })).json;
   const coworker = (await t.call('POST', '/me/contacts', { token, body: { name: '박동료', relation: 'coworker', phone: '01022222222' } })).json;
@@ -15,7 +15,7 @@ async function withContacts(t: ReturnType<typeof setup>) {
 const showsLocation = (html: string) => /37\.500000, 127\.000000/.test(html);
 
 test('관계별 기본 공개 범위: 가족 실시간, 동료 이상 감지 시, 그 외 사고 확정 시 (4.1.2)', async () => {
-  const t = setup();
+  const t = await setup();
   const { family, coworker, other } = await withContacts(t);
   assert.equal(family.shareLevel, 'realtime');
   assert.equal(coworker.shareLevel, 'on_anomaly');
@@ -23,7 +23,7 @@ test('관계별 기본 공개 범위: 가족 실시간, 동료 이상 감지 시
 });
 
 test('상시 링크는 연락처의 공개 범위에 따라 위치를 보여준다', async () => {
-  const t = setup();
+  const t = await setup();
   const { token, family, coworker, other, link } = await withContacts(t);
   const [f, c, o] = [await link(family.id), await link(coworker.id), await link(other.id)];
   const html = async (path: string) => (await t.call('GET', path)).text;
@@ -55,7 +55,7 @@ test('상시 링크는 연락처의 공개 범위에 따라 위치를 보여준�
 });
 
 test('사고 문자 링크는 사고가 끝나면 위치를 감추고, 잘못된 토큰은 404', async () => {
-  const t = setup();
+  const t = await setup();
   const { token } = await withContacts(t);
   const session = (await t.call('POST', '/me/session', { token })).json;
   await t.call('POST', `/me/sessions/${session.id}/locations`, { token, body: { points: [{ recordedAt: new Date(t.now()).toISOString(), lat: 37.5, lng: 127 }] } });
@@ -73,7 +73,7 @@ test('사고 문자 링크는 사고가 끝나면 위치를 감추고, 잘못된
 });
 
 test('공유 페이지는 이름을 HTML 이스케이프한다', async () => {
-  const t = setup();
+  const t = await setup();
   const { token, family, link } = await withContacts(t);
   await t.call('PATCH', '/me', { token, body: { name: '<script>x' } });
   const html = (await t.call('GET', await link(family.id))).text;
@@ -82,7 +82,7 @@ test('공유 페이지는 이름을 HTML 이스케이프한다', async () => {
 });
 
 test('웹캠 detector: 등록 → 페어링 → 하트비트 → 운행 중 이벤트로 사고 생성', async () => {
-  const t = setup();
+  const t = await setup();
   const token = await t.login();
   const reg = await t.call('POST', '/device-api/register', { body: { name: '테스트용 웹캠 detector', kind: 'webcam' } });
   assert.equal(reg.status, 201);
@@ -120,7 +120,7 @@ test('웹캠 detector: 등록 → 페어링 → 하트비트 → 운행 중 이�
 });
 
 test('비상연락처 순위 변경·삭제 시 순위를 다시 매긴다', async () => {
-  const t = setup();
+  const t = await setup();
   const { token, family, coworker, other } = await withContacts(t);
   await t.call('PATCH', `/me/contacts/${other.id}`, { token, body: { priority: 1 } });
   let me = (await t.call('GET', '/me', { token })).json;

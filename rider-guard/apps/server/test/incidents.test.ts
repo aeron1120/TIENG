@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { setup } from './helpers.ts';
 
 /** 로그인 + 비상연락처 2명 + 운행 시작 + 위치 1점 */
-async function riding(t: ReturnType<typeof setup>) {
+async function riding(t: Awaited<ReturnType<typeof setup>>) {
   const token = await t.login();
   await t.call('PATCH', '/me', { token, body: { name: '김라이더' } });
   await t.call('POST', '/me/contacts', { token, body: { name: '엄마', relation: 'family', phone: '010-1111-1111' } });
@@ -18,10 +18,10 @@ async function riding(t: ReturnType<typeof setup>) {
   return { token, sessionId: session.json.id as string };
 }
 
-const contactSms = (t: ReturnType<typeof setup>) => t.sms.filter((s) => s.to === '01011111111' || s.to === '01022222222');
+const contactSms = (t: Awaited<ReturnType<typeof setup>>) => t.sms.filter((s) => s.to === '01011111111' || s.to === '01022222222');
 
 test('운행 중이 아니면 사고 감지와 위치 수집을 받지 않는다 (2.1, 9.4)', async () => {
-  const t = setup();
+  const t = await setup();
   const token = await t.login();
   const incident = await t.call('POST', '/me/incidents', { token, body: { source: 'phone', kind: 'impact' } });
   assert.equal(incident.status, 409);
@@ -39,7 +39,7 @@ test('운행 중이 아니면 사고 감지와 위치 수집을 받지 않는다
 });
 
 test('통신 음영 동안 쌓인 위치는 세션 기간 안이면 나중에 받아 준다 (4.1.4)', async () => {
-  const t = setup();
+  const t = await setup();
   const token = await t.login();
   const session = await t.call('POST', '/me/session', { token });
   const during = new Date(t.now() + 10_000).toISOString();
@@ -51,7 +51,7 @@ test('통신 음영 동안 쌓인 위치는 세션 기간 안이면 나중에 �
 });
 
 test('괜찮아요 → 오탐으로 기록되고 아무에게도 연락하지 않는다', async () => {
-  const t = setup();
+  const t = await setup();
   const { token } = await riding(t);
   const created = await t.call('POST', '/me/incidents', { token, body: { source: 'phone', kind: 'impact' } });
   assert.equal(created.status, 201);
@@ -73,7 +73,7 @@ test('괜찮아요 → 오탐으로 기록되고 아무에게도 연락하지 �
 });
 
 test('30초 무응답 → 1순위에게 위치 링크 문자, 1분 뒤 2순위 (4.3 2단계)', async () => {
-  const t = setup();
+  const t = await setup();
   const { token } = await riding(t);
   const inc = (await t.call('POST', '/me/incidents', { token, body: { source: 'tag', kind: 'impact' } })).json.incident;
 
@@ -102,7 +102,7 @@ test('30초 무응답 → 1순위에게 위치 링크 문자, 1분 뒤 2순위 (
 });
 
 test('1순위가 링크에서 확인을 누르면 2순위에게는 보내지 않는다', async () => {
-  const t = setup();
+  const t = await setup();
   const { token } = await riding(t);
   const inc = (await t.call('POST', '/me/incidents', { token, body: { source: 'phone', kind: 'impact' } })).json.incident;
   await t.advance(30);
@@ -128,7 +128,7 @@ test('1순위가 링크에서 확인을 누르면 2순위에게는 보내지 않
 });
 
 test('도움 요청 → 즉시 에스컬레이션, 주문 보류·대체배차 요청, 관제 확인 후 종료', async () => {
-  const t = setup();
+  const t = await setup();
   const { token } = await riding(t);
   await t.call('POST', '/me/dev/order', { token, body: { storeName: '행복치킨', destination: '역삼동 12-3' } });
   const inc = (await t.call('POST', '/me/incidents', { token, body: { source: 'phone', kind: 'impact' } })).json.incident;
@@ -183,7 +183,7 @@ test('도움 요청 → 즉시 에스컬레이션, 주문 보류·대체배차 �
 });
 
 test('119 문자 자동 신고를 켜면 상담원 판단으로 실제 발송된다 (Phase 3)', async () => {
-  const t = setup({ ENABLE_119_SMS: 'true' });
+  const t = await setup({ ENABLE_119_SMS: 'true' });
   const { token } = await riding(t);
   const inc = (await t.call('POST', '/me/incidents', { token, body: { source: 'phone', kind: 'fall' } })).json.incident;
   await t.advance(30);
@@ -196,7 +196,7 @@ test('119 문자 자동 신고를 켜면 상담원 판단으로 실제 발송된
 });
 
 test('에스컬레이션 후 괜찮아요는 사고를 닫지 않고, 남은 문자를 멈추고 안심 문자를 보낸다 (6.4)', async () => {
-  const t = setup();
+  const t = await setup();
   const { token } = await riding(t);
   const inc = (await t.call('POST', '/me/incidents', { token, body: { source: 'phone', kind: 'impact' } })).json.incident;
   await t.advance(30);
@@ -215,7 +215,7 @@ test('에스컬레이션 후 괜찮아요는 사고를 닫지 않고, 남은 문
 });
 
 test('같은 충격이 반복돼도 진행 중인 사고는 하나다', async () => {
-  const t = setup();
+  const t = await setup();
   const { token } = await riding(t);
   const a = await t.call('POST', '/me/incidents', { token, body: { source: 'tag', kind: 'impact' } });
   const b = await t.call('POST', '/me/incidents', { token, body: { source: 'tag', kind: 'impact' } });
@@ -226,7 +226,7 @@ test('같은 충격이 반복돼도 진행 중인 사고는 하나다', async ()
 });
 
 test('비상연락처가 없어도 관제로는 넘어간다', async () => {
-  const t = setup();
+  const t = await setup();
   const token = await t.login();
   await t.call('POST', '/me/session', { token });
   const inc = (await t.call('POST', '/me/incidents', { token, body: { source: 'phone', kind: 'impact' } })).json.incident;
@@ -239,7 +239,7 @@ test('비상연락처가 없어도 관제로는 넘어간다', async () => {
 });
 
 test('문자 발송이 실패하면 다시 시도하고, 세 번 실패하면 기록한다', async () => {
-  const t = setup();
+  const t = await setup();
   const { token } = await riding(t);
   let failing = true;
   const real = t.ctx.providers.sms.send;
@@ -258,7 +258,7 @@ test('문자 발송이 실패하면 다시 시도하고, 세 번 실패하면 �
 });
 
 test('운행 종료를 잊으면 12시간 뒤 자동 종료된다 (4.1.1)', async () => {
-  const t = setup();
+  const t = await setup();
   const token = await t.login();
   await t.call('POST', '/me/session', { token });
   await t.advance(12 * 3600);

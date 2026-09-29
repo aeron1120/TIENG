@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 
-import type { OpsEmergencyResponse, OpsIncidentDetailDto, OpsIncidentDto } from '@rider-guard/contract';
+import type { OpsEmergencyResponse, OpsIncidentDetailDto, OpsIncidentDto, OpsJudgmentDto } from '@rider-guard/contract';
 import { Hono } from 'hono';
 import { z } from 'zod';
 
 import type { AppContext } from '../context.ts';
 import { ApiError, readBody, safeEqual } from '../lib.ts';
 import { claimIncident, listForOps, markOrderReassigned, opsDetail, reportEmergency, resolveIncident } from '../services/incidents.ts';
+import { listJudgments } from '../services/judgments.ts';
 
 type OpsEnv = { Variables: { operator: string } };
 
@@ -34,26 +35,28 @@ export function opsRoutes(ctx: AppContext) {
     await next();
   });
 
-  app.get('/api/incidents', (c) => c.json<{ items: OpsIncidentDto[] }>({ items: listForOps(ctx) }));
+  app.get('/api/judgments', async (c) => c.json<{ items: OpsJudgmentDto[] }>({ items: await listJudgments(ctx) }));
 
-  app.get('/api/incidents/:id', (c) => c.json<OpsIncidentDetailDto>(opsDetail(ctx, c.req.param('id'), c.var.operator)));
+  app.get('/api/incidents', async (c) => c.json<{ items: OpsIncidentDto[] }>({ items: await listForOps(ctx) }));
 
-  app.post('/api/incidents/:id/claim', (c) => {
-    claimIncident(ctx, c.req.param('id'), c.var.operator);
-    return c.json<OpsIncidentDetailDto>(opsDetail(ctx, c.req.param('id'), c.var.operator));
+  app.get('/api/incidents/:id', async (c) => c.json<OpsIncidentDetailDto>(await opsDetail(ctx, c.req.param('id'), c.var.operator)));
+
+  app.post('/api/incidents/:id/claim', async (c) => {
+    await claimIncident(ctx, c.req.param('id'), c.var.operator);
+    return c.json<OpsIncidentDetailDto>(await opsDetail(ctx, c.req.param('id'), c.var.operator));
   });
 
   app.post('/api/incidents/:id/emergency', async (c) => c.json<OpsEmergencyResponse>(await reportEmergency(ctx, c.req.param('id'), c.var.operator)));
 
-  app.post('/api/incidents/:id/order-reassigned', (c) => {
-    markOrderReassigned(ctx, c.req.param('id'), c.var.operator);
-    return c.json<OpsIncidentDetailDto>(opsDetail(ctx, c.req.param('id'), c.var.operator));
+  app.post('/api/incidents/:id/order-reassigned', async (c) => {
+    await markOrderReassigned(ctx, c.req.param('id'), c.var.operator);
+    return c.json<OpsIncidentDetailDto>(await opsDetail(ctx, c.req.param('id'), c.var.operator));
   });
 
   app.post('/api/incidents/:id/resolve', async (c) => {
     const { outcome, note } = await readBody(c, resolveSchema);
-    resolveIncident(ctx, c.req.param('id'), c.var.operator, outcome, note);
-    return c.json<OpsIncidentDetailDto>(opsDetail(ctx, c.req.param('id'), c.var.operator));
+    await resolveIncident(ctx, c.req.param('id'), c.var.operator, outcome, note);
+    return c.json<OpsIncidentDetailDto>(await opsDetail(ctx, c.req.param('id'), c.var.operator));
   });
 
   return app;

@@ -7,7 +7,19 @@ export type AppContext = { db: Db; config: Config; clock: Clock; providers: Prov
 
 // DB 행 타입 (db.ts 스키마와 1:1)
 
-export type RiderRow = { id: string; phone: string; name: string | null; vehicleJson: string | null; medicalJson: string | null; createdAt: number };
+export type RiderRow = {
+  id: string;
+  email: string | null;
+  passwordHash: string | null;
+  loginFailures: number;
+  lockedUntil: number | null;
+  name: string | null;
+  phone: string | null;
+  onboardedAt: number | null;
+  vehicleJson: string | null;
+  medicalJson: string | null;
+  createdAt: number;
+};
 
 export type ContactRow = {
   id: string;
@@ -95,6 +107,8 @@ export type IncidentRow = {
   address: string | null;
   metricsJson: string | null;
   sensorLogJson: string | null;
+  evidenceJson: string | null;
+  reportKey: string | null;
 };
 
 export type IncidentEventRow = { id: number; incidentId: string; type: string; at: number; dataJson: string | null };

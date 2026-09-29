@@ -1,5 +1,7 @@
 import type {
   ActiveIncidentResponse,
+  AuthProvidersResponse,
+  AuthResponse,
   ContactDto,
   CreateContactRequest,
   CreateIncidentRequest,
@@ -8,15 +10,17 @@ import type {
   IncidentDetailDto,
   IncidentListResponse,
   IncidentStatus,
+  EmailLoginRequest,
+  EmailSignupRequest,
   MeDto,
-  OtpResponse,
+  OnboardingRequest,
   RespondRequest,
   SessionDto,
   UpdateContactRequest,
-  VerifyRequest,
-  VerifyResponse,
 } from '@rider-guard/contract';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+
+import { useAuth } from '@/auth/AuthProvider';
 
 import { api } from './client';
 
@@ -31,8 +35,13 @@ export const isOpenStatus = (s: IncidentStatus | undefined) => s === 'countdown'
 
 // ── 조회 ───────────────────────────────────────────────────────
 
-export const useMe = (options: { refetchInterval?: number } = {}) =>
-  useQuery({ queryKey: keys.me, queryFn: () => api<MeDto>('GET', '/me'), refetchInterval: options.refetchInterval });
+/** 로그아웃 직후 아직 내려가지 않은 화면이 토큰 없이 조회하지 않게 */
+const useSignedIn = () => useAuth().status === 'signedIn';
+
+export function useMe(options: { refetchInterval?: number } = {}) {
+  const enabled = useSignedIn();
+  return useQuery({ queryKey: keys.me, queryFn: () => api<MeDto>('GET', '/me'), enabled, refetchInterval: options.refetchInterval });
+}
 
 /** 운행 중에는 3초마다 진행 중 사고를 확인한다 — 태그/detector 가 서버로 바로 보낸 감지도 여기서 잡는다. */
 export const useActiveIncident = (enabled: boolean) =>
@@ -43,26 +52,39 @@ export const useActiveIncident = (enabled: boolean) =>
     refetchInterval: enabled ? 3000 : false,
   });
 
-export const useIncident = (id: string | undefined) =>
-  useQuery({
+export function useIncident(id: string | undefined) {
+  const signedIn = useSignedIn();
+  return useQuery({
     queryKey: keys.incident(id ?? ''),
     queryFn: () => api<IncidentDetailDto>('GET', `/me/incidents/${id}`),
-    enabled: !!id,
+    enabled: signedIn && !!id,
     refetchInterval: (q) => (isOpenStatus(q.state.data?.status) ? 3000 : false),
   });
+}
 
-export const useIncidents = () => useQuery({ queryKey: keys.list, queryFn: () => api<IncidentListResponse>('GET', '/me/incidents') });
+export function useIncidents() {
+  const enabled = useSignedIn();
+  return useQuery({ queryKey: keys.list, queryFn: () => api<IncidentListResponse>('GET', '/me/incidents'), enabled });
+}
 
 // ── 변경 ───────────────────────────────────────────────────────
 
-export const useRequestOtp = () => useMutation({ mutationFn: (phone: string) => api<OtpResponse>('POST', '/auth/otp', { phone }) });
+/** 서버에 키가 설정된 SNS 만 버튼으로 보인다. 서버에 못 붙으면 이메일만. */
+export const useAuthProviders = () =>
+  useQuery({ queryKey: ['auth', 'providers'], queryFn: () => api<AuthProvidersResponse>('GET', '/auth/providers'), staleTime: 60_000 });
 
-export const useVerify = () => useMutation({ mutationFn: (body: VerifyRequest) => api<VerifyResponse>('POST', '/auth/verify', body) });
+export const useEmailSignup = () => useMutation({ mutationFn: (body: EmailSignupRequest) => api<AuthResponse>('POST', '/auth/signup', body) });
+
+export const useEmailLogin = () => useMutation({ mutationFn: (body: EmailLoginRequest) => api<AuthResponse>('POST', '/auth/login', body) });
 
 function useMeMutation<TVars, TResult>(fn: (vars: TVars) => Promise<TResult>) {
   const qc = useQueryClient();
   return useMutation({ mutationFn: fn, onSuccess: () => qc.invalidateQueries({ queryKey: keys.me }) });
 }
+
+export const useOnboarding = () => useMeMutation((body: OnboardingRequest) => api<MeDto>('POST', '/me/onboarding', body));
+
+export const useDeleteAccount = () => useMutation({ mutationFn: () => api<void>('DELETE', '/me') });
 
 export const useStartSession = () => useMeMutation(() => api<SessionDto>('POST', '/me/session'));
 export const useEndSession = () => useMeMutation(() => api<SessionDto>('POST', '/me/session/end'));

@@ -11,15 +11,20 @@
     "start": "node --env-file-if-exists=.env src/index.ts",
     "test": "node --test \"test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "fake-detector": "node scripts/fake-detector.ts"
+    "fake-detector": "node scripts/fake-detector.ts",
+    "sim": "node scripts/sim-bridge.ts",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
+    "@libsql/client": "^0.18.0",
     "hono": "^4.13.9",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^24.19.0",
-    "typescript": "~6.0.3"
+    "eslint": "^10.11.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.0"
   }
 }

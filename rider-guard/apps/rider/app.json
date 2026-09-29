@@ -1,13 +1,14 @@
 {
   "expo": {
     "name": "Rider Guard",
-    "slug": "rider-guard",
+    "slug": "tiengmojodemo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tieng.riderguard"
     },
     "android": {
       "adaptiveIcon": {
@@ -16,7 +17,9 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.tieng.riderguard",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -30,14 +33,32 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "운행 중에만 위치를 수집해, 사고가 나면 비상연락처와 관제센터에 현재 위치를 알려요."
+          "locationWhenInUsePermission": "운행 중에만 위치를 수집해, 사고가 나면 비상연락처와 관제센터에 현재 위치를 알려요.",
+          "locationAlwaysAndWhenInUsePermission": "운행 중에는 앱을 닫아도 사고를 감지하고 위치를 알릴 수 있게 항상 허용이 필요해요. 운행을 종료하면 수집하지 않아요.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
+          "isIosBackgroundLocationEnabled": true
         }
-      ]
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#C2410C",
+          "defaultChannel": "incident"
+        }
+      ],
+      "expo-web-browser"
     ],
     "scheme": "riderguard",
     "backgroundColor": "#F4F1EA",
     "experiments": {
       "typedRoutes": true
+    },
+    "owner": "justinexperimentals-team",
+    "extra": {
+      "eas": {
+        "projectId": "f62d25f4-5b60-41c4-9569-5f1e86f20acf"
+      }
     }
   }
 }

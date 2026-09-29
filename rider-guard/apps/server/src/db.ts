@@ -1,20 +1,66 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite';
+
+import { createClient, type Client, type InValue, type Transaction } from '@libsql/client';
 
 /**
- * 컬럼 이름을 camelCase 로 두어 행을 그대로 객체로 쓴다.
- * 시각은 모두 epoch ms 정수, JSON 은 *Json 텍스트 컬럼.
+ * 저장소: libSQL (SQLite 방언). 같은 드라이버로
+ *   로컬 개발  file:./data/rider-guard-v2.db
+ *   테스트     :memory:
+ *   클라우드   libsql://<db>.turso.io (+ 인증 토큰)
+ * 를 다룬다.
+ *
+ * 컬럼 이름을 camelCase 로 두어 행을 그대로 객체로 쓴다. 시각은 모두 epoch ms 정수, JSON 은 *Json 텍스트 컬럼.
+ *
+ * 외래 키 연쇄 삭제(ON DELETE CASCADE)는 원격 DB 에서 연결마다 켜져 있다는 보장이 없어 기대지 않는다.
+ * 지울 때는 코드에서 자식 행을 직접 지운다 (services/account.ts).
  */
 const MIGRATIONS: string[] = [
   `
   CREATE TABLE riders (
     id TEXT PRIMARY KEY,
-    phone TEXT NOT NULL UNIQUE,
+    -- 로그인 수단. 이메일 가입이면 email+passwordHash, SNS 가입이면 riderIdentities 에 연결된다.
+    email TEXT,
+    passwordHash TEXT,
+    loginFailures INTEGER NOT NULL DEFAULT 0,
+    lockedUntil INTEGER,
+    -- 가입 정보 (가입 직후에는 비어 있고, 가입 정보 화면에서 채운다)
     name TEXT,
+    phone TEXT,
+    onboardedAt INTEGER,
     vehicleJson TEXT,
     medicalJson TEXT,
     createdAt INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX riders_email ON riders(email) WHERE email IS NOT NULL;
+
+  -- SNS 계정 연결. 제공자가 주는 고유 id(subject)로 찾는다 — 이메일은 바뀌거나 없을 수 있다.
+  CREATE TABLE riderIdentities (
+    provider TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    riderId TEXT NOT NULL REFERENCES riders(id) ON DELETE CASCADE,
+    email TEXT,
+    createdAt INTEGER NOT NULL,
+    PRIMARY KEY (provider, subject)
+  );
+  CREATE INDEX riderIdentities_rider ON riderIdentities(riderId);
+
+  -- SNS 로그인 진행 중 상태 (CSRF 방지용 state, 로그인 후 돌아갈 앱 주소)
+  CREATE TABLE oauthStates (
+    state TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    appRedirect TEXT NOT NULL,
+    createdAt INTEGER NOT NULL,
+    expiresAt INTEGER NOT NULL
+  );
+
+  -- SNS 로그인 뒤 앱으로 넘기는 1회용 코드. 토큰을 주소창(딥링크)에 싣지 않으려고 쓴다.
+  CREATE TABLE loginCodes (
+    codeHash TEXT PRIMARY KEY,
+    riderId TEXT NOT NULL REFERENCES riders(id) ON DELETE CASCADE,
+    isNew INTEGER NOT NULL,
+    expiresAt INTEGER NOT NULL
   );
 
   CREATE TABLE consents (
@@ -26,20 +72,13 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (riderId, key)
   );
 
-  CREATE TABLE otpCodes (
-    phone TEXT PRIMARY KEY,
-    codeHash TEXT NOT NULL,
-    expiresAt INTEGER NOT NULL,
-    attempts INTEGER NOT NULL DEFAULT 0,
-    sentAt INTEGER NOT NULL
-  );
-
   CREATE TABLE authTokens (
     tokenHash TEXT PRIMARY KEY,
     riderId TEXT NOT NULL REFERENCES riders(id) ON DELETE CASCADE,
     createdAt INTEGER NOT NULL,
     expiresAt INTEGER NOT NULL
   );
+  CREATE INDEX authTokens_rider ON authTokens(riderId);
 
   CREATE TABLE contacts (
     id TEXT PRIMARY KEY,
@@ -65,6 +104,7 @@ const MIGRATIONS: string[] = [
     createdAt INTEGER NOT NULL,
     pairedAt INTEGER
   );
+  CREATE INDEX devices_rider ON devices(riderId);
 
   CREATE TABLE sessions (
     id TEXT PRIMARY KEY,
@@ -133,12 +173,17 @@ const MIGRATIONS: string[] = [
     locationAt INTEGER,
     address TEXT,
     metricsJson TEXT,
-    sensorLogJson TEXT
+    sensorLogJson TEXT,
+    -- 사고를 연 판정 근거(지표·규칙 추적)
+    evidenceJson TEXT,
+    -- 같은 보고로 사고가 두 번 열리지 않게 하는 키
+    reportKey TEXT
   );
   CREATE INDEX incidents_rider ON incidents(riderId, detectedAt);
   CREATE INDEX incidents_status ON incidents(status, deadlineAt);
   -- 라이더당 진행 중 사고는 하나. 같은 충격이 여러 번 들어와도 중복 경보를 내지 않는다.
   CREATE UNIQUE INDEX incidents_one_open ON incidents(riderId) WHERE status IN ('countdown', 'escalated', 'reviewing');
+  CREATE UNIQUE INDEX incidents_report ON incidents(riderId, reportKey) WHERE reportKey IS NOT NULL;
 
   CREATE TABLE incidentEvents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -178,9 +223,10 @@ const MIGRATIONS: string[] = [
   );
 
   -- 개인위치정보 이용·제공 사실 확인자료 (위치정보법 이용내역 통보, 설계문서 9.1)
+  -- 회원 탈퇴 뒤에도 6개월 이상 남아야 해서(위치정보법 제16조) riders 에 외래 키를 걸지 않는다 — 연쇄 삭제로 함께 지워지지 않게.
   CREATE TABLE locationAccessLogs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    riderId TEXT NOT NULL REFERENCES riders(id) ON DELETE CASCADE,
+    riderId TEXT NOT NULL,
     incidentId TEXT,
     accessorKey TEXT NOT NULL,
     accessor TEXT NOT NULL,
@@ -188,87 +234,176 @@ const MIGRATIONS: string[] = [
     at INTEGER NOT NULL
   );
   CREATE INDEX locationAccessLogs_rider ON locationAccessLogs(riderId, at);
+
+  -- 지표 판정 기록. 경보가 아니어도 전부 남긴다 — 기각·판정 불가 기록이 임계값을 맞추는 재료다 (설계문서 8.3).
+  CREATE TABLE judgments (
+    id TEXT PRIMARY KEY,
+    riderId TEXT REFERENCES riders(id) ON DELETE CASCADE,
+    deviceId TEXT,
+    producer TEXT,
+    reportId TEXT,
+    mode TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    action TEXT NOT NULL,
+    reason TEXT,
+    incidentId TEXT,
+    indicatorsJson TEXT NOT NULL,
+    tracesJson TEXT NOT NULL,
+    receivedAt INTEGER NOT NULL
+  );
+  CREATE INDEX judgments_rider ON judgments(riderId, receivedAt);
+
+  -- 라이더 앱 푸시 토큰. 한 기기의 토큰은 마지막으로 로그인한 라이더 것이다.
+  CREATE TABLE pushTokens (
+    token TEXT PRIMARY KEY,
+    riderId TEXT NOT NULL REFERENCES riders(id) ON DELETE CASCADE,
+    platform TEXT NOT NULL,
+    updatedAt INTEGER NOT NULL
+  );
+  CREATE INDEX pushTokens_rider ON pushTokens(riderId);
+
+  -- 라이더에게 보낼 푸시 (outbox). 문자와 같은 이유로 스케줄러가 보낸다 — 실패하면 다시, 재시작해도 이어서.
+  CREATE TABLE pushes (
+    id TEXT PRIMARY KEY,
+    riderId TEXT NOT NULL REFERENCES riders(id) ON DELETE CASCADE,
+    incidentId TEXT NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    dueAt INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    sentAt INTEGER,
+    error TEXT
+  );
+  CREATE INDEX pushes_due ON pushes(status, dueAt);
+  `,
+  // v2 — SNS 1회용 코드를 로그인을 시작한 앱에 묶는 열쇠, 탈퇴 시 카카오 연결 끊기, 위치 이용 기록 파기
+  `
+  ALTER TABLE oauthStates ADD COLUMN keyHash TEXT;
+  ALTER TABLE loginCodes ADD COLUMN keyHash TEXT;
+
+  -- 탈퇴한 SNS 계정의 제공자 연결 끊기 (outbox). 카카오는 탈퇴 과정에 연결 끊기를 요구한다. 끊으면 지운다.
+  -- 라이더 행은 이미 지워졌으므로 외래 키가 없다.
+  CREATE TABLE socialUnlinks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    dueAt INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error TEXT
+  );
+
+  -- 보존 기간이 지난 위치 이용 기록을 스케줄러가 매초 지우므로 시각으로 찾는 인덱스
+  CREATE INDEX locationAccessLogs_at ON locationAccessLogs(at);
   `,
 ];
 
-export type Params = Record<string, SQLInputValue | undefined | boolean>;
+export type Params = Record<string, InValue | undefined>;
 
 export class Db {
-  readonly raw: DatabaseSync;
-  private readonly cache = new Map<string, StatementSync>();
-  private depth = 0;
+  private readonly client: Client;
+  /** 지금 이 비동기 흐름이 어느 트랜잭션 안에 있는가 */
+  private readonly current = new AsyncLocalStorage<Transaction>();
+  /**
+   * 문장·트랜잭션을 하나씩 차례로 돌린다. 예전 동기 DB 가 자연히 그랬던 것처럼 — pending → sending 같은
+   * '조건부 UPDATE 로 선점' 이 여러 요청·스케줄러 사이에서도 그대로 원자적이게.
+   */
+  private queue: Promise<unknown> = Promise.resolve();
 
-  constructor(path: string) {
-    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-    this.raw = new DatabaseSync(path);
-    this.raw.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
-    this.migrate();
+  private constructor(client: Client) {
+    this.client = client;
   }
 
-  get<T>(sql: string, params: Params = {}): T | undefined {
-    return this.stmt(sql).get(bind(params)) as T | undefined;
+  static async open(url: string, authToken?: string): Promise<Db> {
+    if (url.startsWith('file:')) mkdirSync(dirname(url.slice('file:'.length)), { recursive: true });
+    const db = new Db(createClient({ url, authToken }));
+    await db.migrate();
+    return db;
   }
 
-  all<T>(sql: string, params: Params = {}): T[] {
-    return this.stmt(sql).all(bind(params)) as T[];
+  async get<T>(sql: string, params: Params = {}): Promise<T | undefined> {
+    return (await this.exec(sql, params)).rows[0] as T | undefined;
+  }
+
+  async all<T>(sql: string, params: Params = {}): Promise<T[]> {
+    return (await this.exec(sql, params)).rows as unknown as T[];
   }
 
   /** 바뀐 행 수를 돌려준다. 조건부 UPDATE 로 상태 전이를 원자적으로 선점할 때 쓴다. */
-  run(sql: string, params: Params = {}): number {
-    return Number(this.stmt(sql).run(bind(params)).changes);
+  async run(sql: string, params: Params = {}): Promise<number> {
+    return (await this.exec(sql, params)).rowsAffected;
   }
 
-  /** 중첩 호출 시 바깥 트랜잭션에 합류한다. 안쪽에서 던진 오류는 바깥 전체를 되돌린다. */
-  tx<T>(fn: () => T): T {
-    if (this.depth > 0) return this.nested(fn);
-    this.raw.exec('BEGIN IMMEDIATE');
-    try {
-      const result = this.nested(fn);
-      this.raw.exec('COMMIT');
-      return result;
-    } catch (error) {
-      this.raw.exec('ROLLBACK');
-      throw error;
-    }
-  }
-
-  private nested<T>(fn: () => T): T {
-    this.depth++;
-    try {
-      return fn();
-    } finally {
-      this.depth--;
-    }
+  /**
+   * 안에서 부르는 get/all/run 은 모두 이 트랜잭션으로 간다. 중첩 호출은 바깥 트랜잭션에 합류하고,
+   * 안쪽에서 던진 오류는 바깥 전체를 되돌린다. 안에서 외부 API(문자·푸시)를 부르지 않는다 — 그동안 다른 요청이 모두 멈춘다.
+   */
+  async tx<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.current.getStore()) return fn();
+    return this.serial(async () => {
+      const tx = await this.client.transaction('write');
+      try {
+        const result = await this.current.run(tx, fn);
+        await tx.commit();
+        return result;
+      } catch (error) {
+        await tx.rollback().catch(() => undefined);
+        throw error;
+      } finally {
+        tx.close();
+      }
+    });
   }
 
   close() {
-    this.raw.close();
+    this.client.close();
   }
 
-  private stmt(sql: string): StatementSync {
-    let s = this.cache.get(sql);
-    if (!s) {
-      s = this.raw.prepare(sql);
-      this.cache.set(sql, s);
-    }
-    return s;
+  private exec(sql: string, params: Params) {
+    const statement = { sql, args: bind(sql, params) };
+    const tx = this.current.getStore();
+    return tx ? tx.execute(statement) : this.serial(() => this.client.execute(statement));
   }
 
-  private migrate() {
-    const { user_version: version } = this.raw.prepare('PRAGMA user_version').get() as { user_version: number };
-    for (let v = version; v < MIGRATIONS.length; v++) {
-      this.tx(() => {
-        this.raw.exec(MIGRATIONS[v]!);
-        this.raw.exec(`PRAGMA user_version = ${v + 1}`);
-      });
+  private serial<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(fn, fn);
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async migrate() {
+    await this.client.execute('CREATE TABLE IF NOT EXISTS schemaMigrations (version INTEGER PRIMARY KEY, appliedAt INTEGER NOT NULL)');
+    const row = (await this.client.execute('SELECT MAX(version) AS v FROM schemaMigrations')).rows[0];
+    for (let v = Number(row?.v ?? 0); v < MIGRATIONS.length; v++) {
+      // 한 버전은 통째로 적용되거나 전혀 적용되지 않는다.
+      await this.client.batch(
+        [...statements(MIGRATIONS[v]!), { sql: 'INSERT INTO schemaMigrations (version, appliedAt) VALUES (?, ?)', args: [v + 1, Date.now()] }],
+        'write',
+      );
     }
   }
 }
 
-/** undefined → NULL, boolean → 0/1. node:sqlite 는 둘 다 직접 받지 않는다. */
-function bind(params: Params): Record<string, SQLInputValue> {
-  const out: Record<string, SQLInputValue> = {};
-  for (const [k, v] of Object.entries(params)) out[k] = v === undefined ? null : typeof v === 'boolean' ? (v ? 1 : 0) : v;
+/** 마이그레이션 SQL 을 문장 단위로. 문자열 안에 ; 를 쓰지 않는다는 전제 — 주석만 걷어 내고 나눈다. */
+function statements(sql: string): string[] {
+  return sql
+    .split('\n')
+    .map((line) => line.replace(/--.*$/, ''))
+    .join('\n')
+    .split(';')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * undefined → NULL, boolean → 0/1. 문장에 없는 이름은 뺀다 — 여러 문장에 같은 params 를 넘겨도 되게.
+ * (로컬 파일은 남는 이름을 무시하지만 원격 DB 프로토콜이 그러리라는 보장은 없다)
+ */
+function bind(sql: string, params: Params): Record<string, InValue> {
+  const out: Record<string, InValue> = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (!new RegExp(`:${k}\\b`).test(sql)) continue;
+    out[k] = v === undefined ? null : typeof v === 'boolean' ? (v ? 1 : 0) : v;
+  }
   return out;
 }
 

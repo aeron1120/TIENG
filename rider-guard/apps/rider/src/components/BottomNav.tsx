@@ -9,15 +9,14 @@ import { colors, font } from '@/theme';
 type TabKey = 'home' | 'records' | 'contacts' | 'settings';
 
 /**
- * 디자인 링크 구조: 홈 → Home, 기록 → Records, 연락망 → Setup, 설정 → #settings(미디자인).
- * 홈/기록은 서로 교체(replace)하고, 연락망은 Setup 을 위에 쌓아 뒤로가기로 돌아올 수 있게 한다.
+ * 디자인 링크 구조: 홈 → Home, 기록 → Records, 연락망 → Setup, 설정 → Settings(디자인 없음).
+ * 홈/기록/설정은 서로 교체(replace)하고, 연락망은 Setup 을 위에 쌓아 뒤로가기로 돌아올 수 있게 한다.
  */
 const TABS: { key: TabKey; label: string; Icon: typeof HomeIcon; go?: () => void }[] = [
   { key: 'home', label: '홈', Icon: HomeIcon, go: () => router.replace('/home') },
   { key: 'records', label: '기록', Icon: RecordsIcon, go: () => router.replace('/records') },
   { key: 'contacts', label: '연락망', Icon: ContactsIcon, go: () => router.push('/setup') },
-  // 설정 화면은 아직 디자인이 없다.
-  { key: 'settings', label: '설정', Icon: SettingsIcon },
+  { key: 'settings', label: '설정', Icon: SettingsIcon, go: () => router.replace('/settings') },
 ];
 
 export function BottomNav({ active }: { active: TabKey }) {

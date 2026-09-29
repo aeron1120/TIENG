@@ -1,5 +1,5 @@
 // 디자인: design/Home.dc.html — 홈 운행 중 (운행 전 상태는 같은 카드의 변형)
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
@@ -37,12 +37,23 @@ export default function HomeScreen() {
     {
       Icon: PinIcon,
       label: '위치',
-      value: !driving ? '꺼짐' : location.permission === 'denied' ? '권한 필요' : location.last ? '공유 중' : '확인 중',
+      value: !driving
+        ? '꺼짐'
+        : location.permission === 'denied'
+          ? '권한 필요'
+          : location.permission === 'foreground'
+            ? '앱 켤 때만'
+            : location.permission === 'background'
+              ? '공유 중'
+              : '확인 중',
       mono: false,
     },
   ];
   const contacts = me?.contacts ?? [];
   const actionError = start.error ?? end.error ?? test.error ?? error;
+
+  // 가입 정보를 마치지 않았으면 운행을 시작할 수 없다 (서버도 403 onboarding_required)
+  if (me && !me.onboarded) return <Redirect href="/onboarding" />;
 
   return (
     <Screen top={48} bottom={20} footer={<BottomNav active="home" />}>

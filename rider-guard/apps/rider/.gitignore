@@ -39,3 +39,12 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# 네이티브 폴더는 app.json 에서 생성한다 (CNG) — 손으로 고치지 않는다
+/android
+/ios
+
+# Firebase 서비스 계정 키(FCM 발송 권한)는 EAS 에만 올린다. 절대 커밋하지 않는다
+*firebase-adminsdk*.json
+# Firebase 앱 설정(API 키 포함) — 공개 저장소라 올리지 않는다. Firebase 콘솔에서 받아 이 폴더에 둔다 (EAS 빌드는 로컬 파일을 올린다)
+google-services.json

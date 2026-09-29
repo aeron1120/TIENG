@@ -1,39 +1,18 @@
 import { useQueryClient } from '@tanstack/react-query';
-import * as SecureStore from 'expo-secure-store';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Platform } from 'react-native';
 
-import { setApiToken, setUnauthorizedHandler } from '@/api/client';
+import { api, getApiToken, setApiToken, setUnauthorizedHandler } from '@/api/client';
+import { stopLocationTracking } from '@/features/location';
+import { unregisterPush } from '@/features/push';
 import { resetTo } from '@/lib/nav';
+import { KEYS, storage } from '@/lib/storage';
 
-const KEY = 'rider-guard.token';
-
-/** 네이티브는 키체인/키스토어, 웹은 localStorage (SecureStore 가 웹을 지원하지 않는다) */
-const tokenStore = {
-  async get(): Promise<string | null> {
-    if (Platform.OS !== 'web') return SecureStore.getItemAsync(KEY);
-    try {
-      return localStorage.getItem(KEY);
-    } catch {
-      return null;
-    }
-  },
-  async set(value: string | null) {
-    if (Platform.OS !== 'web') {
-      await (value ? SecureStore.setItemAsync(KEY, value) : SecureStore.deleteItemAsync(KEY));
-      return;
-    }
-    try {
-      if (value) localStorage.setItem(KEY, value);
-      else localStorage.removeItem(KEY);
-    } catch {
-      /* 저장 못 해도 이번 실행 동안은 로그인 상태 유지 */
-    }
-  },
-};
+const tokenStore = { get: () => storage.get(KEYS.token), set: (v: string | null) => storage.set(KEYS.token, v) };
 
 type AuthStatus = 'loading' | 'signedOut' | 'signedIn';
-type AuthValue = { status: AuthStatus; signIn(token: string): void; signOut(): void };
+type SignOutOptions = { /** 토큰이 이미 무효(만료·탈퇴)라 서버 정리를 건너뛴다 */ tokenInvalid?: boolean };
+type AuthValue = { status: AuthStatus; signIn(token: string): void; signOut(options?: SignOutOptions): void };
 
 const AuthContext = createContext<AuthValue | null>(null);
 
@@ -42,10 +21,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading');
 
   useEffect(() => {
-    tokenStore.get().then((token) => {
-      setApiToken(token);
-      setStatus(token ? 'signedIn' : 'signedOut');
-    });
+    tokenStore
+      .get()
+      // 읽지 못하면(키스토어 손상 등) 스플래시에 멈추지 않고 로그인 화면으로
+      .catch(() => null)
+      .then((token) => {
+        setApiToken(token);
+        setStatus(token ? 'signedIn' : 'signedOut');
+        // 예전 옵션(iOS 잠금 중 읽기 불가)으로 저장된 토큰을 지금 옵션으로 다시 저장한다
+        if (token && Platform.OS === 'ios') void tokenStore.set(token).catch(() => undefined);
+      });
   }, []);
 
   const signIn = useCallback((token: string) => {
@@ -54,8 +39,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void tokenStore.set(token);
   }, []);
 
-  const signOut = useCallback(() => {
+  const signOut = useCallback(({ tokenInvalid = false }: SignOutOptions = {}) => {
+    // 토큰은 바로 비운다 — 곧바로 다시 로그인해도 정리 요청이 새 토큰을 건드리지 않게
+    const token = tokenInvalid ? null : getApiToken();
     setApiToken(null);
+    // 다른 사람 사고 알림이 이 폰에 오지 않게 푸시를 해제한 뒤 서버에서 토큰을 폐기한다 (폐기 뒤에는 해제할 수 없다)
+    void unregisterPush(token).then(() => token && api('POST', '/auth/logout', undefined, { token }).catch(() => undefined));
+    // 위치 수집도 멈춘다
+    void stopLocationTracking();
     queryClient.clear();
     setStatus('signedOut');
     void tokenStore.set(null);
@@ -64,7 +55,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // 토큰이 만료·폐기되면 어느 화면에서든 로그인으로 돌려보낸다.
   useEffect(() => {
-    setUnauthorizedHandler(signOut);
+    setUnauthorizedHandler(() => signOut({ tokenInvalid: true }));
     return () => setUnauthorizedHandler(null);
   }, [signOut]);
 

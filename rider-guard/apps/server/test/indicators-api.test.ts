@@ -5,14 +5,16 @@ import type { Indicator } from '@rider-guard/contract';
 
 import { setup } from './helpers.ts';
 
-const indicators = (v: { delta_v: number; tilt_deg: number; speed: number; accel_var_1s: number }): Indicator[] => [
-  { key: 'delta_v', value: v.delta_v, unit: 'm/s', state: 'ok', sqi: null, t: 4 },
-  { key: 'tilt_deg', value: v.tilt_deg, unit: 'deg', state: 'ok', sqi: null, t: 4 },
-  { key: 'speed', value: v.speed, unit: 'm/s', state: 'ok', sqi: null, t: 4 },
-  { key: 'accel_var_1s', value: v.accel_var_1s, unit: 'm/s^2', state: 'ok', sqi: null, t: 4 },
+const indicators = (v: { peak_g: number; peak_gyro: number; delta_v150: number; bank_deg: number; quiet_s: number }): Indicator[] => [
+  { key: 'peak_g', value: v.peak_g, unit: 'g', state: 'ok', sqi: null, t: 30 },
+  { key: 'peak_gyro', value: v.peak_gyro, unit: 'deg/s', state: 'ok', sqi: null, t: 30 },
+  { key: 'delta_v150', value: v.delta_v150, unit: 'm/s', state: 'ok', sqi: null, t: 30 },
+  { key: 'bank_deg', value: v.bank_deg, unit: 'deg', state: 'ok', sqi: null, t: 30 },
+  { key: 'quiet_s', value: v.quiet_s, unit: 's', state: 'ok', sqi: null, t: 30 },
 ];
-const CRASH = indicators({ delta_v: 7.4, tilt_deg: 84, speed: 0.1, accel_var_1s: 0.04 });
-const BUMP = indicators({ delta_v: 1.3, tilt_deg: 6, speed: 5.4, accel_var_1s: 2.2 });
+// 헬멧 IMU 실험의 A1_v00(정지 승용차 측면 충돌)·D6_v09(연석) 값. 기울기·무동작은 실험 표에 없어 넣은 값이다
+const CRASH = indicators({ peak_g: 23.41, peak_gyro: 1366, delta_v150: 3.92, bank_deg: 0, quiet_s: 25 });
+const BUMP = indicators({ peak_g: 4.74, peak_gyro: 375, delta_v150: 2.86, bank_deg: 0, quiet_s: 28 });
 
 /** 지표 백엔드를 기기로 등록하고 라이더와 페어링, 운행 시작 */
 async function pairedBackend(t: Awaited<ReturnType<typeof setup>>, { drive = true } = {}) {
@@ -44,7 +46,7 @@ test('지표 백엔드가 보낸 사고 지표로 사고가 열리고, 이후는
   const detail = (await t.ops('GET', `/incidents/${active.id}`)).json;
   assert.equal(detail.evidence.decision, 'alarm');
   assert.equal(detail.evidence.producer, 'tag-v1');
-  assert.equal(detail.evidence.traces.find((x: { rule: string }) => x.rule === 'impact').inputs.delta_v, 7.4);
+  assert.equal(detail.evidence.traces.find((x: { rule: string }) => x.rule === 'impact').inputs.peak_g, 23.41);
   assert.ok(t.sms.some((s) => s.to === '01011111111' && s.body.includes('응답이 없었어요')));
 });
 
@@ -66,14 +68,14 @@ test('같은 보고를 다시 보내도 사고는 한 번만 — 괜찮아요로
 test('정상 주행 지표는 기각하고 기록만 남긴다', async () => {
   const t = await setup();
   const { send } = await pairedBackend(t);
-  const res = (await send({ indicators: BUMP, producer: 'mujoco:3_speedbump' })).json;
+  const res = (await send({ indicators: BUMP, producer: 'mujoco:D6_v09' })).json;
   assert.equal(res.decision, 'reject');
   assert.equal(res.action, 'logged');
   assert.equal(res.incidentId, null);
 
   const log = (await t.ops('GET', '/judgments')).json.items;
   assert.equal(log.length, 1);
-  assert.equal(log[0].producer, 'mujoco:3_speedbump');
+  assert.equal(log[0].producer, 'mujoco:D6_v09');
   assert.equal(log[0].decision, 'reject');
 });
 
@@ -105,7 +107,7 @@ const pick = (r: { decision: string; action: string; reason: string | null }) =>
 test('개발 서버의 시뮬레이션 지표는 테스트 사고로 열린다', async () => {
   const t = await setup();
   const { token, send } = await pairedBackend(t);
-  const res = (await send({ indicators: indicators({ delta_v: 2.1, tilt_deg: 88, speed: 0.2, accel_var_1s: 0.05 }), mode: 'simulated' })).json;
+  const res = (await send({ indicators: indicators({ peak_g: 6, peak_gyro: 200, delta_v150: 1, bank_deg: 85, quiet_s: 25 }), mode: 'simulated' })).json;
   assert.equal(res.action, 'incident_created');
   const incident = (await t.call('GET', `/me/incidents/${res.incidentId}`, { token })).json;
   assert.equal(incident.source, 'test');
@@ -150,7 +152,7 @@ test('휴대폰 중계 경로(태그 → BLE → 폰 → 서버)도 같은 판�
 test('지표 형식이 틀리면 400 과 이유', async () => {
   const t = await setup();
   const { send } = await pairedBackend(t);
-  const res = await send({ indicators: [{ key: 'delta_v', value: '7', unit: 'm/s', state: 'ok', sqi: null, t: 1 }] });
+  const res = await send({ indicators: [{ key: 'peak_g', value: '7', unit: 'g', state: 'ok', sqi: null, t: 1 }] });
   assert.equal(res.status, 400);
   assert.match(res.json.error.message, /indicators\.0\.value/);
 });

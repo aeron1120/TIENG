@@ -248,25 +248,30 @@ export type DeviceEventResponse =
 // ── 지표 수신 (지표 백엔드 → Rider Guard) ──────────────────────
 //
 // 판정을 이미 내린 기기는 위의 /device-api/events 로 보내고, 지표만 내는 쪽은 여기로 보낸다.
-// 서버가 설계문서 5장 흐름(충격·전도 → 사후 무동작 → 경보)으로 판정하고, 경보면 사고를 연다.
+// 서버가 설계문서 5장 흐름(사고 후보 → 사후 무동작 → 경보)으로 판정하고, 경보면 사고를 연다.
 // Indicator 모양은 팀의 moto-sensing core/schemas.py 와 같다 — 그쪽 Snapshot 을 그대로 보내도 읽힌다.
+//
+// 보내는 쪽 규약 (헬멧 태그 6축 IMU, PCX125 헬멧 IMU 사고 후보 탐지 실험 2026-09-28 과 같은 정의):
+//   1. 합성 가속도가 3g 이상이면 이벤트를 연다. 3g 이상 표본이 0.5초 넘게 없으면 이벤트를 닫는다.
+//      서버 임계값(4g)보다 낮게 여는 건 아슬아슬하게 기각된 정상 충격도 판정 기록에 남기기 위해서다.
+//   2. 이벤트 안에서 합성 가속도가 가장 큰 시각을 t_p 라 한다.
+//   3. t_p + 30초에 보고 하나를 보낸다 (설계문서 5.1 '30초 정적'). detectedAt 은 t_p 다.
+//   4. peak_g 는 t_p 의 값, peak_gyro·delta_v150·bank_deg 는 [t_p − 0.5초, t_p + 0.5초] 안의 최대값이다.
+//      기록 전체의 최대값을 보내면 안 된다 — 서로 다른 순간의 충격과 기울기가 한 사고로 묶인다.
+//   5. 30초를 다 관찰하지 못했으면(끊김·시뮬레이션 종료) quiet_s 를 state 'low_quality' 로 보낸다.
+// 이렇게 보내면 서버가 사고 후보로 본 것은 실험 규칙도 후보로 본다. 반대로 한 이벤트 안에서 가장 큰 충격과 0.5초 넘게
+// 떨어진 다른 충격 근처에서만 보조 조건이 섰다면 서버가 놓칠 수 있다. 기준 구현: apps/server/scripts/sim-indicators.ts
 
 export type IndicatorState = 'ok' | 'low_quality' | 'stale' | 'error' | 'no_adapter';
 export type SourceMode = 'live' | 'replay' | 'simulated' | 'unavailable';
 
-/**
- * 판정에 쓰는 지표 이름과 단위. 단위가 다르면 판정하지 않고 '판정 불가'로 둔다.
- * MuJoCo 시뮬레이션 요약표(태그·폰·질량중심)와 같은 정의다.
- */
+/** 판정에 쓰는 지표 이름과 단위. 단위가 다르면 판정하지 않고 '판정 불가'로 둔다. */
 export type IndicatorUnits = {
-  delta_v: 'm/s'; //        태그 위치, 100ms 간격 속도 벡터 차이의 최대값 — 충격 판정의 중심 (5.2)
-  delta_v_com: 'm/s'; //    라이더 질량중심 ΔV. 시뮬레이션에서만 나오는 기준값이라 판정에는 쓰지 않는다
-  peak_g: 'g'; //           태그 합성 가속도 피크. 접촉 강성에 크게 흔들려 참고용
-  peak_g_phone: 'g'; //     폰 위치 피크 가속도 (실기기는 ±16g 포화)
-  peak_gyro: 'rad/s'; //    태그 합성 각속도 피크 (로우사이드 미끄러짐·회전)
-  tilt_deg: 'deg'; //       몸통의 수직 대비 기울기 (최종값) — 전도 판정 (5.3)
-  speed: 'm/s'; //          태그 속도 크기 (최종값)
-  accel_var_1s: 'm/s^2'; // 마지막 1초 가속도 크기의 표준편차 — 사후 무동작 (5.4)
+  peak_g: 'g'; //         헬멧 태그 합성 가속도(specific force, 정지 시 약 1g) 최대 — 충격
+  peak_gyro: 'deg/s'; //  헬멧 태그 합성 각속도 최대 — 회전
+  delta_v150: 'm/s'; //   IMU 자세 추정으로 중력을 뺀 선형가속도를 150ms 적분한 크기의 최대 — 속도 급변
+  bank_deg: 'deg'; //     IMU 로 추정한 헬멧 기울기 절댓값의 최대. 차체·몸통 기울기가 아니다 — 자세
+  quiet_s: 's'; //        보고 시각까지 |가속도 − 1g| < 0.15g 이고 각속도 < 30°/s 인 상태가 끊기지 않고 이어진 시간 — 사후 무동작
 };
 export type IndicatorKey = keyof IndicatorUnits;
 
@@ -295,19 +300,20 @@ export type IndicatorReport = {
 };
 
 export type RuleTrace = {
-  rule: 'impact' | 'fall_posture' | 'post_still';
+  /** impact: 충격, support: 회전·속도 급변·자세 중 하나, post_still: 사후 무동작. 사고 후보 = impact AND support */
+  rule: 'impact' | 'support' | 'post_still';
   fired: boolean;
   inputs: Record<string, number | null>;
   thresholds: Record<string, number>;
-  /** 채워져 있으면 '기각'이 아니라 '판정 불가'다 (예: "low_quality:accel_var_1s") */
+  /** 채워져 있으면 '기각'이 아니라 '판정 불가'다 (예: "low_quality:quiet_s") */
   blocked_by: string | null;
 };
 
 /**
  * alarm: 경보 — 사고를 연다
- * alarm_unverified: 충격·전도는 확실한데 무동작을 확인할 수 없음 — 놓침은 되돌릴 수 없어 경보한다(1.3)
- * reject: 기각 (충격 없음, 또는 충격 뒤 계속 움직임)
- * undetermined: 충격·전도 지표 자체가 없어 판정 불가
+ * alarm_unverified: 충격은 확실한데 보조 조건이나 무동작을 확인할 수 없음 — 놓침은 되돌릴 수 없어 경보한다(1.3)
+ * reject: 기각 (사고 후보 아님, 또는 후보 뒤 계속 움직임)
+ * undetermined: 충격 지표(peak_g) 자체가 없어 판정 불가
  */
 export type Decision = 'alarm' | 'alarm_unverified' | 'reject' | 'undetermined';
 

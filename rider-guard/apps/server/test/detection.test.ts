@@ -3,101 +3,150 @@ import { test } from 'node:test';
 
 import type { Indicator } from '@rider-guard/contract';
 
-import { indicatorsFromSim, parseSimCsv, type SimRow } from '../scripts/sim-indicators.ts';
+import { type ImuRow, parseImuCsv, reportsFromImu } from '../scripts/sim-indicators.ts';
 import { judge, kindOf } from '../src/services/detection.ts';
 
-const UNITS: Record<string, string> = { delta_v: 'm/s', tilt_deg: 'deg', speed: 'm/s', accel_var_1s: 'm/s^2' };
+const UNITS: Record<string, string> = { peak_g: 'g', peak_gyro: 'deg/s', delta_v150: 'm/s', bank_deg: 'deg', quiet_s: 's' };
 const ind = (values: Record<string, number | null>): Indicator[] =>
-  Object.entries(values).map(([key, value]) => ({ key, value, unit: UNITS[key] ?? null, state: value == null ? 'low_quality' : 'ok', sqi: null, t: 5 }));
+  Object.entries(values).map(([key, value]) => ({ key, value, unit: UNITS[key] ?? null, state: value == null ? 'low_quality' : 'ok', sqi: null, t: 30 }));
 
-// 시뮬레이션 네 시나리오를 닮은 지표. 값은 설계상 기대 모양이지 시뮬레이션 실측이 아니다.
-const SCENARIOS = {
-  '1_lowside (40° 기운 채 균형 제어 해제)': { delta_v: 2.1, tilt_deg: 88, speed: 0.2, accel_var_1s: 0.05 },
-  '2_frontal (30km/h 정차 차량 충돌)': { delta_v: 7.4, tilt_deg: 84, speed: 0.1, accel_var_1s: 0.04 },
-  '3_speedbump (20km/h 방지턱)': { delta_v: 1.3, tilt_deg: 6, speed: 5.4, accel_var_1s: 2.2 },
-  '4_hardbrake (30km/h 급제동)': { delta_v: 0.6, tilt_deg: 9, speed: 0.0, accel_var_1s: 0.05 },
+// 헬멧 IMU 실험(2026-09-28) analysis/run_evaluation.csv 의 실제 실행 값. 가속도·각속도·ΔV 는 실행 전체 최대값이라
+// 창 안 최대값보다 크거나 같다. 표에 기울기 열이 없어 0 으로 둔다 — 아래 실행은 기울기 없이도 판정이 갈린다.
+// quiet_s 는 시뮬레이션이 30초를 다 보지 못해 없는 값이라, 쓰러진 채 가만히 있었다고 보고 25초로 둔다.
+const RUNS = {
+  A1_v00: { peak_g: 23.41, peak_gyro: 1366, delta_v150: 3.92 }, // 정지 승용차 측면 직각 충돌
+  B2_v00: { peak_g: 21.5, peak_gyro: 1074, delta_v150: 7.49 }, //  정차 차량 후미 추돌
+  C1_v00: { peak_g: 23.61, peak_gyro: 1353, delta_v150: 7.19 }, // 커브 저마찰 로우사이드
+  C9_v00: { peak_g: 13.87, peak_gyro: 1058, delta_v150: 5.76 }, // 저속 균형 상실 전도
+  D3_v09: { peak_g: 2.96, peak_gyro: 124, delta_v150: 1.8 }, //    과속방지턱 과속 통과 — 가장 센 실행
+  D6_v09: { peak_g: 4.74, peak_gyro: 375, delta_v150: 2.86 }, //   연석 오르내리기 — 가장 센 실행
+  D7_v03: { peak_g: 3.45, peak_gyro: 106, delta_v150: 0.61 }, //   요철 노면 — 가장 센 실행
 };
+const still = (run: keyof typeof RUNS) => ind({ ...RUNS[run], bank_deg: 0, quiet_s: 25 });
 
-test('사고 2종은 경보, 정상 주행 2종은 기각', () => {
-  const decisions = Object.fromEntries(Object.entries(SCENARIOS).map(([name, v]) => [name.split(' ')[0], judge(ind(v)).decision]));
-  assert.deepEqual(decisions, { '1_lowside': 'alarm', '2_frontal': 'alarm', '3_speedbump': 'reject', '4_hardbrake': 'reject' });
+test('실험의 사고 실행은 경보, 가장 센 정상 주행은 기각', () => {
+  const decisions = Object.fromEntries(Object.keys(RUNS).map((run) => [run, judge(still(run as keyof typeof RUNS)).decision]));
+  assert.deepEqual(decisions, { A1_v00: 'alarm', B2_v00: 'alarm', C1_v00: 'alarm', C9_v00: 'alarm', D3_v09: 'reject', D6_v09: 'reject', D7_v03: 'reject' });
 });
 
-test('로우사이드는 넘어짐, 정면 충돌은 충격으로 연다', () => {
-  assert.equal(kindOf(judge(ind(SCENARIOS['1_lowside (40° 기운 채 균형 제어 해제)'])).traces), 'fall');
-  assert.equal(kindOf(judge(ind(SCENARIOS['2_frontal (30km/h 정차 차량 충돌)'])).traces), 'impact');
+test('연석(D6)은 4g 를 넘지만 보조 조건이 하나도 안 서서 기각 — ΔV 여유가 0.14 m/s 뿐이다', () => {
+  const [impact, support] = judge(still('D6_v09')).traces;
+  assert.equal(impact!.fired, true);
+  assert.equal(support!.fired, false);
+  assert.equal(support!.blocked_by, null);
 });
 
-test('충격 뒤 계속 움직이면 기각 — 특이도는 충격 이후에서 나온다 (2.3)', () => {
-  assert.equal(judge(ind({ delta_v: 5, tilt_deg: 10, speed: 4, accel_var_1s: 1.5 })).decision, 'reject');
+test('stress_100hz 에서 실험이 놓친 A3 사선 충돌은 서버도 놓친다 — 알려진 한계', () => {
+  // A3_v03 stress_100hz: 11.76g, 434°/s, ΔV 2.77 — 후보가 서지 않았으니 기울기도 75° 미만이었다
+  assert.equal(judge(ind({ peak_g: 11.76, peak_gyro: 434, delta_v150: 2.77, bank_deg: 0, quiet_s: 25 })).decision, 'reject');
 });
 
-test('충격은 확실한데 무동작을 못 재면 경보한다 — 놓침은 되돌릴 수 없다 (1.3)', () => {
-  const { decision, traces } = judge(ind({ delta_v: 5, tilt_deg: 10, speed: null, accel_var_1s: 0.1 }));
+test('기울기만으로 선 후보는 넘어짐, 회전·ΔV 로 선 후보는 충격으로 연다', () => {
+  assert.equal(kindOf(judge(ind({ peak_g: 6, peak_gyro: 200, delta_v150: 1, bank_deg: 85, quiet_s: 25 })).traces), 'fall');
+  assert.equal(kindOf(judge(still('A1_v00')).traces), 'impact');
+});
+
+test('기울기는 좌우 상관없이 절댓값으로 본다', () => {
+  assert.equal(judge(ind({ peak_g: 6, peak_gyro: 200, delta_v150: 1, bank_deg: -80, quiet_s: 25 })).decision, 'alarm');
+});
+
+test('후보 뒤 계속 움직이면 기각 — 특이도는 충격 이후에서 나온다 (2.3)', () => {
+  assert.equal(judge(ind({ ...RUNS.A1_v00, bank_deg: 0, quiet_s: 3 })).decision, 'reject');
+});
+
+test('후보는 확실한데 무동작을 못 재면 경보한다 — 놓침은 되돌릴 수 없다 (1.3)', () => {
+  const { decision, traces } = judge(ind({ ...RUNS.A1_v00, bank_deg: 0, quiet_s: null }));
   assert.equal(decision, 'alarm_unverified');
-  assert.equal(traces.find((t) => t.rule === 'post_still')!.blocked_by, 'low_quality:speed');
+  assert.equal(traces.find((t) => t.rule === 'post_still')!.blocked_by, 'low_quality:quiet_s');
 });
 
-test('충격·전도 지표가 둘 다 없으면 판정 불가, 0 으로 메우지 않는다', () => {
-  const { decision, traces } = judge(ind({ speed: 0, accel_var_1s: 0 }));
+test('충격은 섰는데 보조 지표가 비어 있으면 기각하지 않는다 — 무동작이면 경보, 움직이면 기각', () => {
+  const onlyImpact = (quiet_s: number) => [...ind({ peak_g: 10, quiet_s }), { key: 'peak_gyro', value: 12, unit: 'rad/s', state: 'ok' as const, sqi: null, t: 30 }];
+  const { decision, traces } = judge(onlyImpact(25));
+  assert.equal(decision, 'alarm_unverified');
+  assert.equal(traces.find((t) => t.rule === 'support')!.blocked_by, 'unit:peak_gyro(rad/s≠deg/s),missing:delta_v150,missing:bank_deg');
+  assert.equal(judge(onlyImpact(2)).decision, 'reject');
+});
+
+test('보조 하나만 서면 나머지가 비어 있어도 상관없다', () => {
+  const { decision, traces } = judge(ind({ peak_g: 10, delta_v150: 4, quiet_s: 25 }));
+  assert.equal(decision, 'alarm');
+  assert.equal(traces.find((t) => t.rule === 'support')!.blocked_by, null);
+});
+
+test('충격 지표가 없으면 판정 불가, 0 으로 메우지 않는다', () => {
+  const { decision, traces } = judge(ind({ peak_gyro: 900, quiet_s: 25 }));
   assert.equal(decision, 'undetermined');
-  assert.equal(traces.find((t) => t.rule === 'impact')!.inputs.delta_v, null);
+  assert.equal(traces.find((t) => t.rule === 'impact')!.inputs.peak_g, null);
 });
 
-test('단위가 다르면 비교하지 않고 판정 불가로 둔다', () => {
-  const indicators = ind({ delta_v: 1, speed: 0, accel_var_1s: 0 });
-  indicators.push({ key: 'tilt_deg', value: 1.5, unit: 'rad', state: 'ok', sqi: null, t: 5 });
-  const fall = judge(indicators).traces.find((t) => t.rule === 'fall_posture')!;
-  assert.equal(fall.fired, false);
-  assert.match(fall.blocked_by!, /^unit:tilt_deg/);
-});
+// ── 시뮬레이션 IMU → 지표 보고 ─────────────────────────────────
 
-// ── MuJoCo CSV → 지표 ──────────────────────────────────────────
-
-/** 2000Hz, 8 m/s 로 가다가 t=1.0 에서 50ms 만에 멈추고 넘어진 채 가만히 있는 합성 신호 */
-function syntheticCrash(): SimRow[] {
-  const rows: SimRow[] = [];
-  for (let i = 0; i <= 5000; i++) {
-    const t = i / 2000;
-    const v = t < 1 ? 8 : t < 1.05 ? 8 * (1 - (t - 1) / 0.05) : 0;
-    const braking = t >= 1 && t < 1.05;
+/** 100Hz 합성 신호. t=0.05 초기 튐, t=1 방지턱 3.5g, t=5 충돌 12g(각속도 900°/s 는 0.3초 뒤, 88° 기울기는 1초 뒤), 7초부터 가만히 */
+function syntheticRide(end: number): ImuRow[] {
+  const rows: ImuRow[] = [];
+  for (let i = 0; i <= end * 100; i++) {
+    const t = i / 100;
+    const near = (at: number) => Math.abs(t - at) < 0.005;
     rows.push({
       t,
-      // 처음 0.15초 안의 큰 값은 초기 안정화라 무시돼야 한다
-      ax: t < 0.01 ? 500 : braking ? -160 : 0,
-      ay: 0,
-      az: 9.81,
-      gx: braking ? 6 : 0,
-      gy: 0,
-      gz: 0,
-      vx: t < 0.01 ? 30 : v,
-      vy: 0,
-      vz: 0,
-      com_vx: v,
-      com_vy: 0,
-      com_vz: 0,
-      tilt_deg: t < 1.05 ? 5 : 88,
+      accG: near(0.05) ? 30 : near(1) ? 3.5 : near(5) ? 12 : t > 5 && t < 7 ? 1.6 : 1,
+      gyroDps: near(0.05) ? 2000 : near(1) ? 100 : near(5.3) ? 900 : t > 5 && t < 7 ? 50 : 2,
+      bankDeg: t >= 6 ? 88 : 5,
+      dv150: t < 0.15 ? NaN : near(5.1) ? 2.5 : 0.3,
     });
   }
   return rows;
 }
 
-test('시뮬레이션 CSV 에서 보고서 5절 정의대로 지표를 뽑는다', () => {
-  const header = 't,ax,ay,az,gx,gy,gz,vx,vy,vz,com_vx,com_vy,com_vz,tilt_deg';
-  const csv = [header, ...syntheticCrash().map((r) => Object.values(r).join(','))].join('\n');
-  const values = Object.fromEntries(indicatorsFromSim(parseSimCsv(csv)).map((i) => [i.key, i.value]));
-
-  assert.ok(Math.abs(values.delta_v! - 8) < 1e-9, `delta_v ${values.delta_v}`); // 100ms 안에 8 → 0, 초기 30 m/s 는 제외
-  assert.ok(Math.abs(values.delta_v_com! - 8) < 1e-9);
-  assert.ok(Math.abs(values.peak_g! - Math.hypot(160, 9.81) / 9.81) < 1e-9, `peak_g ${values.peak_g}`); // 초기 500 은 제외
-  assert.equal(values.peak_gyro, 6);
-  assert.equal(values.tilt_deg, 88);
-  assert.equal(values.speed, 0);
-  assert.ok(values.accel_var_1s! < 1e-9);
-
-  assert.equal(judge(indicatorsFromSim(syntheticCrash())).decision, 'alarm');
+test('3g 이벤트마다 보고 하나, 보조 지표는 충격 최대 시각 앞뒤 0.5초 안의 최대값이다', () => {
+  const reports = reportsFromImu(syntheticRide(40));
+  assert.deepEqual(reports.map((r) => r.tPeak), [1, 5]); // 초기 유예(0.15초) 안의 30g 는 이벤트가 아니다
+  const crash = Object.fromEntries(reports[1]!.indicators.map((i) => [i.key, i.value]));
+  // 1초 뒤의 88° 기울기는 창 밖이라 묶지 않는다 — 기록 전체 최대값을 쓰면 서로 다른 순간이 한 사고가 된다
+  assert.deepEqual(crash, { peak_g: 12, peak_gyro: 900, delta_v150: 2.5, bank_deg: 5, quiet_s: 28 });
+  assert.equal(judge(reports[0]!.indicators).decision, 'reject');
+  assert.equal(judge(reports[1]!.indicators).decision, 'alarm');
 });
 
-test('필요한 열이 없는 CSV 는 이유를 말하고 거절한다', () => {
-  assert.throws(() => parseSimCsv('t,ax,ay\n0,0,0'), /열이 없어요: az/);
+test('0.5초 넘게 떨어진 두 충격은 창도 둘이다 — 추돌 직후 회전을 뒤의 더 큰 충격 창에 묻지 않는다 (B3)', () => {
+  // B3 기본 조건 모양: 1.5초 추돌 15g 직후 1000°/s 회전, 0.8초 뒤 머리를 한 번 더 부딪쳐 22g (회전은 작다)
+  const rows = syntheticRide(40).map((r) => {
+    const near = (at: number) => Math.abs(r.t - at) < 0.005;
+    return { ...r, accG: near(1) ? 1 : near(5) ? 1 : near(1.5) ? 15 : near(2.3) ? 22 : r.accG, gyroDps: near(1.55) ? 1000 : near(5.3) ? 2 : r.gyroDps };
+  });
+  const reports = reportsFromImu(rows);
+  assert.deepEqual(reports.map((r) => r.tPeak), [1.5, 2.3]);
+  assert.deepEqual(reports.map((r) => judge(r.indicators).traces.find((t) => t.rule === 'support')!.fired), [true, false]);
+});
+
+test('30초를 다 보지 못한 기록은 quiet_s 를 품질 미달로 보낸다', () => {
+  const [, crash] = reportsFromImu(syntheticRide(8));
+  const quiet = crash!.indicators.find((i) => i.key === 'quiet_s')!;
+  assert.equal(quiet.state, 'low_quality');
+  assert.equal(quiet.value, 1);
+  assert.equal(judge(crash!.indicators).decision, 'alarm_unverified');
+});
+
+test('3g 를 넘지 않은 기록은 보낼 것이 없다', () => {
+  assert.deepEqual(reportsFromImu(syntheticRide(40).map((r) => ({ ...r, accG: Math.min(r.accG, 2.9) }))), []);
+});
+
+test('팀 telemetry 출력은 실행별로, 발표 자료 프로파일은 한 실행으로 읽는다', () => {
+  const team = [
+    'run_id,scenario_id,t_s,imu_acc_norm_g,imu_gyro_norm_dps,imu_bank_est_deg,imu_delta_v150_mps,tag_vx',
+    'r1,D6,0.001,1,0,0,,13',
+    'r1,D6,0.002,1,0,0,0.1,13',
+    'r2,A1,0.001,1,0,0,,13',
+  ].join('\n');
+  assert.deepEqual([...parseImuCsv(team).keys()], ['D6:r1', 'A1:r2']);
+
+  const profile = parseImuCsv('﻿t_s,acc_norm_g,gyro_norm_dps,bank_est_deg,delta_v150_mps\n0.005,1,0,0,nan\n0.01,1,0,0,0.2');
+  const rows = profile.get(null)!;
+  assert.ok(Number.isNaN(rows[0]!.dv150));
+  assert.equal(rows[1]!.dv150, 0.2);
+});
+
+test('필요한 열이 없는 CSV 는 이유를 말하고 거절한다 — 실제 속도만 있는 옛 형식도', () => {
+  assert.throws(() => parseImuCsv('t,ax,ay,az,vx,vy,vz\n0,0,0,0,0,0,0'), /열이 없어요: t_s/);
 });

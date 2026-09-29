@@ -1,92 +1,115 @@
 /**
- * MuJoCo 이륜차 사고 시뮬레이션(motorcycle_sim.py)의 results/*.csv → Rider Guard 지표.
- * 계산 정의는 시뮬레이션 실행보고서 5절의 요약표와 같다.
+ * 헬멧 IMU 시뮬레이션 CSV → Rider Guard 지표 보고. 계약(packages/contract '보내는 쪽 규약')의 기준 구현이다 —
+ * 실제 태그 펌웨어도 이 순서대로 만들면 서버 판정이 실험의 사고 후보 규칙과 같아진다.
  *
- *   delta_v       태그 선속도(vx,vy,vz)의 100ms 간격 벡터 차이 최대값
- *   delta_v_com   라이더 질량중심 선속도(com_v*)의 같은 값 — 모델 안의 기준값일 뿐 판정에는 쓰지 않는다
- *   peak_g        태그 가속도 크기 최대 / 9.81
- *   peak_gyro     태그 각속도 크기 최대
- *   tilt_deg      몸통 기울기 최종값
- *   speed         태그 속도 크기 최종값
- *   accel_var_1s  마지막 1초 가속도 크기의 표준편차
- *
- * 최대값은 초기 안정화 구간(처음 0.15초)을 빼고 계산한다. 폰 피크 가속도는 CSV 에 없어 보내지 않는다.
+ * 읽는 형식 (둘 다 IMU 로 계산한 열만 쓴다. 태그 실제 속도·차체 기울기 같은 시뮬레이터 참조값은 탐지 입력이 아니다):
+ *   팀 telemetry.py 출력     t_s, imu_acc_norm_g, imu_gyro_norm_dps, imu_bank_est_deg, imu_delta_v150_mps (run_id 로 여러 실행)
+ *   발표 자료 센서 프로파일  t_s, acc_norm_g, gyro_norm_dps, bank_est_deg, delta_v150_mps (data/runs/<id>/<profile>.csv.gz)
  */
 import type { Indicator } from '@rider-guard/contract';
 
-export type SimRow = {
+export type ImuRow = {
   t: number;
-  ax: number;
-  ay: number;
-  az: number;
-  gx: number;
-  gy: number;
-  gz: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  com_vx: number;
-  com_vy: number;
-  com_vz: number;
-  tilt_deg: number;
+  accG: number;
+  gyroDps: number;
+  bankDeg: number;
+  /** 150ms 이력이 쌓이기 전에는 NaN — 0 으로 메우지 않는다 */
+  dv150: number;
 };
 
-const COLUMNS: (keyof SimRow)[] = ['t', 'ax', 'ay', 'az', 'gx', 'gy', 'gz', 'vx', 'vy', 'vz', 'com_vx', 'com_vy', 'com_vz', 'tilt_deg'];
-const G = 9.81;
-const SETTLE_S = 0.15;
-const DV_WINDOW_S = 0.1;
+export type SimReport = { tPeak: number; indicators: Indicator[] };
 
-export function parseSimCsv(text: string): SimRow[] {
-  const lines = text.trim().split(/\r?\n/);
+/** 실험의 초기 판단 유예. 이 앞의 표본은 이벤트·최대값 어디에도 쓰지 않는다 */
+const WARMUP_S = 0.15;
+/** 이벤트를 여는 가속도. 서버 충격 임계값(4g)보다 낮게 둬서 아슬아슬하게 기각된 정상 충격도 기록에 남긴다 */
+const WAKE_G = 3;
+/** 보조 지표를 모으는 창: 충격 최대 시각 앞뒤. 실험의 '지표 동시 발생 구간' 0.5초와 같다 */
+const WINDOW_S = 0.5;
+/**
+ * 3g 이상 표본이 이만큼 없으면 이벤트를 닫는다. 창과 같게 둔다 — 추돌 뒤 0.8초에 머리를 한 번 더 부딪친 B3 처럼
+ * 충격이 둘이면 창도 둘이어야 첫 충격 직후의 회전을 놓치지 않는다.
+ */
+const CLOSE_GAP_S = WINDOW_S;
+/** 충격 뒤 무동작을 지켜보는 시간 (설계문서 5.1 '30초 정적') */
+const OBSERVE_S = 30;
+
+const COLUMNS: Record<keyof ImuRow, string[]> = {
+  t: ['t_s'],
+  accG: ['imu_acc_norm_g', 'acc_norm_g'],
+  gyroDps: ['imu_gyro_norm_dps', 'gyro_norm_dps'],
+  bankDeg: ['imu_bank_est_deg', 'bank_est_deg'],
+  dv150: ['imu_delta_v150_mps', 'delta_v150_mps'],
+};
+
+/** 실행 이름 → 표본. run_id 열이 없으면 이름이 null 인 실행 하나다. */
+export function parseImuCsv(text: string): Map<string | null, ImuRow[]> {
+  const lines = text.replace(/^﻿/, '').trim().split(/\r?\n/);
   const header = lines[0]!.split(',').map((h) => h.trim());
-  const missing = COLUMNS.filter((c) => !header.includes(c));
-  if (missing.length) throw new Error(`CSV 에 열이 없어요: ${missing.join(', ')}`);
-  const index = COLUMNS.map((c) => header.indexOf(c));
-  return lines.slice(1).map((line, n) => {
-    const cells = line.split(',');
-    const row = {} as SimRow;
-    COLUMNS.forEach((c, i) => {
-      const v = Number(cells[index[i]!]);
-      if (!Number.isFinite(v)) throw new Error(`${n + 2}행 ${c} 값이 숫자가 아니에요: ${cells[index[i]!]}`);
-      row[c] = v;
-    });
-    return row;
-  });
-}
-
-const norm = (x: number, y: number, z: number) => Math.hypot(x, y, z);
-
-/** 100ms 앞의 표본과 벡터 차이의 최대값. 표본 간격이 일정하지 않아도 시간으로 짝을 찾는다. */
-function maxDeltaV(rows: SimRow[], pick: (r: SimRow) => [number, number, number]): number {
-  let best = 0;
-  let j = 0;
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i]!;
-    if (r.t - SETTLE_S < DV_WINDOW_S) continue; // 비교 대상(100ms 앞)도 안정화 구간 밖이어야 한다
-    while (j < i && rows[j + 1]!.t <= r.t - DV_WINDOW_S) j++;
-    const [x1, y1, z1] = pick(r);
-    const [x0, y0, z0] = pick(rows[j]!);
-    best = Math.max(best, norm(x1 - x0, y1 - y0, z1 - z0));
+  const index = {} as Record<keyof ImuRow, number>;
+  const missing: string[] = [];
+  for (const [key, names] of Object.entries(COLUMNS) as [keyof ImuRow, string[]][]) {
+    index[key] = header.findIndex((h) => names.includes(h));
+    if (index[key] < 0) missing.push(names.join('|'));
   }
-  return best;
+  if (missing.length) throw new Error(`CSV 에 열이 없어요: ${missing.join(', ')}`);
+  const runIndex = header.indexOf('run_id');
+  const scenarioIndex = header.indexOf('scenario_id');
+
+  const runs = new Map<string | null, ImuRow[]>();
+  lines.slice(1).forEach((line, n) => {
+    const cells = line.split(',');
+    const row = {} as ImuRow;
+    for (const key of Object.keys(COLUMNS) as (keyof ImuRow)[]) {
+      const cell = cells[index[key]]?.trim() ?? '';
+      const v = cell === '' || cell.toLowerCase() === 'nan' ? NaN : Number(cell);
+      if (!Number.isFinite(v) && !(key === 'dv150' && Number.isNaN(v))) throw new Error(`${n + 2}행 ${COLUMNS[key][0]} 값이 숫자가 아니에요: ${cell}`);
+      row[key] = v;
+    }
+    const run = runIndex < 0 ? null : [cells[scenarioIndex], cells[runIndex]].filter(Boolean).join(':');
+    const rows = runs.get(run) ?? [];
+    if (rows.length && row.t <= rows.at(-1)!.t) throw new Error(`${n + 2}행 시간이 줄었어요 (${run ?? ''} t=${row.t})`);
+    rows.push(row);
+    runs.set(run, rows);
+  });
+  return runs;
 }
 
-export function indicatorsFromSim(rows: SimRow[]): Indicator[] {
-  if (rows.length < 2) throw new Error('표본이 너무 적어요.');
-  const end = rows.at(-1)!;
-  const settled = rows.filter((r) => r.t >= SETTLE_S);
-  const lastSecond = rows.filter((r) => r.t >= end.t - 1).map((r) => norm(r.ax, r.ay, r.az));
-  const mean = lastSecond.reduce((a, b) => a + b, 0) / lastSecond.length;
-  const std = Math.sqrt(lastSecond.reduce((a, b) => a + (b - mean) ** 2, 0) / lastSecond.length);
+/** 팀 telemetry.py 의 quiet 정의와 같다 */
+const isQuiet = (r: ImuRow) => Math.abs(r.accG - 1) < 0.15 && r.gyroDps < 30;
 
-  const ok = (key: string, value: number, unit: string): Indicator => ({ key, value, unit, state: 'ok', sqi: null, t: end.t });
+/** 3g 이상 이벤트마다 보고 하나. 3g 를 한 번도 넘지 않은 실행은 보낼 것이 없다. */
+export function reportsFromImu(rows: ImuRow[]): SimReport[] {
+  const settled = rows.filter((r) => r.t >= WARMUP_S);
+  const peaks: ImuRow[] = [];
+  let last = -Infinity;
+  for (const r of settled) {
+    if (r.accG < WAKE_G) continue;
+    if (r.t - last > CLOSE_GAP_S) peaks.push(r);
+    else if (r.accG > peaks.at(-1)!.accG) peaks[peaks.length - 1] = r;
+    last = r.t;
+  }
+  return peaks.map((peak) => ({ tPeak: peak.t, indicators: indicatorsAt(rows, settled, peak) }));
+}
+
+function indicatorsAt(rows: ImuRow[], settled: ImuRow[], peak: ImuRow): Indicator[] {
+  const window = settled.filter((r) => Math.abs(r.t - peak.t) <= WINDOW_S);
+  const dvs = window.map((r) => r.dv150).filter((v) => !Number.isNaN(v));
+
+  // 보고 시각까지 관찰한 무동작. 기록이 그 전에 끝나면 끝까지의 값을 품질 미달로 보낸다 — 이어서 가만히 있었을지는 모른다.
+  const reportAt = peak.t + OBSERVE_S;
+  const observed = rows.filter((r) => r.t <= reportAt);
+  const end = observed.at(-1)!;
+  let quietSince: number | null = null;
+  for (const r of observed) quietSince = isQuiet(r) ? (quietSince ?? r.t) : null;
+  const complete = rows.at(-1)!.t >= reportAt;
+
+  const at = end.t;
+  const ok = (key: string, value: number, unit: string): Indicator => ({ key, value, unit, state: 'ok', sqi: null, t: at });
   return [
-    ok('delta_v', maxDeltaV(rows, (r) => [r.vx, r.vy, r.vz]), 'm/s'),
-    ok('delta_v_com', maxDeltaV(rows, (r) => [r.com_vx, r.com_vy, r.com_vz]), 'm/s'),
-    ok('peak_g', Math.max(...settled.map((r) => norm(r.ax, r.ay, r.az))) / G, 'g'),
-    ok('peak_gyro', Math.max(...settled.map((r) => norm(r.gx, r.gy, r.gz))), 'rad/s'),
-    ok('tilt_deg', end.tilt_deg, 'deg'),
-    ok('speed', norm(end.vx, end.vy, end.vz), 'm/s'),
-    ok('accel_var_1s', std, 'm/s^2'),
+    ok('peak_g', peak.accG, 'g'),
+    ok('peak_gyro', Math.max(...window.map((r) => r.gyroDps)), 'deg/s'),
+    dvs.length ? ok('delta_v150', Math.max(...dvs), 'm/s') : { key: 'delta_v150', value: null, unit: 'm/s', state: 'low_quality', sqi: null, t: at },
+    ok('bank_deg', Math.max(...window.map((r) => Math.abs(r.bankDeg))), 'deg'),
+    { ...ok('quiet_s', quietSince == null ? 0 : end.t - quietSince, 's'), state: complete ? 'ok' : 'low_quality' },
   ];
 }

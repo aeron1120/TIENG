@@ -46,8 +46,8 @@
 <script>
   const $ = (id) => document.getElementById(id);
   const STATUS = { escalated: '접수 대기', reviewing: '확인 중', resolved: '종료' };
-  const DECISION = { alarm: '경보', alarm_unverified: '경보 (무동작 확인 불가)', reject: '기각', undetermined: '판정 불가' };
-  const RULE = { impact: '충격 (ΔV)', fall_posture: '전도 (몸통 기울기)', post_still: '사후 무동작' };
+  const DECISION = { alarm: '경보', alarm_unverified: '경보 (보조 조건·무동작 확인 불가)', reject: '기각', undetermined: '판정 불가' };
+  const RULE = { impact: '충격 (헬멧 가속도)', support: '보조 (각속도·ΔV·헬멧 기울기)', post_still: '사후 무동작' };
   const fmt = (v) => (v == null ? '—' : Number(v).toFixed(2));
 
   /** 지표 판정으로 열린 사고의 근거 — 어떤 규칙이 어떤 실측값으로 발동했는지 (설계문서 5장) */

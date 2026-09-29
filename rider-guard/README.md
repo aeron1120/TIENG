@@ -80,30 +80,34 @@ SNS 로그인은 서버가 인가 코드를 받는 방식이다 — 앱이 시�
 
 ## 지표 백엔드 연결
 
-지표를 계산하는 쪽(지금은 MuJoCo 시뮬레이션, 나중에는 태그·moto-sensing)은 **지표만 보내면** 된다. 판정·기록·경보·에스컬레이션은 이 서버가 한다.
+지표를 계산하는 쪽(지금은 헬멧 IMU MuJoCo 시뮬레이션, 나중에는 헬멧 태그)은 **지표만 보내면** 된다. 판정·기록·경보·에스컬레이션은 이 서버가 한다.
 
 1. 한 번만: `POST /device-api/register {"name":"…","kind":"tag"}` → 받은 페어링 코드를 앱 설정의 '기기 연결'에 입력
-2. 매번: `POST /device-api/indicators` (헤더 `Authorization: Device <deviceToken>`)
+2. 헬멧 합성 가속도가 3g 를 넘는 이벤트마다, 가장 큰 충격 시각(t_p) 30초 뒤에: `POST /device-api/indicators` (헤더 `Authorization: Device <deviceToken>`)
 
 ```json
 {
   "indicators": [
-    { "key": "delta_v",      "value": 7.4,  "unit": "m/s",   "state": "ok", "sqi": null, "t": 4.0 },
-    { "key": "tilt_deg",     "value": 84,   "unit": "deg",   "state": "ok", "sqi": null, "t": 4.0 },
-    { "key": "speed",        "value": 0.1,  "unit": "m/s",   "state": "ok", "sqi": null, "t": 4.0 },
-    { "key": "accel_var_1s", "value": 0.04, "unit": "m/s^2", "state": "ok", "sqi": null, "t": 4.0 }
+    { "key": "peak_g",     "value": 23.4, "unit": "g",     "state": "ok", "sqi": null, "t": 31.5 },
+    { "key": "peak_gyro",  "value": 1366, "unit": "deg/s", "state": "ok", "sqi": null, "t": 31.5 },
+    { "key": "delta_v150", "value": 3.92, "unit": "m/s",   "state": "ok", "sqi": null, "t": 31.5 },
+    { "key": "bank_deg",   "value": 88,   "unit": "deg",   "state": "ok", "sqi": null, "t": 31.5 },
+    { "key": "quiet_s",    "value": 27.8, "unit": "s",     "state": "ok", "sqi": null, "t": 31.5 }
   ],
   "mode": "live",
+  "detectedAt": "2026-09-29T22:14:03.120+09:00",
   "reportId": "세션id:이벤트id",
-  "producer": "tag-v1"
+  "producer": "helmet-tag-v1"
 }
 ```
 
+- 지표 정의와 보내는 순서는 `packages/contract` 의 '보내는 쪽 규약'이 기준이다. `peak_g` 는 t_p 의 값, 나머지 셋은 t_p 앞뒤 0.5초 안의 최대값 — 기록 전체의 최대값이 아니다. `quiet_s` 는 보고 시각까지 |가속도−1g| < 0.15g, 각속도 < 30°/s 가 이어진 시간.
+- 판정: 사고 후보 = 충격(`peak_g` ≥ 4g) AND (`peak_gyro` ≥ 600°/s OR `delta_v150` ≥ 3 m/s OR `bank_deg` ≥ 75°) → 사후 무동작(`quiet_s` ≥ 20초) → 경보. 후보 규칙은 헬멧 IMU 실험(2026-09-28, 시뮬레이션 337회)이 고른 값이고, 무동작 20초는 아직 어떤 데이터로도 맞추지 않았다. 실측이 0건이라 `.env` 로 바꾼다.
+- 후보 뒤 움직이면 기각. 보조 조건이나 무동작을 못 재면(값 없음·품질 미달·단위 다름) 놓치지 않도록 경보(`alarm_unverified`). `peak_g` 가 없으면 판정 불가.
+- 값이 없으면 `value: null` + `state: "low_quality"` 로 보낸다. 0 으로 메우면 가만히 있는 것으로 읽힌다. 단위가 다르면 판정에 쓰지 않는다 (각속도를 rad/s 로 보내면 걸러진다).
 - 지표 한 칸의 모양은 moto-sensing `core/schemas.py` 의 `Indicator` 와 같다. moto-sensing `Snapshot` 을 그대로 보내도 읽힌다.
-- 판정 (설계문서 5.1): 충격(`delta_v` ≥ 3.33 m/s) 또는 전도(`tilt_deg` ≥ 60°) → 사후 무동작(`speed` ≤ 0.83 m/s, `accel_var_1s` ≤ 0.3) → 경보. 충격 뒤 움직이면 기각, 무동작을 못 재면(값 없음·품질 미달) 놓치지 않도록 경보. 임계값은 전부 추정치라 `.env` 로 바꾼다.
-- 값이 없으면 `value: null` + `state: "low_quality"` 로 보낸다. 0 으로 메우면 가만히 있는 것으로 읽힌다. 단위가 다르면 판정에 쓰지 않는다.
 - 응답에 판정(`alarm`/`alarm_unverified`/`reject`/`undetermined`)과 규칙별 실측값·임계값(`traces`)이 온다. `"dryRun": true` 면 판정만 받고 아무것도 남기지 않는다.
-- 판정은 경보가 아니어도 전부 기록된다 (`GET /ops/api/judgments`). 사고를 연 판정의 근거는 관제 콘솔 사고 상세에 보인다.
+- 판정은 경보가 아니어도 전부 기록된다 (`GET /ops/api/judgments`). 3g 에서 보내게 한 건 4g 근처에서 기각된 정상 충격(연석 등)도 여기 남기려는 것이다. 사고를 연 판정의 근거는 관제 콘솔 사고 상세에 보인다.
 - `mode` 가 `simulated`/`replay` 면 개발 서버에서는 테스트 사고로 열리고, 운영 서버에서는 기록만 한다. `DETECTION_ENABLED=false`(Phase 1)면 경보여도 기록만 한다.
 - 태그 → 휴대폰 → 서버 경로는 같은 본문을 `POST /me/indicators` (라이더 토큰)로 보낸다.
 
@@ -111,11 +115,14 @@ SNS 로그인은 서버가 인가 코드를 받는 방식이다 — 앱이 시�
 
 ```bash
 cd apps/server
-npm run sim -- ../../../results/1_lowside.csv ../../../results/2_frontal.csv --dry-run   # 판정만
-npm run sim -- ../../../results/2_frontal.csv                                           # 페어링 후 실제 경보까지
+npm run sim -- <pcx125_helmet>/results_telemetry_validation/result_helmet.csv --dry-run   # 팀 telemetry.py 출력, 판정만
+npm run sim -- <발표 자료>/data/runs/*/nominal_200hz.csv.gz --dry-run --brief              # 센서 프로파일 전체
+npm run sim -- <발표 자료>/data/runs/A1_v00/nominal_200hz.csv.gz                          # 페어링 후 실제 경보까지
 ```
 
-`results/*.csv` 의 열(t, ax…gz, vx…vz, com_v*, tilt_deg)에서 실행보고서 5절 정의대로 지표를 계산해 보낸다 (`scripts/sim-indicators.ts`).
+IMU 로 계산한 열(`imu_acc_norm_g`… 또는 `acc_norm_g`…)만 읽는다. 태그 실제 속도 같은 시뮬레이터 참조값은 탐지 입력이 아니다 (`scripts/sim-indicators.ts`).
+시뮬레이션은 수 초에서 끝나 30초 무동작을 끝까지 볼 수 없으므로 사고 후보는 `alarm_unverified` 로 나온다 — 앞 단계만 실험과 비교된다.
+기본 조건 29개 원시 실행에 팀 `telemetry.py`(같은 임계값)와 이 서버를 나란히 돌리면 사고 후보 여부가 29/29 같다.
 
 ## 설계문서 → 구현
 
@@ -172,7 +179,7 @@ npm run sim -- ../../../results/2_frontal.csv                                   
 ## 검사
 
 ```bash
-cd apps/server && npm test && npm run typecheck && npm run lint   # 가입·SNS·에스컬레이션·권한·기기·지표 판정·관제 콘솔 65개
+cd apps/server && npm test && npm run typecheck && npm run lint   # 가입·SNS·에스컬레이션·권한·기기·지표 판정·관제 콘솔 73개
 cd apps/rider && npm run typecheck && npm run lint
 ```
 
@@ -184,6 +191,6 @@ cd apps/rider && npm run typecheck && npm run lint
 - 탈퇴 시 네이버·구글 연동 해제 — 사용자 토큰을 보관하지 않아 서버에서 끊을 수 없다. 사용자가 각 계정 설정에서 끊는다
 - 로그인·가입 요청 수 제한(IP 단위) — 배포할 때 프록시에서
 - 경보음(진동만 구현), QR 스캔(코드 입력으로 대체), 사고기록 PDF(지금은 글로 공유), 알림 목록 화면, 설정 화면 디자인
-- 실제 시뮬레이션 결과로 임계값 확정 (지금 값은 설계문서·moto-sensing 설정에서 가져온 추정치)
+- 실측으로 임계값 확정 (사고 후보 값은 헬멧 IMU 시뮬레이션에서만 골랐고, 무동작 20초는 아직 근거 데이터가 없다). 벗어서 떨어뜨린 헬멧은 "충격 뒤 무동작"으로 경보가 확정된다
 - 신체 착용 태그의 BLE 연동, 근접 사고 자가 보고(8.3), 음성·회복 신호(5.4, 6.3.5), 개인화 임계값
 - 위치정보사업 신고 등 법적 절차(9.1) — 운영 전 필수

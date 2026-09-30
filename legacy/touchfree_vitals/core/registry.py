@@ -20,7 +20,17 @@ from pydantic import BaseModel, Field
 
 from actuators.base import Actuator
 from api.schemas import Metric, Mode, State
-from core.adapters.base import PreviewSource, SensorAdapter
+from core.adapters.base import (
+    FrameConsumer,
+    FrameSource,
+    Pausable,
+    PreviewSource,
+    Releasable,
+    SensorAdapter,
+    SubjectAware,
+)
+from core.mode import MODES
+from core.mode import Mode as RunMode
 from core.overrides import Overrides
 from core.policy.base import InterventionPolicy
 from core.thresholds import Thresholds
@@ -31,9 +41,10 @@ log = structlog.get_logger(__name__)
 T = TypeVar("T")
 
 # backend 를 고를 수 있는 어댑터. 모듈로 찾는 이유는 id 가 config 마다 다르기
-# 때문이다 (device.mock.yaml 에는 아예 없다).
-CAMERA_MODULE = "core.adapters.rppg"
-# 이 어댑터의 기본값과 같아야 한다. registry 가 rppg 를 import 하면 개발 PC 에서도
+# 때문이다 (device.mock.yaml 에는 아예 없다). 카메라를 여는 것은 rppg 가 아니라
+# 카메라 소유 어댑터다 — rppg 와 drowsiness 는 거기서 프레임을 받아 간다.
+CAMERA_MODULE = "core.adapters.camera"
+# 이 어댑터의 기본값과 같아야 한다. registry 가 camera 를 import 하면 개발 PC 에서도
 # cv2 가 딸려 오므로 (importlib 로 늦게 여는 이유가 그것이다) 값만 옮겨 적는다.
 DEFAULT_CAMERA_BACKEND = "opencv"
 
@@ -45,6 +56,8 @@ class AdapterEntry(BaseModel):
     # 모듈이 아직 없거나 import 가 깨진 어댑터의 카드 자리를 예약한다.
     # 모듈이 정상 로드되면 어댑터 클래스의 provides 가 이 값을 대체한다.
     provides: list[str] = Field(default_factory=list)
+    # 이 어댑터가 도는 모드. 비우면 항상 돈다 (core/mode.py).
+    modes: list[str] = Field(default_factory=list)
     params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -78,6 +91,8 @@ class Registry:
         self.actuators: dict[str, Actuator] = {}
         self.policies: list[InterventionPolicy] = []
         self.thresholds: Thresholds | None = None
+        self.mode: RunMode = "vitals"
+        self.subject = ""  # 측정 대상. 비우면 기기 공용 기준선을 쓴다
         self._adapters: dict[str, SensorAdapter] = {}
         self._provides: dict[str, list[str]] = {}
         # 왜 못 올라왔는지. 화면에서 바로 읽을 수 있어야 배선을 고칠 수 있다.
@@ -99,6 +114,9 @@ class Registry:
 
     async def start(self) -> None:
         await self._start_adapters()
+        self._wire_frames()
+        self.apply_subject(self.subject)
+        self.apply_mode(self.mode)
         await self._start_actuators()
         self._build_policies()
 
@@ -127,6 +145,8 @@ class Registry:
                     log.warning("adapter.stop_failed", adapter=adapter_id, error=str(exc))
             self._failures.pop(adapter_id, None)
             await self._start_one(entry)
+            # 프레임을 받아 가던 어댑터는 아직 옛 카메라를 쥐고 있다. 새 것으로 다시 붙인다.
+            self._wire_frames()
 
     async def stop(self) -> None:
         for adapter in self._adapters.values():
@@ -187,6 +207,7 @@ class Registry:
                     adapter_entry.id, list(adapter_entry.provides)
                 ),
                 "state": state,
+                "modes": list(adapter_entry.modes),
                 "detail": self._failures.get(adapter_entry.id, ""),
             })
 
@@ -226,6 +247,8 @@ class Registry:
 
         return {
             "device_id": self.config.device_id,
+            "mode": self.mode,
+            "subject": self.subject,
             "sample_rate_hz": self.config.sample_rate_hz,
             "thresholds_path": self.config.thresholds,
             "thresholds": thresholds,
@@ -236,6 +259,51 @@ class Registry:
             "actuators": actuators,
             "policies": policies,
         }
+
+    def apply_subject(self, subject: str) -> None:
+        """측정 대상을 알린다. 개인 기준선을 쓰는 어댑터만 반응한다."""
+        self.subject = subject
+        for adapter in self._adapters.values():
+            if isinstance(adapter, SubjectAware):
+                adapter.set_subject(subject)
+
+    def apply_mode(self, mode: RunMode) -> None:
+        """모드에 맞춰 어댑터를 쉬게 하거나 깨운다.
+
+        어느 어댑터가 어느 모드에서 도는지는 config 가 정한다 — 코드에 박아 두면
+        모드를 하나 늘릴 때마다 여기를 고쳐야 한다 (README §0-5).
+        """
+        if mode not in MODES:
+            raise ValueError(f"모르는 모드다: {mode!r}")
+        self.mode = mode
+        for entry in self.config.adapters:
+            adapter = self._adapters.get(entry.id)
+            if not isinstance(adapter, Pausable):
+                continue
+            adapter.set_active(not entry.modes or mode in entry.modes)
+
+    async def set_watched(self, watched: bool) -> None:
+        """보는 사람이 있는지 알린다.
+
+        놓을 수 있는 장치(Releasable)는 아무도 안 볼 때 놓는다. 화면을 닫았는데
+        카메라 LED 가 남아 있으면, 그 기기는 무엇을 하고 있는지 모르는 기기가 된다.
+
+        놓는 동안 그 장치를 쓰는 지표는 멈춘다 — 카메라가 없으면 심박도 졸음도
+        나오지 않는다. 이 맞바꿈은 부르는 쪽(api/ws.py 의 구독자 수)이 정한다.
+
+        여기서 실패해도 올려 보내지 않는다. 카메라를 못 열었다고 해서 화면 연결이
+        끊기면, 정작 무엇이 잘못됐는지 볼 방법이 사라진다.
+        """
+        for adapter in self._adapters.values():
+            if not isinstance(adapter, Releasable):
+                continue
+            try:
+                await (adapter.acquire() if watched else adapter.release())
+            except Exception as exc:
+                log.warning(
+                    "adapter.watch_failed",
+                    adapter=adapter.id, watched=watched, error=str(exc),
+                )
 
     # --- 카메라 백엔드 ------------------------------------------------------- #
     # CSI 리본이 안 열릴 때 화면에서 opencv 로 바꿔 볼 수 있어야 한다. 파이에 ssh 로
@@ -272,6 +340,32 @@ class Registry:
         }
 
     # --- 로딩 --------------------------------------------------------------- #
+
+    def _wire_frames(self) -> None:
+        """프레임을 받아 도는 어댑터에 공급자를 붙인다.
+
+        어댑터끼리 서로를 찾지 못하게 하는 규칙(README §0-2)을 지키려고 여기서 한다.
+        공급자를 못 찾아도 세우지 않는다 — 카드가 값 없이 뜨고 사유가 화면에 실린다.
+        어느 하나가 죽어도 나머지는 돈다는 규칙과 같다 (README §0-3).
+        """
+        for entry in self.config.adapters:
+            consumer = self._adapters.get(entry.id)
+            if not isinstance(consumer, FrameConsumer):
+                continue
+            source = self._adapters.get(consumer.source_id)
+            if isinstance(source, FrameSource):
+                consumer.attach_frames(source)
+                self._failures.pop(entry.id, None)  # 공급자가 다시 생겼으면 지난 사유는 지운다
+                log.info("adapter.frames_attached", adapter=entry.id, source=consumer.source_id)
+                continue
+            consumer.attach_frames(None)
+            why = (
+                f"프레임 공급자 {consumer.source_id!r} 가 없다"
+                if source is None
+                else f"{consumer.source_id!r} 는 프레임을 내보내지 않는다"
+            )
+            self._failures[entry.id] = why
+            log.warning("adapter.frames_missing", adapter=entry.id, source=consumer.source_id)
 
     async def _start_adapters(self) -> None:
         for entry in self.config.adapters:

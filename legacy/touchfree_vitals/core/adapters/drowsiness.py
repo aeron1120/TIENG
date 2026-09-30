@@ -1,0 +1,736 @@
+"""눈꺼풀 기반 졸음 조기 경보 어댑터.
+
+목표는 "졸고 있다"가 아니라 **졸음 직전**을 잡는 것이다. 그래서 지표 선택이
+흔한 구성과 다르다.
+
+카메라를 직접 열지 않는다. rPPG 어댑터가 이미 잡고 있는 프레임을 FrameSource 로
+받아 쓴다 (core/adapters/base.py). 같은 장치를 두 번 열면 Windows 에서는 실패하고,
+Linux 에서 열리더라도 두 스트림이 노출을 서로 흔들어 심박까지 나빠진다.
+
+세 채널을 가중 합산한다.
+
+    재개안 지연  눈을 다시 뜨는 데 걸리는 시간. 가장 이른 신호다 — 졸릴 때
+                 느려지는 것은 감는 동작이 아니라 뜨는 동작이라고 보고돼 있다.
+    깜빡임 지속  같은 상위군. 감고 있는 시간이 길어진다.
+    PERCLOS      눈이 80% 이상 감겨 있던 시간 비율. 가장 널리 검증됐지만 **후행
+                 지표**다. 리뷰가 "detects fatigue too late, fails to detect
+                 participants that are drowsy with eyes wide open" 이라고 적는다.
+                 그래서 무게를 낮추고 혼자서는 경고를 못 내게 했다.
+
+앞의 두 채널은 절대 임계가 아니라 **그 사람의 평소 대비 증가율**로 본다. 개인차가
+크다는 것이 문헌의 공통 지적이고, 실측에서도 같은 사람의 깜빡임이 194~465ms 로
+흔들렸다. 그래서 처음 baseline_s 동안을 각성 상태로 보고 기준선을 만든다.
+
+동공(PUI/IPA)은 여기 없다. 동공은 홍채와의 **밝기 차이**로 경계를 찾아야 하는데
+짙은 갈색 홍채는 가시광에서 그 차이가 거의 없다. 850nm 적외선 조명이 있어야 눈
+색깔과 무관하게 대비가 생긴다. 하드웨어가 오면 별도 어댑터로 붙인다.
+
+읽는 주기(1Hz)와 보는 주기가 다르다는 점이 중요하다. 눈깜빡임은 100~400ms 라
+1초에 한 번 프레임을 보면 통째로 놓친다. 그래서 rPPG 와 같은 구조를 쓴다 —
+전용 스레드가 프레임을 계속 보며 통계를 쌓고, read() 는 그 통계를 집어 갈 뿐이다.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import threading
+import time
+from collections import deque
+from pathlib import Path
+from typing import Any
+
+import cv2
+import numpy as np
+import structlog
+
+from api.schemas import Metric, Mode, State, server_now
+from core import drowsy_baseline
+from core import tuning as tuning_mod
+from core.adapters.base import FrameSource, OverlayTarget, SensorAdapter
+
+log = structlog.get_logger(__name__)
+
+# 모델 경로는 cwd 가 아니라 저장소 기준이다. 서버를 어디서 띄우든 같은 파일을 봐야
+# 한다 — 기기 설정이 아니라 코드에 딸린 자산이기 때문이다 (api/main.py 의 WEB_DIST 와 같다).
+_ROOT = Path(__file__).resolve().parents[2]
+
+POLL_HZ = 60.0  # 프레임 폴링. 공급자의 실제 fps 보다 넉넉히 잡고 중복은 버린다
+FACE_DETECT_SEC = 0.2  # 매 프레임 검출은 Pi 에서 FPS 를 깎는다
+FACE_RETRY_SEC = 0.1  # 놓친 동안에는 더 자주 다시 찾는다
+# 못 찾은 채 이만큼 지나야 "얼굴이 없다"로 본다. 검출이 실패한 것과 사람이 나간
+# 것은 다르고, 그때마다 상자를 버리면 표본이 거의 안 쌓인다.
+FACE_LOST_SEC = 2.0
+
+# PERCLOS 의 정의가 "80% 이상 감김"이라 P80 이라 부른다.
+CLOSED_FRAC = 0.80
+# 감김도를 뜬 상태와 감은 상태 **사이**로 정규화한다. 개안도 원값은 "눈 상자 안
+# 어두운 덩어리의 높이 비율"이라 완전히 감아도 0 이 되지 않는다 — 속눈썹과 주름이
+# 남기 때문이다. 실측에서 뜬 상태만 기준으로 삼으면 감김도가 최대 0.607 까지밖에
+# 안 올라 P80 에 영원히 못 닿았다 (PERCLOS 가 늘 0%).
+#
+# 분위수·임계는 렌즈와 프레임률에 좌우되므로 tuning/ 으로 뺐다 (core/tuning.py).
+
+# --- 개인 기준선 ---------------------------------------------------------- #
+# 문헌이 공통으로 지적하는 것이 개인차가 크다는 점이다. 실제로 같은 사람에게서도
+# 깜빡임이 194~465ms 로 흔들렸다. 절대 임계(400ms 등)로는 누구는 늘 졸린 사람이
+# 되고 누구는 영영 안 걸린다. 그래서 "평소의 그 사람" 대비로 본다.
+#
+# 대비를 **증가율이 아니라 표준편차 배수(z)** 로 잰다. 채널마다 평소 흔들리는 폭이
+# 다르기 때문이다 — 재개안이 평소 ±10% 흔들리고 빈도가 ±50% 흔들린다면 같은
+# "+30%" 가 두 채널에서 전혀 다른 뜻이다. 실측에서 빈도가 21 -> 48/분 으로 튀며
+# 점수를 밀어 올린 것이 정확히 이 문제였다.
+#
+# 부수 효과로 채널마다 손으로 정하던 상수 넷이 Z_FULL 하나로 준다. 가중치가
+# 그제서야 "중요도"만 뜻하게 된다 — 예전에는 RISE 상수와 가중치가 뒤섞여 있어
+# 하나를 조정하면 두 손잡이를 같이 돌리는 셈이었다.
+BASELINE_MIN_SAMPLES = 20  # 창이 찬 뒤 이만큼은 봐야 흔들림을 안다 (read 는 1Hz)
+
+# 채널 가중과 판정 임계도 tuning/ 에 있다. 조기 경보가 목적이라 PERCLOS 를 주력에서
+# 내렸다 — 리뷰가 "detects fatigue too late, fails to detect participants that are
+# drowsy with eyes wide open" 이라고 적는다. 대신 눈꺼풀 운동의 질을 본다.
+#
+# 카메라가 바뀌면 어느 채널이 믿을 만한지도 바뀌므로 코드가 아니라 프로파일이
+# 정한다 — 안경 근접 카메라에는 얼굴이 없어 head 가 0 이 되는 식이다.
+
+# --- 추세 ----------------------------------------------------------------- #
+# 조기 경보에서는 "지금 높다"보다 "빠르게 오르고 있다"가 더 쓸모 있을 때가 많다.
+# 문헌에도 주행 시간의 누적 효과를 넣은 모델이 나온다 — 같은 값이라도 오래 몰수록
+# 위험하다. 여기서는 점수의 기울기를 따로 내보내고, 판정이 그것도 같이 본다.
+TREND_WINDOW_S = 180.0
+TREND_MIN_SAMPLES = 20
+TREND_WARN = 6.0  # 분당 이만큼 오르면 아직 임계 아래여도 주의로 본다
+
+# 미리보기에 눈 상자를 그릴 색 (BGR). rPPG 의 볼 ROI 가 금색(따뜻한 색)이라
+# 대비되도록 청록으로 둔다 — 같은 화면에 있으면 어느 쪽이 무엇인지 바로 갈려야 한다.
+EYE_BOX_COLOR = (200, 190, 90)
+
+
+class DrowsinessAdapter(SensorAdapter):
+    provides = [
+        "drowsy_score",
+        "drowsy_trend",
+        "reopen_ms",
+        "blink_dur",
+        "blink_rate",
+        "head_drop",
+        "perclos",
+        "drowsiness",
+    ]
+
+    def __init__(
+        self,
+        id: str,
+        mode: Mode,
+        *,
+        source: str = "rppg",
+        model: str = "models/face_detection_yunet_2023mar.onnx",
+        tuning: str = str(tuning_mod.DEFAULT_PATH),
+        baseline_path: str = str(drowsy_baseline.DEFAULT_PATH),
+    ) -> None:
+        super().__init__(id, mode)
+        # FrameConsumer 계약. registry 가 이 이름으로 공급자를 찾아 붙여 준다.
+        self.source_id = source
+        self.model_path = Path(model)
+        # 카메라마다 다른 숫자는 전부 여기서 온다 (core/tuning.py). 코드에 박아 두면
+        # 카메라를 바꿀 때마다 소스를 고치게 되고, 어느 값으로 잰 결과인지도 안 남는다.
+        self.tuning_path = Path(tuning)
+        self._t = tuning_mod.load(
+            self.tuning_path if self.tuning_path.is_absolute() else _ROOT / self.tuning_path
+        )
+        self.window_s = self._t.window_s
+        self.baseline_s = self._t.baseline_s
+        self.baseline_path = Path(baseline_path)
+        # 측정 대상. registry 가 config 밖(state/mode.json)에서 받아 넣어 준다.
+        self.subject = ""
+
+        self._frames: FrameSource | None = None
+        self._overlay: OverlayTarget | None = None
+        self._attached = False
+        self._detector: Any = None
+        self._input_size: tuple[int, int] | None = None
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+
+        # 아래는 전부 _lock 으로 보호한다. 워커가 쓰고 read() 가 읽는다.
+        self._closures: deque[tuple[float, float]] = deque()
+        self._opens: deque[float] = deque(maxlen=1800)
+        # 뜬/감은 기준값 (hi, 폭). 한 번 잡으면 들고 있는다 — 아래 설명 참고.
+        self._closure_ref: tuple[float, float] | None = None
+        self._seen: deque[tuple[float, bool]] = deque()  # (시각, 눈을 봤나)
+        self._blinks: deque[tuple[float, float, float]] = deque()  # (끝시각, 지속 s, 재개안 s)
+        # 기준선. 채널 이름 -> (평균, 표준편차). 완성 전에는 None 이고 그동안
+        # _base_stats 에 표본을 모은다. **창이 찬 뒤의 값만** 모은다 — 덜 찬 창의
+        # 값은 원래 흔들려서, 그걸 평소 흔들림으로 잡으면 기준이 너무 헐거워진다.
+        self._base: dict[str, tuple[float, float]] | None = None
+        self._base_stats: dict[str, list[float]] = {}
+        self._base_until: float | None = None
+        # 지난 주행에서 쌓아 둔 기준선. 세션 표본과 합쳐 쓴다.
+        self._saved = drowsy_baseline.Baseline()
+        self._session: dict[str, list[float]] = {}
+        # 머리 자세 (시각, pitch). 눈꺼풀과 무관한 유일한 채널이다.
+        self._poses: deque[tuple[float, float]] = deque()
+        # 점수 이력. 추세(기울기)를 내려고 들고 있는다.
+        self._scores: deque[tuple[float, float]] = deque()
+        # 표본을 모으기 시작한 시각. 진행률을 버퍼의 앞뒤 간격으로 재면 안 된다 —
+        # 창 밖 표본을 버리는 이상 그 간격은 창 길이에 영원히 못 닿고, 진행률이
+        # 0.999 에서 멈춰 값이 끝내 안 나온다.
+        self._since: float | None = None
+        self._fault: str | None = None
+        # 지금 값을 내고 있는가. 게이트 히스테리시스용이라 read() 만 만진다.
+        self._producing = False
+
+    # --- SubjectAware ------------------------------------------------------ #
+
+    def set_subject(self, subject: str) -> None:
+        """측정 대상이 바뀌면 기준선을 갈아 끼운다. 남의 평소로 재면 안 재느니만 못하다."""
+        if subject == self.subject:
+            return
+        self.subject = subject
+        self._load_saved()
+        with self._lock:
+            self._base = None
+            self._base_stats.clear()
+            self._base_until = None
+            self._session.clear()
+            self._scores.clear()
+
+    def _key(self) -> str:
+        return self.subject or f"device:{self.id}"
+
+    def _store_path(self) -> Path:
+        p = self.baseline_path
+        return p if p.is_absolute() else _ROOT / p
+
+    def _load_saved(self) -> None:
+        store = drowsy_baseline.load(self._store_path())
+        self._saved = store.adapters.get(self._key(), drowsy_baseline.Baseline())
+        log.info(
+            "drowsiness.baseline_loaded",
+            adapter=self.id,
+            subject=self._key(),
+            sessions=self._saved.sessions,
+            ready=self._saved.ready(),
+        )
+
+    def _persist(self) -> None:
+        """이번 세션 표본을 누적분에 더해 남긴다. 블로킹 I/O 라 호출자가 스레드로 뺀다."""
+        path = self._store_path()
+        store = drowsy_baseline.load(path)
+        saved = store.adapters.setdefault(self._key(), drowsy_baseline.Baseline())
+        for key, values in self._session.items():
+            for value in values:
+                saved.add(key, value)
+        saved.sessions += 1
+        drowsy_baseline.save(store, path)
+        log.info(
+            "drowsiness.baseline_saved",
+            adapter=self.id,
+            subject=self._key(),
+            sessions=saved.sessions,
+            samples={k: c.n for k, c in saved.channels.items()},
+        )
+
+    # --- FrameConsumer ------------------------------------------------------ #
+
+    def attach_frames(self, source: FrameSource | None) -> None:
+        self._frames = source
+        self._attached = source is not None
+        # 프레임을 준 쪽이 미리보기도 만든다면 눈 상자를 거기 얹는다. 못 얹어도
+        # 측정에는 아무 지장이 없으므로 조용히 넘어간다.
+        self._overlay = source if isinstance(source, OverlayTarget) else None
+
+    # --- 수명주기 ----------------------------------------------------------- #
+
+    async def start(self) -> None:
+        path = self.model_path if self.model_path.is_absolute() else _ROOT / self.model_path
+        if not path.exists():
+            raise RuntimeError(f"YuNet 모델이 없다: {path}")
+        # 입력 크기는 첫 프레임에서 setInputSize 로 다시 맞춘다.
+        self._detector = cv2.FaceDetectorYN.create(
+            str(path), "", (320, 320), self._t.geometry.yunet_score, self._t.geometry.yunet_nms
+        )
+
+        log.info(
+            "drowsiness.tuning",
+            adapter=self.id,
+            profile=self._t.name,
+            measured=self._t.measured,
+        )
+        if not self._t.measured:
+            # 실측으로 맞춘 적 없는 프로파일이다. 값은 나오지만 근거로 쓰면 안 된다.
+            log.warning("drowsiness.tuning_unmeasured", adapter=self.id, profile=self._t.name)
+        self._load_saved()
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._loop, name=f"drowsiness-{self.id}", daemon=True
+        )
+        self._thread.start()
+
+    async def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+        # 이번 주행분을 누적분에 더해 남긴다. 다음 주행은 이만큼 덜 기다린다.
+        if self._session:
+            try:
+                await asyncio.to_thread(self._persist)
+            except Exception as exc:  # 저장 실패로 종료를 막지 않는다
+                log.warning("drowsiness.baseline_save_failed", adapter=self.id, error=str(exc))
+
+    # --- 지표 --------------------------------------------------------------- #
+
+    async def read(self) -> list[Metric]:
+        now = time.monotonic()
+        with self._lock:
+            if self._fault is not None:
+                raise RuntimeError(self._fault)  # registry 가 state=error 로 강등한다
+            self._trim(now)
+            closures = [c for _, c in self._closures]
+            since = self._since
+            seen = [ok for _, ok in self._seen]
+            blinks = [(d, r) for _, d, r in self._blinks]
+            poses = [p for _, p in self._poses]
+            attached = self._attached
+
+        track = float(np.mean(seen)) if seen else 0.0
+        if not attached:
+            return self._blank("no_adapter", None, 0.0)
+        if not seen:
+            # 공급자는 붙었는데 프레임이 아직 없다. 카메라가 뜨는 중일 수 있다.
+            return self._blank("low_quality", 0.0, 0.0)
+
+        # 채널 원값. 여기서는 정규화하지 않는다 — 화면에 그대로 나가는 값이라
+        # ms 는 ms 로, 회/분은 회/분으로 읽혀야 한다.
+        raw: dict[str, float] = {}
+        if closures:
+            raw["perclos"] = float(np.mean([c >= CLOSED_FRAC for c in closures])) * 100.0
+        if blinks:
+            raw["blink_dur"] = float(np.mean([d for d, _ in blinks])) * 1000.0
+            raw["reopen_ms"] = float(np.mean([r for _, r in blinks])) * 1000.0
+        if self.window_s > 0:
+            raw["blink_rate"] = len(blinks) / self.window_s * 60.0
+        if poses:
+            raw["pitch"] = float(np.mean(poses))
+
+        base = self._feed_baseline(now, since, raw)
+        progress = self._progress(now, since, base is not None)
+
+        floor = self._t.track.keep_rate if self._producing else self._t.track.min_rate
+        if track < floor:
+            # 얼굴이나 눈이 안 잡힌다. 값을 지어내지 않는다 (README §0-4).
+            self._producing = False
+            return self._blank("low_quality", track, progress)
+        self._producing = True
+
+        # 기준선 없이 절대 임계로 재면 개인차가 그대로 오진이 된다 (BASELINE_S 주석).
+        if base is None:
+            return self._blank("low_quality", track, progress)
+
+        head_drop = None
+        if "pitch" in raw and "pitch" in base and abs(base["pitch"][0]) > 1e-6:
+            head_drop = max((base["pitch"][0] - raw["pitch"]) / abs(base["pitch"][0]), 0.0) * 100.0
+
+        score = self._score(raw, base)
+        with self._lock:
+            self._scores.append((now, score))
+            history = list(self._scores)
+        trend = _slope_per_min(history)
+
+        # 아직 임계 아래여도 빠르게 오르는 중이면 주의로 올린다. 조기 경보의 목적이
+        # "높다"를 알리는 게 아니라 "오르고 있다"를 먼저 알리는 것이기 때문이다.
+        rising = trend is not None and trend >= TREND_WARN
+        if score >= self._t.score.alert:
+            verdict = "drowsy"
+        elif score >= self._t.score.warn or (rising and score >= self._t.score.warn * 0.6):
+            verdict = "warning"
+        else:
+            verdict = "awake"
+
+        ok = "ok"
+        got = lambda k: raw.get(k)  # noqa: E731
+        blink_state: State = ok if "blink_dur" in raw else "low_quality"
+        return [
+            self._metric("drowsy_score", round(score, 1), None, ok, track, progress),
+            self._metric(
+                "drowsy_trend",
+                None if trend is None else round(trend, 2),
+                "/분",
+                ok if trend is not None else "low_quality",
+                track,
+                progress,
+            ),
+            self._metric("reopen_ms", got("reopen_ms"), "ms", blink_state, track, progress),
+            self._metric("blink_dur", got("blink_dur"), "ms", blink_state, track, progress),
+            self._metric("blink_rate", got("blink_rate"), "/분", ok, track, progress),
+            self._metric(
+                "head_drop", head_drop, "%",
+                ok if head_drop is not None else "low_quality", track, progress,
+            ),
+            self._metric("perclos", got("perclos"), "%", ok, track, progress),
+            self._metric("drowsiness", verdict, None, ok, track, progress),
+        ]
+
+    def _feed_baseline(
+        self, now: float, since: float | None, raw: dict[str, float]
+    ) -> dict[str, tuple[float, float]] | None:
+        """각성 구간의 채널 값을 모아 (평균, 표준편차) 를 만든다. 완성 전에는 None.
+
+        창이 찬 뒤의 값만 모은다. 덜 찬 창에서 나온 값은 원래 흔들려서, 그것까지
+        평소 흔들림으로 잡으면 기준이 헐거워져 나중에 아무것도 안 걸린다.
+        """
+        with self._lock:
+            if self._base is not None:
+                return self._base
+            if since is None:
+                return None
+            if self._base_until is None:
+                self._base_until = since + self.baseline_s
+            if (now - since) < self.window_s:
+                return None  # 창이 아직 덜 찼다
+
+            for key, value in raw.items():
+                self._base_stats.setdefault(key, []).append(value)
+
+            counted = min((len(v) for v in self._base_stats.values()), default=0)
+            # 지난 주행분이 충분하면 기다리지 않는다. 시동 걸고 90초를 기다리게
+            # 하는 것이 이 방식으로 바꾼 이유였다.
+            enough = self._saved.ready() or (
+                now >= self._base_until and counted >= BASELINE_MIN_SAMPLES
+            )
+            if not enough:
+                return None
+
+            self._session = {k: list(v) for k, v in self._base_stats.items()}
+            self._base = drowsy_baseline.merge(self._saved, self._session)
+            if not self._base:
+                return None
+            log.info(
+                "drowsiness.baseline",
+                adapter=self.id,
+                subject=self._key(),
+                session_samples=counted,
+                past_sessions=self._saved.sessions,
+                **{key: f"{m:.3g}±{sd:.2g}" for key, (m, sd) in self._base.items()},
+            )
+            return self._base
+
+    def _progress(self, now: float, since: float | None, base_ready: bool) -> float:
+        """관측 창과 기준선 학습 중 느린 쪽. 둘 다 끝나야 판정이 나온다."""
+        if self.window_s <= 0:
+            window = 1.0
+        elif since is None:
+            window = 0.0
+        else:
+            window = min((now - since) / self.window_s, 1.0)
+
+        if base_ready:
+            baseline = 1.0
+        elif self._base_until is None:
+            baseline = 0.0
+        else:
+            span = max(self.baseline_s, 1e-6)
+            # 0.99 에서 멈춘다. 기준선이 안 끝났는데 100% 로 보이면 "다 됐는데 왜
+            # 값이 없냐"가 된다 — 진행률은 끝났다는 뜻이어야 한다.
+            baseline = min(max(1.0 - (self._base_until - now) / span, 0.0), 0.99)
+        return min(window, baseline)
+
+    def _score(
+        self, raw: dict[str, float], base: dict[str, tuple[float, float]]
+    ) -> float:
+        """0~100. 각 채널을 기준선의 표준편차 배수(z)로 재서 가중 합산한다.
+
+        z 로 재는 이유는 상단 BASELINE_S 주석에 있다. 요지는 채널마다 평소 흔들리는
+        폭이 달라서, "몇 % 변했나"로는 잡음이 큰 채널이 과대평가된다는 것이다.
+
+        방향이 있는 채널은 오르는 쪽만 센다. 빈도만 양방향인데, 졸음 초기에 늘었다가
+        심해지면 줄어드는 것으로 알려져 있어 어느 쪽이든 벗어난 정도를 본다.
+
+        채널이 없으면 그 몫은 0 으로 둔다. 가중치를 남은 채널에 다시 나눠 주지
+        않는 게 중요하다 — 그러면 PERCLOS 하나로도 만점이 나와서, 후행 지표만 보고
+        "조기 경보"를 냈다고 말하게 된다.
+        """
+        w = self._t.score.weights
+        full = self._t.score.z_full
+        floor = self._t.score.z_sd_floor_rel
+        score = 0.0
+        for key, weight, both_ways in (
+            ("reopen_ms", w.reopen, False),
+            ("blink_dur", w.duration, False),
+            ("blink_rate", w.blink_rate, True),
+            ("perclos", w.perclos, False),
+        ):
+            if key not in raw or key not in base:
+                continue
+            z = _z(raw[key], *base[key], floor)
+            score += weight * _ramp(abs(z) if both_ways else z, full)
+
+        if "pitch" in raw and "pitch" in base:
+            # 고개는 내려갈 때만 센다. 드는 것은 졸음이 아니라 딴 데를 보는 것이다.
+            # pitch 는 숙이면 작아지므로 부호를 뒤집어야 "내려감"이 양수가 된다.
+            score += w.head * _ramp(-_z(raw["pitch"], *base["pitch"], floor), full)
+        return score * 100.0
+
+    def _blank(self, state: State, confidence: float | None, progress: float) -> list[Metric]:
+        return [self._metric(k, None, None, state, confidence, progress) for k in self.provides]
+
+    def _metric(
+        self, key: str, value: float | str | None, unit: str | None,
+        state: State, confidence: float | None, progress: float,
+    ) -> Metric:
+        return Metric(
+            key=key,
+            value=value,
+            unit=unit,
+            source=self.id,
+            mode=self.mode,
+            state=state,
+            confidence=None if confidence is None else round(confidence, 3),
+            progress=round(progress, 3),
+            ts=server_now(),
+        )
+
+    # --- 워커 스레드 -------------------------------------------------------- #
+
+    def _loop(self) -> None:
+        period = 1.0 / POLL_HZ
+        last_ts = -1.0
+        eyes: list[tuple[int, int, int, int]] = []  # 원본 프레임 좌표
+        have_face = False
+        last_detect = 0.0
+        last_ok = 0.0
+        in_blink = False
+        blink_start = 0.0
+        blink_peak = 0.0
+        peak_t = 0.0
+
+        while not self._stop.is_set():
+            src = self._frames
+            got = src.latest_frame() if src is not None else None
+            if got is None:
+                time.sleep(period)
+                continue
+            ts, frame = got
+            if ts <= last_ts:  # 같은 프레임을 두 번 세지 않는다
+                time.sleep(period)
+                continue
+            last_ts = ts
+
+            bgr = np.asarray(frame)
+            try:
+                gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+            except Exception as exc:
+                with self._lock:
+                    self._fault = f"프레임을 해석할 수 없다: {exc}"
+                return
+
+            # 못 찾았다고 바로 상자를 버리지 않는다. 검출이 한 프레임 실패한 것과
+            # 사람이 자리를 뜬 것은 다르고, 그때마다 버리면 표본이 거의 안 쌓인다.
+            interval = FACE_DETECT_SEC if have_face else FACE_RETRY_SEC
+            if ts - last_detect >= interval:
+                last_detect = ts
+                try:
+                    found = self._detect_eyes(bgr)
+                except Exception as exc:
+                    with self._lock:
+                        self._fault = f"얼굴 검출이 실패했다: {exc}"
+                    return
+                if found is not None:
+                    eyes, pitch = found
+                    have_face, last_ok = True, ts
+                    with self._lock:
+                        self._poses.append((ts, pitch))
+                elif have_face and ts - last_ok > FACE_LOST_SEC:
+                    eyes, have_face = [], False
+
+            openness: float | None = None
+            if eyes:
+                vals = [
+                    v
+                    for v in (_openness(gray[y:y + h, x:x + w]) for x, y, w, h in eyes)
+                    if v is not None
+                ]
+                if vals:
+                    openness = float(np.mean(vals))
+
+            # 지금 무엇을 보고 있는지 미리보기에 그린다. 눈 상자가 엉뚱한 데 가 있으면
+            # 값이 왜 이상한지 화면에서 바로 보인다 — 얼굴 ROI 를 그리는 이유와 같다.
+            if self._overlay is not None:
+                self._overlay.set_overlay(self.id, list(eyes), EYE_BOX_COLOR)
+
+            with self._lock:
+                self._seen.append((ts, openness is not None))
+                if openness is not None:
+                    self._opens.append(openness)
+                    # 눈을 한동안 안 감으면 최근 표본에 '감은 상태'가 없어져 폭이
+                    # 좁아진다. 그때 산출을 멈추면 창이 통째로 비고 기준선까지
+                    # 초기화된다 — 가만히 잘 뜨고 있을수록 시스템이 죽는 셈이다.
+                    # 그래서 한 번 잡은 기준값은 새 것이 유효할 때까지 들고 있는다.
+                    if len(self._opens) >= self._t.openness.min_samples:
+                        hi = float(np.percentile(self._opens, self._t.openness.open_pctl))
+                        lo = float(np.percentile(self._opens, self._t.openness.closed_pctl))
+                        if hi - lo >= self._t.openness.min_span:
+                            self._closure_ref = (hi, hi - lo)
+                    if self._closure_ref is not None:
+                        hi, width = self._closure_ref
+                        closure = float(np.clip((hi - openness) / width, 0.0, 1.0))
+                        self._closures.append((ts, closure))
+                        if self._since is None:
+                            self._since = ts
+                        # 깜빡임 절단. 워커 스레드만 이 상태를 만지므로 락 밖 변수를 쓴다.
+                        #
+                        # 감김과 재개안을 나눠서 잰다. 졸릴 때 느려지는 것은 눈을
+                        # 감는 동작이 아니라 다시 뜨는 동작이라, 하나로 합치면 정작
+                        # 신호가 있는 쪽이 평평한 쪽에 희석된다.
+                        if not in_blink and closure >= self._t.blink.enter:
+                            in_blink, blink_start, blink_peak = True, ts, closure
+                            peak_t = ts
+                        elif in_blink:
+                            if closure > blink_peak:
+                                blink_peak, peak_t = closure, ts
+                            if closure <= self._t.blink.exit:
+                                dur = ts - blink_start
+                                reopen = ts - peak_t
+                                in_blink = False
+                                if self._t.blink.min_s <= dur <= self._t.blink.max_s:
+                                    self._blinks.append((ts, dur, reopen))
+                self._trim(ts)
+
+            time.sleep(period)
+
+    def _detect_eyes(
+        self, bgr: np.ndarray
+    ) -> tuple[list[tuple[int, int, int, int]], float] | None:
+        """YuNet 으로 얼굴을 찾아 (눈 상자들, 머리 pitch) 를 돌려준다. 못 찾으면 None.
+
+        pitch 는 눈-입 사이에서 코가 놓인 위치의 비율이다. 크기·위치에 불변이라
+        거리나 화면 안 위치가 변해도 흔들리지 않고, 고개를 숙이면 코가 상대적으로
+        위로 투영돼 값이 **작아진다**. 랜드마크 5점만으로 얻을 수 있어 모델을 더
+        얹지 않아도 된다.
+
+        Haar 눈 캐스케이드를 걷어낸 이유가 여기 있다. 캐스케이드는 '뜬 눈'을 찾도록
+        학습돼 있어 **눈을 감으면 검출에 실패**한다. PERCLOS 는 감긴 시간의 비율인데
+        하필 감았을 때 표본이 사라지니, 지표가 낮은 쪽으로 체계적으로 편향된다.
+        YuNet 은 검출이 아니라 랜드마크 회귀라 감아도 눈 위치를 내놓는다.
+        """
+        h, w = bgr.shape[:2]
+        if self._input_size != (w, h):
+            self._detector.setInputSize((w, h))
+            self._input_size = (w, h)
+
+        _, faces = self._detector.detect(bgr)
+        if faces is None or len(faces) == 0:
+            return None
+        # 가장 큰 얼굴 하나. 뒤로 지나가는 사람이 아니라 카메라 앞에 앉은 사람을 본다.
+        face = max(faces, key=lambda b: float(b[2]) * float(b[3]))
+
+        # YuNet 랜드마크 5점: [4:6] 오른눈, [6:8] 왼눈, [8:10] 코, [10:14] 입 양끝
+        right, left = face[4:6], face[6:8]
+        nose, mouth_r, mouth_l = face[8:10], face[10:12], face[12:14]
+        eye_y = (float(right[1]) + float(left[1])) / 2.0
+        mouth_y = (float(mouth_r[1]) + float(mouth_l[1])) / 2.0
+        pitch = (float(nose[1]) - eye_y) / max(mouth_y - eye_y, 1e-6)
+        iod = float(np.hypot(left[0] - right[0], left[1] - right[1]))
+        # 너무 멀면 눈꺼풀을 가를 해상도가 안 나온다. 억지로 재느니 표본을 버린다.
+        if iod < self._t.geometry.min_iod_px:
+            return None
+
+        bw = max(int(round(iod * self._t.geometry.eye_box_w)), 8)
+        bh = max(int(round(iod * self._t.geometry.eye_box_h)), 6)
+        boxes: list[tuple[int, int, int, int]] = []
+        for cx, cy in (right, left):
+            x, y = int(round(float(cx) - bw / 2)), int(round(float(cy) - bh / 2))
+            # 화면 밖으로 걸치면 버린다. 잘린 상자에서 잰 높이는 감은 것처럼 보인다.
+            if x < 0 or y < 0 or x + bw > w or y + bh > h:
+                continue
+            boxes.append((x, y, bw, bh))
+        return (boxes, pitch) if boxes else None
+
+    def _trim(self, now: float) -> None:
+        """창 밖으로 나간 표본을 버린다. 호출자가 _lock 을 들고 있어야 한다."""
+        for buf in (self._closures, self._seen, self._blinks, self._poses):
+            while buf and now - buf[0][0] > self.window_s:
+                buf.popleft()
+        while self._scores and now - self._scores[0][0] > TREND_WINDOW_S:
+            self._scores.popleft()
+        # 표본이 통째로 비면 처음부터 다시 모은다. 사람이 오래 자리를 비운 뒤
+        # 돌아왔는데 진행률만 100% 로 남아 있으면, 창이 비었는데도 값을 낸다.
+        #
+        # 기준선도 같이 버린다. 창이 통째로 빌 만큼 자리를 비웠다면 다른 사람이
+        # 앉았을 수도 있고, 남의 평소로 재는 것은 안 재느니만 못하다.
+        if not self._closures:
+            self._since = None
+            self._closure_ref = None
+            self._base = None
+            self._base_stats.clear()
+            self._base_until = None
+            self._scores.clear()
+
+
+def _z(value: float, mean: float, sd: float, floor_rel: float) -> float:
+    """기준선 대비 표준편차 배수. 하한을 둬 지나치게 민감해지지 않게 한다."""
+    return (value - mean) / max(sd, floor_rel * abs(mean), 1e-9)
+
+
+def _slope_per_min(history: list[tuple[float, float]]) -> float | None:
+    """점수 이력의 기울기 (점/분). 표본이 적으면 None.
+
+    최소제곱 직선 하나다. 창이 3분이라 순간의 튐은 눌리고, 지속적으로 오르는
+    흐름만 남는다.
+    """
+    if len(history) < TREND_MIN_SAMPLES:
+        return None
+    t = np.array([x for x, _ in history], dtype=np.float64)
+    y = np.array([v for _, v in history], dtype=np.float64)
+    span = t[-1] - t[0]
+    if span < 1e-6:
+        return None
+    t = t - t[0]
+    slope = float(np.polyfit(t, y, 1)[0])  # 점/초
+    return slope * 60.0
+
+
+def _ramp(value: float, span: float) -> float:
+    """0 에서 span 까지 0~1 로 차오르는 경사. 밖으로 나가면 잘린다."""
+    if span <= 1e-9:
+        return 0.0
+    return float(min(max(value / span, 0.0), 1.0))
+
+
+def _openness(eye: np.ndarray) -> float | None:
+    """눈 상자 하나의 개안도 (0~1 근처). 못 재면 None.
+
+    랜드마크가 없으므로 눈꺼풀 좌표를 직접 얻을 수 없다. 대신 눈 구멍이 주변 피부보다
+    어둡다는 성질을 쓴다 — 어두운 덩어리의 **세로 높이**가 곧 눈이 벌어진 정도다.
+    감으면 그 덩어리가 속눈썹 한 줄로 납작해진다.
+
+    절대값은 사람·조명마다 다르므로 의미가 없다. 호출자가 자기 기준선으로 정규화한다.
+    """
+    if eye.size == 0:
+        return None
+    h, w = eye.shape[:2]
+    if h < 8 or w < 8:
+        return None
+
+    eq = cv2.equalizeHist(eye)
+    thr = float(np.percentile(eq, 30.0))
+    dark = (eq <= thr).astype(np.uint8) * 255
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    dark = cv2.morphologyEx(dark, cv2.MORPH_OPEN, kernel)
+
+    n, _, stats, cents = cv2.connectedComponentsWithStats(dark, connectivity=8)
+    best, best_d = None, None
+    for i in range(1, n):
+        if stats[i, cv2.CC_STAT_AREA] < 0.02 * h * w:
+            continue
+        # 세로로 상자 한가운데에 가까운 덩어리를 고른다. 가장 큰 것을 고르면 눈썹이나
+        # 그림자가 잡힌다.
+        d = abs(float(cents[i][1]) - h / 2.0)
+        if best_d is None or d < best_d:
+            best, best_d = i, d
+    if best is None:
+        return None
+    return float(stats[best, cv2.CC_STAT_HEIGHT]) / float(h)
+
+

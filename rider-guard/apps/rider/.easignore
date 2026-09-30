@@ -1,0 +1,8 @@
+# EAS Build 에 올리지 않을 것. EAS_NO_VCS=1 로 빌드할 때 이 목록을 쓴다
+node_modules/
+.expo/
+dist/
+web-build/
+/android
+/ios
+*firebase-adminsdk*.json

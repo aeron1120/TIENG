@@ -1,0 +1,42 @@
+# Render Blueprint — Rider Guard API 서버 (무료 플랜)
+# Render 대시보드 → New → Blueprint → 이 저장소, Blueprint 경로에 rider-guard/render.yaml.
+# sync: false 인 값(DB 주소·토큰)은 만들 때 대시보드가 물어본다. 저장소에는 절대 적지 않는다.
+services:
+  - type: web
+    name: rider-guard-api
+    runtime: node
+    plan: free
+    # Turso DB(도쿄)와 가장 가까운 지역
+    region: singapore
+    branch: Justin
+    rootDir: rider-guard/apps/server
+    # 런타임에는 개발 도구가 필요 없다 (TypeScript 는 Node 24 가 바로 실행)
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_AUTH_TOKEN
+        sync: false
+      # 운영 모니터(/ops, 읽기 전용) 토큰 — Render 가 무작위로 만든다. 대시보드 Environment 에서 확인
+      - key: OPS_TOKEN
+        generateValue: true
+      # MVP 시연: 지표 판정으로 사고를 연다 (로드맵 Phase 1 처럼 기록만 하려면 false)
+      - key: DETECTION_ENABLED
+        value: "true"
+      # 지표 라우터 → /v1/detections 전송 토큰 — Render 가 무작위로 만든다. 지표팀에만 공유
+      - key: INGEST_TOKEN
+        generateValue: true
+      # 발표 시연: 문자·119·배차 외부 발송 차단, 데모 라이더·주문 시드, /v1/demo/reset
+      - key: DEMO_MODE
+        value: "true"
+      # 데모 라이더(demo@riderguard.test)로 앱에 로그인할 비밀번호 — 대시보드에서 넣는다
+      - key: DEMO_RIDER_PASSWORD
+        sync: false
+      # PUBLIC_BASE_URL 은 비워 두면 Render 가 주는 https://<이름>.onrender.com 을 쓴다.
+      # SNS 로그인 키(KAKAO_…, NAVER_…, GOOGLE_…)와 KAKAO_ADMIN_KEY 는 제공자 콘솔 등록 뒤 대시보드에서 추가한다.

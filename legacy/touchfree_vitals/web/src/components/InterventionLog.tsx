@@ -1,4 +1,4 @@
-import { Lightbulb, Wind } from 'lucide-react'
+import { Eye, Lightbulb, Wind } from 'lucide-react'
 import { ACTION_LABEL, awaitsConfirmation } from '../metrics'
 import type { InterventionEvent } from '../types'
 import { Deltas } from './Deltas'
@@ -9,6 +9,8 @@ import { Deltas } from './Deltas'
 const ICON: Record<string, typeof Lightbulb> = {
   light_up: Lightbulb,
   ventilate: Wind,
+  drowsy_notice: Eye,
+  drowsy_alert: Lightbulb,
 }
 
 export function InterventionLog({ events }: { events: InterventionEvent[] }) {

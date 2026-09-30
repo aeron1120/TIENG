@@ -1,6 +1,7 @@
 import { Activity } from 'lucide-react'
 import { useState } from 'react'
 import { CameraPanel } from '../components/CameraPanel'
+import { DrowsinessPanel } from '../components/DrowsinessPanel'
 import { InterventionLog } from '../components/InterventionLog'
 import { MetricCard } from '../components/MetricCard'
 import { SignalBanner } from '../components/SignalBanner'
@@ -8,6 +9,7 @@ import { StateBadge } from '../components/StateBadge'
 import { TrendChart } from '../components/TrendChart'
 import { useLayout } from '../hooks/useLayout'
 import {
+  DROWSINESS_KEYS,
   ICON,
   LABEL,
   STATE_LABEL,
@@ -48,12 +50,14 @@ export function Kiosk() {
     )
   }
 
+  // 졸음 지표는 전용 패널이 통째로 맡으므로 카드에서는 뺀다 (metrics.ts DROWSINESS_KEYS).
+  const cards = snapshot.metrics.filter((m) => !DROWSINESS_KEYS.includes(m.key))
   // 카메라도 주지표 자리에 설 수 있다. 얼굴을 상자에 맞추는 일은 사이드바 크기에서
   // 하기 어려워서, 지표와 같은 방식으로 크게 볼 수 있어야 한다. layout.hero 는 서버가
   // 화이트리스트로 막지 않으므로 (core/layout.py) 이 값을 그대로 저장할 수 있다.
   const cameraHero = layout.hero === CAMERA
-  const hero = cameraHero ? undefined : pickHero(snapshot.metrics, layout.hero, layout.order, stale)
-  const blocks = sortBlocks(snapshot.metrics, draft ?? layout.order, hero?.key, stale)
+  const hero = cameraHero ? undefined : pickHero(cards, layout.hero, layout.order, stale)
+  const blocks = sortBlocks(cards, draft ?? layout.order, hero?.key, stale)
   const keys = blocks.map((m) => m.key)
 
   const heroState = hero ? effectiveState(hero, stale) : 'no_adapter'
@@ -191,6 +195,10 @@ export function Kiosk() {
         {/* 오른쪽: 나머지 지표. 세로선이 왼쪽 열 전체 높이를 따라가도록 늘리고,
             블록은 위에서부터 쌓아 주지표 라벨과 눈높이를 맞춘다. */}
         <section className="flex flex-col gap-3 border-t-[0.5px] border-gold/15 pt-6 lg:self-stretch lg:justify-start lg:border-t-0 lg:border-l-[0.5px] lg:pt-1 lg:pl-12">
+          {/* 판정을 맨 위에 둔다. 아래 카드들은 "몇인가"를 말하지만 이건 "그래서
+              지금 위험한가"라, 사이드바에서 가장 먼저 읽혀야 한다. */}
+          <DrowsinessPanel metrics={snapshot.metrics} stale={stale} />
+
           <div className="flex items-baseline justify-between gap-2">
             <h2 className="kr text-[15px] font-medium text-muted">보조 지표</h2>
             <span className="kr text-[12px] text-faint">눌러서 크게 · 끌어서 순서</span>

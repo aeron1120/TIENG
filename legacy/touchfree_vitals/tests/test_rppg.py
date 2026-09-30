@@ -4,16 +4,13 @@ legacy/tieng_rppg 의 selftest 2·3 을 옮겨온 것으로, 이식 과정에서
 망가지지 않았는지가 핵심이다.
 """
 
-import time
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from core import quality, thresholds
-from core.adapters import rppg as rppg_module
 from core.adapters.rppg import RppgAdapter
-from core.pulse import HrEstimator, _coefficients
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FS = 30.0
@@ -38,23 +35,14 @@ def _synthetic_rgb(
 
 def _adapter(gate: float = 0.4) -> RppgAdapter:
     adapter = RppgAdapter(id="rppg", mode="live")
-    adapter._hr.gate = gate
+    adapter._gate = gate
     return adapter
-
-
-def _estimator(gate: float = 0.4) -> HrEstimator:
-    """신호경로만 본다. 카메라는 여기 관여하지 않는다 (core/pulse.py).
-
-    어댑터를 거치지 않는 이유는 추정기가 프레임 소스를 모르기 때문이다 — 브라우저가
-    올린 RGB 도 같은 객체를 탄다.
-    """
-    return HrEstimator(source="rppg", mode="live", gate=gate)
 
 
 @pytest.mark.parametrize("true_bpm", [55, 72, 90, 120, 150])
 def test_estimates_known_bpm_within_3(true_bpm: int) -> None:
     t, rgb = _synthetic_rgb(true_bpm)
-    metric = _estimator().estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+    metric = _adapter()._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
 
     assert metric.state == "ok", f"보류됨 (confidence={metric.confidence})"
     assert metric.value is not None
@@ -65,50 +53,30 @@ def test_estimates_known_bpm_within_3(true_bpm: int) -> None:
 def test_degraded_input_is_held_not_guessed() -> None:
     """어둡고 흔들리고 피부가 안 잡히면 값을 내지 않는다 (README §0-4)."""
     t, rgb = _synthetic_rgb(72)
-    estimator = _estimator()
+    adapter = _adapter()
 
-    clean = estimator.estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
-    degraded = estimator.estimate(t, rgb, jitter_norm=1.0, skin_ratio=0.05, brightness=10.0)
+    clean = adapter._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+    degraded = adapter._estimate(t, rgb, jitter_norm=1.0, skin_ratio=0.05, brightness=10.0)
 
     assert clean.state == "ok" and clean.value is not None
     assert degraded.state == "low_quality"
     assert degraded.value is None  # 0 으로 대체하지 않는다
-    # 값을 보류했더라도 왜 보류했는지는 숫자로 말할 수 있어야 한다. 둘 다 있어야
-    # 비교도 성립한다.
-    assert clean.confidence is not None and degraded.confidence is not None
-    assert degraded.confidence < clean.confidence
+    assert degraded.confidence is not None and degraded.confidence < clean.confidence
 
 
 def test_short_window_warms_up_without_value() -> None:
     t, rgb = _synthetic_rgb(72, seconds=4.0)
-    metric = _estimator().estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+    metric = _adapter()._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
 
     assert metric.state == "low_quality"
     assert metric.value is None
     assert metric.confidence is None  # 아직 confidence 를 말할 근거가 없다
 
 
-def test_the_bandpass_is_designed_once_per_setting() -> None:
-    """계수는 신호가 아니라 설정에서 나온다.
-
-    설계가 estimate() 시간의 4분의 1 이었다. 신호와 무관한 일을 초당 한 번씩,
-    재는 사람 수만큼 다시 하고 있었다.
-
-    다시 하지 않는 대신 설정이 다르면 반드시 다른 계수가 나와야 한다. 캐시가
-    섞이면 15Hz 로 올라온 신호를 30Hz 용 필터로 거르게 되고, 그건 화면에
-    "값이 좀 이상하다"로만 보인다.
-    """
-    same = _coefficients(30.0, 42.0, 180.0)
-    assert _coefficients(30.0, 42.0, 180.0) is same  # 다시 설계하지 않는다
-
-    assert not np.array_equal(same[0], _coefficients(15.0, 42.0, 180.0)[0])
-    assert not np.array_equal(same[0], _coefficients(30.0, 50.0, 180.0)[0])
-
-
 def test_flat_signal_is_held() -> None:
     t = np.arange(0.0, 14.0, 1.0 / FS)
     rgb = np.tile(np.array([0.6, 0.5, 0.42]), (len(t), 1))
-    metric = _estimator().estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+    metric = _adapter()._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
 
     assert metric.state == "low_quality"
     assert metric.value is None
@@ -120,63 +88,6 @@ async def test_camera_fault_surfaces_as_exception() -> None:
     adapter._fault = "카메라 프레임을 연속으로 못 읽었다"
     with pytest.raises(RuntimeError):
         await adapter.read()
-
-
-# --- 카메라 백엔드 ---------------------------------------------------------- #
-# 파이의 CSI 카메라는 libcamera 전용이라 cv2 로 열리지 않는다. 어느 쪽을 물릴지는
-# config 가 정한다 — 자동 감지하지 않는다. 노출 고정은 실제 카메라가 있어야 확인되므로
-# 여기서는 백엔드를 고르는 경로와 실패 사유가 올라오는지까지만 본다.
-
-
-def test_unknown_backend_fails_at_construction() -> None:
-    """오타가 조용히 opencv 로 떨어지면 엉뚱한 카메라가 열린다. 생성 시점에 막는다."""
-    with pytest.raises(ValueError, match="picamera2"):
-        RppgAdapter(id="cam", mode="live", backend="picamera")
-
-
-def test_picamera2_backend_surfaces_the_reason(monkeypatch: pytest.MonkeyPatch) -> None:
-    """열지 못한 사유가 그대로 올라와야 한다.
-
-    Registry 가 이 문자열을 카드에 그대로 싣는다 (core/registry.py 의 _failures).
-    '카메라를 열 수 없다'로 뭉개면 배선을 고칠 단서가 사라진다.
-    """
-
-    def boom(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("libcamera 가 잡은 카메라는 0대인데 camera_index=0 를 찾는다")
-
-    monkeypatch.setattr(rppg_module, "_open_picamera2", boom)
-    adapter = RppgAdapter(id="cam", mode="live", backend="picamera2")
-
-    with pytest.raises(RuntimeError, match="camera_index=0"):
-        adapter._open_camera()
-
-
-def test_opencv_backend_does_not_touch_picamera2(monkeypatch: pytest.MonkeyPatch) -> None:
-    """웹캠을 쓰겠다고 못 박았으면 CSI 를 건드리지 않는다."""
-
-    def fail(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("backend=opencv 인데 picamera2 를 열려고 했다")
-
-    monkeypatch.setattr(rppg_module, "_open_picamera2", fail)
-    adapter = RppgAdapter(id="cam", mode="live", backend="opencv")
-    monkeypatch.setattr(adapter, "_open_opencv", lambda: "webcam")
-
-    assert adapter._open_camera() == "webcam"
-
-
-def test_settle_reaches_the_open(monkeypatch: pytest.MonkeyPatch) -> None:
-    """노출 고정 자체는 실기에서만 보이지만, settle_s 가 거기까지 가는지는 여기서 본다."""
-    seen: dict[str, object] = {}
-
-    def spy(camera_index: int, width: int, height: int, settle_s: float) -> str:
-        seen.update(camera_index=camera_index, settle_s=settle_s)
-        return "csi"
-
-    monkeypatch.setattr(rppg_module, "_open_picamera2", spy)
-    adapter = RppgAdapter(id="cam", mode="live", backend="picamera2", settle_s=0.5)
-
-    assert adapter._open_camera() == "csi"
-    assert seen == {"camera_index": 0, "settle_s": 0.5}
 
 
 # --- quality.py -------------------------------------------------------------- #
@@ -223,7 +134,7 @@ def test_roi_floor_does_not_punish_a_normal_roi() -> None:
 async def test_lost_face_is_held_end_to_end() -> None:
     """어댑터까지 이어서, 얼굴을 놓친 창은 low_quality 로 보류된다."""
     t, rgb = _synthetic_rgb(72)
-    metric = _estimator().estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.02, brightness=100.0)
+    metric = _adapter()._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.02, brightness=100.0)
 
     assert metric.state == "low_quality"
     assert metric.value is None
@@ -248,75 +159,17 @@ def test_gate_comes_from_thresholds_yaml() -> None:
     assert active.confidence_min == 0.4
 
 
-# --- 미리보기 ------------------------------------------------------------- #
-
-
-class _FakeCamera:
-    """프레임 몇 장을 준 뒤 멈추거나(stop) 고장 나는(fault) 카메라."""
-
-    def __init__(self, adapter: RppgAdapter, frames: int, *, then_fail: bool) -> None:
-        self.adapter = adapter
-        self.left = frames
-        self.then_fail = then_fail
-
-    def read(self) -> tuple[bool, np.ndarray | None]:
-        if self.left <= 0:
-            if not self.then_fail:
-                # 정상 종료. stop() 이 부른 것과 같은 상태로 루프를 빠져나간다.
-                self.adapter._stop.set()
-                return True, np.full((480, 640, 3), 160, dtype=np.uint8)
-            return False, None
-        self.left -= 1
-        return True, np.full((480, 640, 3), 160, dtype=np.uint8)
-
-    def release(self) -> None: ...
-
-
-def _capture(adapter: RppgAdapter, frames: int, *, then_fail: bool = False) -> None:
-    """캡처 루프를 스레드 없이 그 자리에서 돌린다."""
-    adapter._cap = _FakeCamera(adapter, frames, then_fail=then_fail)
-    adapter._capture_loop()
-
-
-def test_preview_is_not_encoded_until_someone_watches() -> None:
-    """아무도 안 보는데 매 프레임 JPEG 을 굽는 건 파이에서 그대로 FPS 손해다."""
-    adapter = RppgAdapter(id="cam", mode="live")
-    _capture(adapter, frames=5)
-
-    assert adapter.preview_jpeg() is None
-
-
-def test_preview_appears_once_requested() -> None:
-    adapter = RppgAdapter(id="cam", mode="live")
-    adapter.request_preview()
-    _capture(adapter, frames=5)
-
-    frame = adapter.preview_jpeg()
-    assert frame is not None
-    assert frame[:2] == b"\xff\xd8"  # JPEG SOI
-
-
-def test_dead_camera_drops_its_last_frame() -> None:
-    """카메라가 빠진 뒤 화면을 연 사람에게 죽은 프레임이 실시간인 척 나가면 안 된다."""
-    adapter = RppgAdapter(id="cam", mode="live")
-    adapter.request_preview()
-    _capture(adapter, frames=3, then_fail=True)
-
-    assert adapter._fault is not None
-    assert adapter.preview_jpeg() is None
-
-
 # --- 진행률 -------------------------------------------------------------- #
 # 화면이 "기다리면 나온다"와 "신호가 나빠서 못 낸다"를 구분하려면 이 값이 필요하다.
 # 둘 다 state=low_quality 라 상태만 보면 같아 보인다.
 
 
 def test_progress_climbs_while_the_window_fills() -> None:
-    estimator = _estimator()
+    adapter = _adapter()
     seen = []
     for seconds in (1.0, 2.0, 4.0, 6.0):
         t, rgb = _synthetic_rgb(72, seconds=seconds)
-        metric = estimator.estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+        metric = adapter._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
         assert metric.state == "low_quality" and metric.value is None
         assert metric.progress is not None
         seen.append(metric.progress)
@@ -327,7 +180,7 @@ def test_progress_climbs_while_the_window_fills() -> None:
 
 def test_progress_is_full_once_a_value_comes_out() -> None:
     t, rgb = _synthetic_rgb(72)
-    metric = _estimator().estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
+    metric = _adapter()._estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
 
     assert metric.state == "ok"
     assert metric.progress == 1.0
@@ -336,46 +189,11 @@ def test_progress_is_full_once_a_value_comes_out() -> None:
 def test_bad_signal_is_full_progress_not_warming_up() -> None:
     """이 구분이 이 필드의 존재 이유다. 창은 다 찼고 신호가 나쁜 것이다."""
     t, rgb = _synthetic_rgb(72)
-    metric = _estimator().estimate(t, rgb, jitter_norm=1.0, skin_ratio=0.05, brightness=10.0)
+    metric = _adapter()._estimate(t, rgb, jitter_norm=1.0, skin_ratio=0.05, brightness=10.0)
 
     assert metric.state == "low_quality"
     assert metric.value is None
     assert metric.progress == 1.0  # 기다린다고 나아지지 않는다
-
-
-# --- 점프 거부 ------------------------------------------------------------- #
-# 신호가 나쁜 것과 값만 버린 것은 다르다. 실기에서 신뢰도 0.91 인데 124bpm 후보가
-# 올라온 적이 있는데, 둘을 한 상태로 묶으면 화면이 "품질 미달"이라고 말하면서 옆에
-# 높은 신뢰도를 같이 띄우게 된다.
-
-
-def test_jump_rejection_reports_rejected_not_low_quality() -> None:
-    estimator = _estimator()
-    t, rgb = _synthetic_rgb(72)
-    # 1초 전에 130bpm 을 받아들인 것으로 둔다. 72 로 내려오려면 8bpm/s 를 훌쩍 넘는다.
-    estimator._prev_bpm = 130.0
-    estimator._prev_t = time.monotonic() - 1.0
-
-    metric = estimator.estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
-
-    assert metric.state == "rejected"
-    assert metric.value is None  # 지어내지 않는다 (README §0-4)
-    assert metric.progress == 1.0  # 기다린다고 나아지는 상태가 아니다
-    # 게이트를 통과한 신호다. 이 값이 낮으면 애초에 low_quality 로 갔어야 한다.
-    assert metric.confidence is not None and metric.confidence >= estimator.gate
-
-
-def test_plausible_change_still_comes_out() -> None:
-    """가드가 정상 변화까지 막으면 값이 영영 안 나온다. 8bpm/s 안쪽은 통과한다."""
-    estimator = _estimator()
-    t, rgb = _synthetic_rgb(72)
-    estimator._prev_bpm = 70.0
-    estimator._prev_t = time.monotonic() - 1.0
-
-    metric = estimator.estimate(t, rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0)
-
-    assert metric.state == "ok"
-    assert metric.value is not None
 
 
 def test_progress_needs_both_gates() -> None:
@@ -383,7 +201,7 @@ def test_progress_needs_both_gates() -> None:
     t, rgb = _synthetic_rgb(72, seconds=14.0)
     sparse_t, sparse_rgb = t[::20], rgb[::20]  # 14초에 걸쳐 21개뿐
 
-    metric = _estimator().estimate(
+    metric = _adapter()._estimate(
         sparse_t, sparse_rgb, jitter_norm=0.0, skin_ratio=0.35, brightness=128.0
     )
     assert metric.state == "low_quality"

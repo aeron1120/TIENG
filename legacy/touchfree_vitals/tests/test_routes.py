@@ -101,7 +101,11 @@ def test_log_download_stays_inside_logs(client: TestClient) -> None:
 def test_camera_says_so_when_there_is_none(client: TestClient) -> None:
     """mock 구성에는 카메라가 없다. 화면은 이걸 보고 패널을 접는다."""
     with client:
-        assert client.get("/api/camera").json() == {"available": False, "sources": []}
+        assert client.get("/api/camera").json() == {
+            "available": False,
+            "sources": [],
+            "fps": 0.0,
+        }
         assert client.get("/api/camera/stream").status_code == 404
 
 

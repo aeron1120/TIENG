@@ -44,7 +44,13 @@ def _sources(request: Request) -> dict[str, PreviewSource]:
 async def camera_status(request: Request) -> dict[str, Any]:
     """미리보기가 가능한지. 화면은 이걸 보고 패널을 띄울지 정한다."""
     sources = _sources(request)
-    return {"available": bool(sources), "sources": sorted(sources)}
+    fps = max((getattr(a, "measured_fps", 0.0) for a in sources.values()), default=0.0)
+    return {
+        "available": bool(sources),
+        "sources": sorted(sources),
+        # 실측 프레임률. 졸음 쪽 정확도가 여기 달려 있어 화면에서 읽혀야 한다.
+        "fps": round(fps, 1),
+    }
 
 
 @router.get("/api/camera/stream")

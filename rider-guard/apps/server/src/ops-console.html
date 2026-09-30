@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rider Guard 운영 모니터</title>
+<style>
+  :root { --bg:#F4F1EA; --ink:#16181D; --muted:#5B5E66; --line:#DDD6C8; --accent:#C2410C; --soft:#FDE3D3; --info:#DBE4FB; --infoText:#1D3FA8; --warn:#FEF3C7; --warnText:#92400E }
+  * { box-sizing: border-box }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 system-ui,-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif }
+  header { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:14px 20px; background:var(--ink); color:#fff }
+  header b { font-size:16px } header small { color:#A9ACB4; margin-right:auto }
+  header input { height:34px; padding:0 10px; border-radius:8px; border:2px solid transparent; font:inherit; width:160px }
+  header input.bad { border-color:#FDBA8C; background:#FFF4EC }
+  #demo { display:none; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; background:var(--warn); color:var(--warnText) }
+  #recent { padding:10px 20px 0; display:flex; flex-direction:column; gap:2px; font-size:13px }
+  #recent:empty { display:none }
+  main { display:grid; grid-template-columns:minmax(260px,340px) 1fr; gap:16px; padding:16px 20px }
+  @media (max-width:760px) { main { grid-template-columns:1fr } }
+  .panel { background:#fff; border:1px solid var(--line); border-radius:14px; overflow:hidden }
+  .item { display:flex; flex-direction:column; gap:2px; padding:12px 14px; border-bottom:1px solid #EDE9E0; cursor:pointer }
+  .item:last-child { border-bottom:0 } .item.sel { background:#FBF8F2 }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  .pill { padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; background:#EDE9E0; color:#45474D }
+  .pill.escalated, .pill.alert_no_stillness { background:var(--soft); color:#9A3412 }
+  .pill.help, .pill.failed, .pill.alert { background:var(--accent); color:#fff }
+  .pill.sent, .pill.countdown, .pill.candidate { background:var(--info); color:var(--infoText) }
+  .pill.undetermined, .pill.badge { background:var(--warn); color:var(--warnText) }
+  .muted { color:var(--muted) }
+  #detail { padding:18px; display:flex; flex-direction:column; gap:14px }
+  h2 { margin:0; font-size:20px } h3 { margin:0 0 6px; font-size:14px }
+  dl { display:grid; grid-template-columns:110px 1fr; gap:4px 10px; margin:0 } dt { color:var(--muted) } dd { margin:0 }
+  ol { margin:0; padding-left:18px } .empty { padding:24px; text-align:center; color:var(--muted) }
+  .empty.err { color:var(--accent); font-weight:700 }
+  #error { color:#FDBA8C; font-weight:700 }
+  .evidence { display:flex; flex-direction:column; gap:8px }
+  .rule { white-space:pre-line; background:#FBF8F2; border-radius:10px; padding:10px 12px }
+  table { border-collapse:collapse; width:100% } td { padding:5px 8px; border-top:1px solid #EDE9E0; vertical-align:top }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap }
+  .fired { font-weight:700; font-size:12px; padding:1px 8px; border-radius:999px; white-space:nowrap }
+  .fired.on { background:var(--accent); color:#fff } .fired.off { background:#EDE9E0; color:#8A8C92 }
+  .fired.none { border:1px solid var(--line); color:var(--muted) }
+</style>
+</head>
+<body>
+<header>
+  <b>Rider Guard 운영 모니터</b>
+  <span id="demo">데모 모드 — 문자·119 실제 발송 안 함</span>
+  <small>읽기 전용 — 사고 대응은 서버가 자동으로 처리해요</small>
+  <input id="token" placeholder="모니터 토큰" type="password">
+  <span id="error"></span>
+</header>
+<section id="recent"></section>
+<main>
+  <section class="panel" id="list"><div class="empty">불러오는 중…</div></section>
+  <section class="panel" id="detail"><div class="empty">왼쪽에서 사고를 선택하세요.</div></section>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const STATUS = { countdown: '라이더 확인 대기', escalated: '대응 중', cancelled: '종료', resolved: '종료' };
+  const RESOLUTION = { false_alarm: '오탐 (라이더 괜찮아요)', rider_ok: '라이더가 괜찮다고 응답', handled: '대응 종료' };
+  const EMERGENCY = { waiting: '대기', sending: '신고 중', retrying: '재시도 중', sent: '신고함', failed: '실패 — 연락처에 직접 신고 요청', cancelled: '보내지 않음' };
+  const DECISION = { alarm: '경보', alarm_unverified: '경보 (보조 조건·무동작 확인 불가)', reject: '기각', undetermined: '판정 불가' };
+  const RULE = { impact: '충격 (헬멧 가속도)', support: '보조 (각속도·ΔV·헬멧 기울기)', post_still: '사후 무동작' };
+  const fmt = (v) => (v == null ? '—' : Number(v).toFixed(2));
+  let demoMode = false;
+
+  // ── 판정 근거 (지표 라우터) ────────────────────────────────────
+  // 서버는 조건 이름·기준값·규칙 문장을 모른다. 받은 evidence 를 받은 순서대로 그린다 — 지표팀이 조건을 바꿔도 이 화면은 그대로다.
+
+  /** decimals 자리, 천 단위 쉼표. null 은 '값 없음' — 0 으로 그리지 않는다 */
+  const num = (v, d) => (v == null ? null : Number(v).toLocaleString('ko-KR', { minimumFractionDigits: d, maximumFractionDigits: d }));
+  /** ° 는 숫자에 붙이고(180°), 나머지는 한 칸 띄운다(22.6 g) */
+  const withUnit = (text, unit) => (unit === '°' ? text + '°' : `${text} ${unit}`);
+  const valueText = (e) => { const t = num(e.value, e.decimals); return t == null ? '값 없음' : withUnit(t, e.unit); };
+  const basisText = (e) => (e.op === 'abs>=' ? '|x| ≥ ' : '≥ ') + withUnit(num(e.threshold, e.decimals), e.unit);
+  const condText = (e) => (e.op === 'abs>=' ? `|${e.label}| ≥ ` : `${e.label} ≥ `) + withUnit(num(e.threshold, e.decimals), e.unit);
+  const FIRED = (f) => (f === true ? ['on', '발동'] : f === false ? ['off', '미발동'] : ['none', '값 없음']);
+  const MOUNT = { helmet_rear: '뒤쪽' };
+  const deviceText = (s) => (s.device === 'helmet_tag' ? `헬멧 ${MOUNT[s.mount] || s.mount} 태그` : s.device === 'phone' ? `휴대폰 (${s.mount})` : `${s.device} · ${s.mount}`);
+  const truthText = (g) => (g === 'accident' ? '사고' : '정상');
+  const VERIFY = { simulation_candidate_only: '시뮬레이션 후보 기준 · 실도로 미검증' };
+
+  function ruleSentence(ev) {
+    const req = ev.filter((e) => e.group === 'required').map(condText);
+    const any = ev.filter((e) => e.group === 'any_of').map(condText);
+    if (!req.length) return any.join(' 또는 ');
+    return req.join(' 이면서 ') + (any.length ? ` 이면서\n(${any.join(' 또는 ')})` : '');
+  }
+
+  function renderDetection(d, stillnessMinS) {
+    const ev = d.evidence;
+    const replay = d.source.replay;
+    const rule = d.detector.rule;
+    const bases = [...new Set(ev.map((e) => e.value_basis))];
+    const q = d.quality || {};
+    const sat = [
+      q.acc_saturation_fraction > 0 ? `가속도 ${(q.acc_saturation_fraction * 100).toFixed(1)}%` : null,
+      q.gyro_saturation_fraction > 0 ? `자이로 ${(q.gyro_saturation_fraction * 100).toFixed(1)}%` : null,
+    ].filter(Boolean);
+    let groupShown = {};
+    const rows = ev.map((e) => {
+      const head = groupShown[e.group] ? '' : e.group === 'required' ? '필수' : '하나 이상';
+      groupShown[e.group] = true;
+      const [cls, label] = FIRED(e.fired);
+      return el('tr', {},
+        el('td', { className: 'muted', textContent: head }),
+        el('td', { textContent: e.label }),
+        el('td', { className: 'num', textContent: valueText(e) }),
+        el('td', { className: 'num muted', textContent: '기준 ' + basisText(e) }),
+        el('td', {}, el('span', { className: 'fired ' + cls, textContent: label })));
+    });
+    const p = d.post_event;
+    const still = !p || !p.available || p.stillness_s == null
+      ? `확인 불가${p && p.reason ? ' — ' + p.reason : ''}`
+      : `${num(p.stillness_s, 1)} s (기준 ≥ ${stillnessMinS} s) — ${p.stillness_s >= stillnessMinS ? '무동작 확인' : '움직임 있음'}`;
+    return el('div', { className: 'evidence' },
+      el('h3', { textContent: `판정 근거 · ${d.detector.name} ${d.detector.version} · ${d.detector.profile} · ${deviceText(d.source)}` }),
+      el('div', { className: 'row' },
+        el('span', { className: 'pill badge', textContent: VERIFY[d.detector.status] || `검증 상태: ${d.detector.status}` }),
+        replay ? el('span', { className: 'pill', textContent:
+          `재생 데이터 · ${replay.run_id} ${replay.scenario_name} · 정답 ${truthText(replay.ground_truth)}` +
+          (replay.detection_delay_s != null ? ` · 사건 후 ${num(replay.detection_delay_s, 2)} s` : '') }) : null,
+        d.location && d.location.source === 'demo' ? el('span', { className: 'pill', textContent: d.location.label || '데모 위치 (실제 위치 아님)' }) : null),
+      el('div', { className: 'rule', textContent:
+        `규칙  ${ruleSentence(ev)}\n과거 ${rule.window_s} s 관찰창 · 시작 ${rule.warmup_s} s 제외\n` +
+        `라우터 판정: ${d.result.candidate ? `사고 후보 (스트림 ${num(d.result.t_candidate_s, 3)} s)` : '후보 아님'}` }),
+      el('table', {}, ...rows),
+      el('div', { className: 'muted', textContent: [
+        ...bases.map((b) => (b === 'run_peak' ? '값: 실행 전체 최대값 (재생 데이터)' : '값: 후보 시점 관찰창')),
+        sat.length ? '센서 포화 ' + sat.join(' · ') : null,
+      ].filter(Boolean).join(' · ') }),
+      el('div', {},
+        el('h3', { textContent: '2차 확인 (서버) · 기준 미검증' }),
+        el('div', { textContent: `사후 무동작  ${still}` })));
+  }
+
+  /** 서버 판정(/device-api/indicators)으로 열린 예전 사고의 근거 */
+  function renderEvidence(ev) {
+    if (!ev || !ev.traces) return null;
+    return el('div', {},
+      el('h3', { textContent: `판정 근거 (서버 판정) — ${DECISION[ev.decision] || ev.decision}${ev.mode !== 'live' ? ' · ' + ev.mode : ''}${ev.producer ? ' · ' + ev.producer : ''}` }),
+      el('ol', {}, ...ev.traces.map((t) => el('li', { textContent:
+        `[${t.fired ? '발동' : t.blocked_by ? '판정 불가' : '미발동'}] ${RULE[t.rule] || t.rule}: ` +
+        Object.entries(t.inputs).map(([k, v]) => `${k} ${fmt(v)}`).join(', ') + '  / 기준 ' +
+        Object.entries(t.thresholds).map(([k, v]) => `${k} ${v}`).join(', ') +
+        (t.blocked_by ? ` (${t.blocked_by})` : '') }))),
+      el('div', { className: 'muted', textContent: '지표: ' + ev.indicators.map((i) => `${i.key} ${fmt(i.value)}${i.unit ? ' ' + i.unit : ''}${i.state !== 'ok' ? '(' + i.state + ')' : ''}`).join(' · ') }));
+  }
+
+  // ── 타임라인 ──────────────────────────────────────────────────
+  const SOURCE = { tag: '태그', phone: '휴대폰', device: '감지 기기', test: '개발용 감지 테스트' };
+  const EVENT = {
+    detected: (d) => (d && d.via === 'router' ? '사고 후보 감지 (지표 라우터)' : d && d.source === 'test' ? '개발용 감지 테스트' : `사고 감지 (${SOURCE[d && d.source] || '기기'})`),
+    evidence_inconsistent: '근거 불일치 — 지표팀에 로그 전달', rider_help: '라이더 도움 요청', rider_ok: '라이더 괜찮아요',
+    rider_ok_after_escalation: '라이더 괜찮아요 (에스컬레이션 후)',
+    escalated: (d) => `에스컬레이션${d && d.reason ? ' — ' + (REASON[d.reason] || d.reason) : ''}`,
+    contact_notified: (d) => (d && d.demo ? '(데모) 비상연락 문자 — 실제 발송 안 함' : '비상연락 문자 발송'),
+    contact_acknowledged: '연락처가 확인함', contact_notify_failed: '문자 발송 실패',
+    no_contacts: '등록된 비상연락처 없음', order_held: '주문 보류 · 대체배차 요청',
+    order_reassigned: (d) => (d && d.demo ? '대체배차 완료 (데모 — 실제 요청 안 함)' : '대체배차 완료'),
+    emergency_reported: (d) => (d && d.demo ? '(데모) 119 신고문 작성 — 실제 신고 안 함' : '119 자동 신고'),
+    emergency_report_failed: '119 자동 신고 실패',
+    emergency_updated: (d) => (d && d.demo ? '(데모) 119 후속 문자 — 실제 발송 안 함' : '119 후속 문자'),
+    emergency_update_failed: '119 후속 문자 실패', rider_notified: '라이더 휴대폰 알림', resolved: '대응 종료', sensor_log_saved: '센서 로그 저장',
+    superseded: '다음 재생 데이터로 대체되어 종료', center_reviewing: '상담원 배정 (예전 기록)',
+  };
+  const eventText = (e) => { const t = EVENT[e.type]; return typeof t === 'function' ? t(e.data) : t || e.type; };
+  const REASON = { no_response: '무응답', rider_requested: '라이더 도움 요청' };
+  const RELATION = { family: '가족', coworker: '동료', other: '지인' };
+  const ORDER = { assigned: '배달 중', held: '보류됨', reassigned: '대체배차 완료', delivered: '배달 완료' };
+
+  // #incident=<id> 로 바로 열 수 있다 (수신 응답의 url)
+  let selected = (location.hash.match(/incident=([^&]+)/) || [])[1] || null;
+
+  // 서버가 OPS_TOKEN 없이 떴을 때(로컬 개발)만 개발용 토큰이 들어온다. 운영에서는 빈 값
+  const DEFAULT_TOKEN = /*DEFAULT_TOKEN*/'';
+  $('token').value = localStorage.getItem('ops.token') || DEFAULT_TOKEN;
+  $('token').addEventListener('change', () => { localStorage.setItem('ops.token', $('token').value); refresh(); });
+
+  class AuthError extends Error {}
+  const WAKE_MS = 10000;
+  const GIVE_UP_MS = 70000;
+
+  /** 10초 넘게 답이 없으면 '깨우는 중' 안내. 무료 서버는 잠들었다 깨는 데 1분쯤 걸린다 */
+  async function api(path) {
+    const ctrl = new AbortController();
+    const slow = setTimeout(() => showProblem('서버를 깨우는 중이에요 (최대 1분)'), WAKE_MS);
+    const stop = setTimeout(() => ctrl.abort(), GIVE_UP_MS);
+    try {
+      const res = await fetch('/ops/api' + path, { headers: { authorization: 'Bearer ' + $('token').value }, signal: ctrl.signal });
+      const json = await res.json().catch(() => ({}));
+      if (res.status === 401) throw new AuthError('모니터 토큰이 올바르지 않아요');
+      if (!res.ok) throw new Error(json.error?.message || `서버 오류 (${res.status})`);
+      return json;
+    } catch (e) {
+      if (e.name === 'AbortError') throw new Error('서버가 응답하지 않아요 — 잠시 후 다시 시도해요');
+      if (e instanceof TypeError) throw new Error('서버에 연결할 수 없어요 — 다시 시도하는 중');
+      throw e;
+    } finally {
+      clearTimeout(slow);
+      clearTimeout(stop);
+    }
+  }
+
+  function showProblem(message, auth = false) {
+    $('error').textContent = message;
+    $('token').classList.toggle('bad', auth);
+    // 목록이 아직 한 번도 안 떴으면 '불러오는 중…' 에 멈춰 있지 않게 목록 자리에도 띄운다
+    if (!loaded) $('list').replaceChildren(el('div', { className: 'empty err', textContent: message + (auth ? ' — 위 칸에 토큰을 넣어 주세요' : '') }));
+    if (auth) $('token').focus();
+  }
+
+  // 14:00:03 (한국 시간). 저장은 UTC 다
+  const time = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Seoul' }) : '-');
+  const el = (tag, props = {}, ...children) => {
+    const node = Object.assign(document.createElement(tag), props);
+    node.append(...children.filter((c) => c != null));
+    return node;
+  };
+
+  let loaded = false;
+  let running = false;
+  async function refresh() {
+    if (running) return;
+    running = true;
+    try {
+      const [{ items }, recent] = await Promise.all([api('/incidents'), api('/detections')]);
+      loaded = true;
+      $('error').textContent = '';
+      $('token').classList.remove('bad');
+      renderRecent(recent.items);
+      $('list').replaceChildren(...(items.length ? items.map(renderItem) : [el('div', { className: 'empty', textContent: demoMode ? '최근 하루 동안 열린 사고가 없어요.' : '최근 하루 동안 에스컬레이션된 사고가 없어요.' })]));
+      if (selected) await showDetail(selected);
+    } catch (e) {
+      showProblem(e.message, e instanceof AuthError);
+    } finally {
+      running = false;
+    }
+  }
+
+  /** 최근 수신 — 사고를 열지 않은 판정(정상 실행)도 여기 남는다 */
+  function renderRecent(items) {
+    $('recent').replaceChildren(...items.map((r) => el('div', { className: 'muted', textContent:
+      `최근 수신 ${time(r.receivedAt)} · ` +
+      (r.replay ? `${r.replay.runId} ${r.replay.scenarioName} (정답 ${truthText(r.replay.groundTruth)})` : `${r.detectionId}${r.rider ? ' · ' + r.rider : ''}`) +
+      ' → ' + (r.incidentId ? '사고 후보 · 사고 열림' : r.candidate ? '사고 후보 · 사고 안 열림' : '후보 아님 · 사고 안 열림') +
+      (r.warnings.length ? ` (${r.warnings.join(', ')})` : '') })));
+  }
+
+  function renderItem(it) {
+    return el('div', { className: 'item' + (it.id === selected ? ' sel' : ''), onclick: () => select(it.id) },
+      el('div', { className: 'row' },
+        el('span', { className: 'pill ' + it.status, textContent: STATUS[it.status] || it.status }),
+        it.level ? el('span', { className: 'pill ' + it.level, textContent: it.levelLabel }) : null,
+        it.riderResponse === 'help' && it.status !== 'resolved' ? el('span', { className: 'pill help', textContent: '도움 요청' }) : null,
+        el('b', { textContent: it.rider.name })),
+      el('div', { className: 'muted', textContent:
+        `감지 ${time(it.detectedAt)}${it.replay ? ` · ${it.replay.runId} ${it.replay.scenarioName}` : ''}` +
+        `${it.escalationReason ? ' · ' + REASON[it.escalationReason] : ''}${it.resolution ? ' · ' + (RESOLUTION[it.resolution] || it.resolution) : ''}` }));
+  }
+
+  function select(id) {
+    selected = id;
+    history.replaceState(null, '', '#incident=' + id);
+    refresh();
+  }
+
+  async function showDetail(id) {
+    let d;
+    try {
+      d = await api('/incidents/' + encodeURIComponent(id));
+    } catch (e) {
+      if (e instanceof AuthError) throw e;
+      $('detail').replaceChildren(el('div', { className: 'empty', textContent: `사고 ${id} 를 볼 수 없어요 — ${e.message}` }));
+      return;
+    }
+    $('detail').replaceChildren(
+      el('div', { className: 'row' },
+        el('h2', { textContent: d.rider.name }),
+        el('span', { className: 'pill ' + d.status, textContent: STATUS[d.status] || d.status }),
+        d.level ? el('span', { className: 'pill ' + d.level, textContent: d.levelLabel }) : null,
+        d.timeline.some((e) => e.type === 'emergency_reported' && e.data && e.data.demo)
+          ? el('span', { className: 'pill badge', textContent: '119 데모 — 실제 신고 안 함' })
+          : el('span', { className: 'pill ' + d.emergency, textContent: '119 ' + (EMERGENCY[d.emergency] || d.emergency) })),
+      el('dl', {},
+        el('dt', { textContent: '감지' }), el('dd', { textContent: `${time(d.detectedAt)}${d.escalationReason ? ' · ' + REASON[d.escalationReason] : ''}` }),
+        el('dt', { textContent: '종료' }), el('dd', { textContent: d.resolution ? RESOLUTION[d.resolution] || d.resolution : '진행 중' }),
+        el('dt', { textContent: '주문' }), el('dd', { textContent: d.order ? `${d.order.id} · ${d.order.storeName} → ${d.order.destination} (${ORDER[d.order.status] || d.order.status})` : '-' })),
+      d.detection ? renderDetection(d.detection, d.stillnessMinS) : renderEvidence(d.evidence),
+      el('div', {}, el('h3', { textContent: '비상연락망' }), el('ol', {}, ...d.contacts.map((c) =>
+        el('li', { textContent: `${c.name} (${RELATION[c.relation] || c.relation}) — ${c.notifiedAt ? '문자 ' + time(c.notifiedAt) : '미발송'}${c.acknowledgedAt ? ' · 확인 ' + time(c.acknowledgedAt) : ''}` })))),
+      el('div', {}, el('h3', { textContent: '타임라인' }), el('ol', {}, ...d.timeline.map((e) =>
+        el('li', { textContent: `${time(e.at)} ${eventText(e)}${e.data && e.data.priority ? ` (${e.data.priority}순위 ${e.data.name || ''})` : ''}${e.data && e.data.outcome ? ` — ${RESOLUTION[e.data.outcome] || e.data.outcome}` : ''}` })))),
+    );
+  }
+
+  // 데모 모드 표시 (인증 없는 /healthz). 실패해도 모니터는 그대로 쓴다
+  fetch('/healthz').then((r) => r.json()).then((h) => { demoMode = !!h.demo_mode; $('demo').style.display = demoMode ? 'inline-block' : 'none'; }).catch(() => {});
+  refresh();
+  setInterval(refresh, 3000);
+</script>
+</body>
+</html>

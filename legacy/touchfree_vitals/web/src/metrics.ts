@@ -1,7 +1,12 @@
 import {
   Activity,
   Droplets,
+  Eye,
+  EyeOff,
+  Gauge,
   Heart,
+  Timer,
+  TrendingUp,
   type LucideIcon,
   PersonStanding,
   Sun,
@@ -20,6 +25,14 @@ export const LABEL: Record<string, string> = {
   noise: '소음',
   occupancy: '재실',
   posture: '자세',
+  perclos: '눈감김',
+  blink_dur: '깜빡임',
+  reopen_ms: '재개안 지연',
+  blink_rate: '깜빡임 빈도',
+  head_drop: '고개 떨굼',
+  drowsy_score: '졸음 점수',
+  drowsy_trend: '졸음 추세',
+  drowsiness: '졸음',
 }
 
 export const ICON: Record<string, LucideIcon> = {
@@ -31,7 +44,31 @@ export const ICON: Record<string, LucideIcon> = {
   noise: Volume2,
   occupancy: PersonStanding,
   posture: Activity,
+  perclos: EyeOff,
+  blink_dur: Eye,
+  reopen_ms: Timer,
+  blink_rate: Eye,
+  head_drop: PersonStanding,
+  drowsy_score: Gauge,
+  drowsy_trend: TrendingUp,
+  drowsiness: Gauge,
 }
+
+/**
+ * 졸음 어댑터가 내는 지표. 전용 패널(DrowsinessPanel)이 통째로 맡으므로
+ * 보조 지표 카드에서는 뺀다 — 같은 값을 두 군데 그리면 어느 쪽이 최신인지
+ * 매번 확인하게 된다.
+ */
+export const DROWSINESS_KEYS = [
+  'drowsiness',
+  'drowsy_score',
+  'drowsy_trend',
+  'reopen_ms',
+  'blink_dur',
+  'blink_rate',
+  'head_drop',
+  'perclos',
+]
 
 export const MODE_LABEL: Record<Mode, string> = {
   live: '실측',
@@ -54,11 +91,29 @@ const POSTURE_LABEL: Record<string, string> = {
   lying: '누움',
 }
 
+/** 졸음 판정. 어댑터는 영문 키로 보내고 화면이 제 말로 옮긴다. */
+export const DROWSINESS_LABEL: Record<string, string> = {
+  awake: '각성',
+  warning: '주의',
+  drowsy: '졸음',
+  unknown: '판정 불가',
+}
+
+/** 판정별 색. 정상일 때는 조용히 둔다 — 늘 켜져 있는 화면이라 평소에 눈에 띄면 피로하다. */
+export const DROWSINESS_TONE: Record<string, string> = {
+  awake: 'text-muted',
+  warning: 'text-gold',
+  drowsy: 'text-alert',
+  unknown: 'text-faint',
+}
+
 export const ACTION_LABEL: Record<string, string> = {
   light_up: '조명 켬',
   ventilate: '환기',
   breathing_guide: '호흡 안내',
   notify_guardian: '보호자 알림',
+  drowsy_notice: '졸음 관심',
+  drowsy_alert: '졸음 위험 — 조명 상향',
 }
 
 // 개입 전후 비교에 나오는 키. 지표에서 파생된 값만 따로 적고 나머지는 LABEL 을
@@ -151,7 +206,8 @@ export function isWarmingUp(metric: Metric, stale: boolean): boolean {
  */
 export function displayValue(metric: Metric, stale: boolean): string | null {
   if (stale || metric.value === null) return null
-  if (typeof metric.value === 'string') return POSTURE_LABEL[metric.value] ?? metric.value
+  if (typeof metric.value === 'string')
+    return POSTURE_LABEL[metric.value] ?? DROWSINESS_LABEL[metric.value] ?? metric.value
   // 재실은 1/0 로 오지만 화면에 "1"이라고 띄우면 아무 뜻도 전달되지 않는다.
   if (metric.key === 'occupancy') return metric.value >= 0.5 ? '감지' : '없음'
   return String(metric.value)

@@ -22,7 +22,7 @@ log = structlog.get_logger(__name__)
 
 DEFAULT_PATH = Path("state/overrides.json")
 
-# core/adapters/rppg.py 가 받는 값과 같아야 한다. 여기서 한 번 더 좁히는 이유는
+# core/adapters/camera.py 가 받는 값과 같아야 한다. 여기서 한 번 더 좁히는 이유는
 # 화면에서 온 문자열이 그대로 어댑터 생성자로 들어가기 때문이다.
 CameraBackend = Literal["opencv", "picamera2"]
 

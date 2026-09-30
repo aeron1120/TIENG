@@ -20,6 +20,8 @@ import { useFeed } from '../snapshotContext'
 interface Status {
   available: boolean
   sources: string[]
+  /** 실측 프레임률. 요청값이 아니다 — 졸음 쪽 정확도가 여기 달려 있다. */
+  fps: number
 }
 
 const STATE_TEXT: Record<string, string> = {
@@ -47,6 +49,7 @@ export function CameraPanel({
   const [failed, setFailed] = useState(false)
 
   const serverCamera = status.data?.available === true
+  const fps = status.data?.fps ?? 0
   const device = useDeviceCamera(source === 'device' && on)
   const hero = variant === 'hero'
 
@@ -67,6 +70,12 @@ export function CameraPanel({
           <Camera className="h-3.5 w-3.5 text-gold" />
           카메라
         </h2>
+        {/* 서버 카메라의 실측 프레임률. 자기 기기 카메라에는 해당하지 않는다. */}
+        {source === 'server' && serverCamera && fps > 0 && (
+          <span className="tnum ml-auto mr-2 font-mono text-[11px] text-faint">
+            {fps.toFixed(0)} fps
+          </span>
+        )}
         <div className="flex items-center gap-1">
           <Action onClick={() => setZoom(true)} title="확대">
             <Maximize2 className="h-3.5 w-3.5" />

@@ -24,12 +24,14 @@ from api.routes.diagnostics import router as diagnostics_router
 from api.routes.export import router as export_router
 from api.routes.interventions import router as interventions_router
 from api.routes.layout import router as layout_router
+from api.routes.mode import router as mode_router
 from api.routes.rppg import router as rppg_router
 from api.routes.snapshot import router as snapshot_router
 from api.routes.system import router as system_router
 from api.schemas import Snapshot, server_now
 from api.ws import Hub
 from api.ws import router as ws_router
+from core import mode as run_mode
 from core import overrides, thresholds
 from core.csv_logs import InterventionCsvLogger, MetricCsvLogger
 from core.policy.runner import PolicyRunner
@@ -45,6 +47,11 @@ DEFAULT_CONFIG = Path("config/device.yaml")
 
 def _config_path() -> Path:
     return Path(os.environ.get("DEVICE_CONFIG") or DEFAULT_CONFIG)
+
+
+def _mode_path() -> Path:
+    # 기기 설정이 아니라 사용 흔적이라 state/ 에 둔다 — layout.json 과 같은 자리.
+    return Path(os.environ.get("TFV_MODE_PATH") or run_mode.DEFAULT_PATH)
 
 
 def _users_store() -> Users | PgUsers:
@@ -137,7 +144,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 화면에서 바꾼 값이 재시작 후에도 남아야 한다. device.yaml 은 손으로 적는
     # 기본값이고, 그 위에 덮는다 (core/overrides.py).
     registry = Registry.from_yaml(path, overrides.load())
+    # 저장된 모드를 먼저 얹고 시작한다. start() 안에서 적용되므로, 졸음 모드로
+    # 꺼 둔 기기가 재부팅 뒤 잠깐이라도 심박을 다시 켜는 일이 없다.
+    mode_path = _mode_path()
+    saved_mode = run_mode.load(mode_path)
+    registry.mode = saved_mode.mode
+    registry.subject = saved_mode.subject
     await registry.start()
+    app.state.mode_path = mode_path
+    log.info("mode.restored", mode=registry.mode, subject=registry.subject or "(공용)")
 
     users = _users_store()
     users.init()
@@ -152,7 +167,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.registry = registry
     app.state.config_path = path
     app.state.runner = PolicyRunner(registry.policies, sink=interventions_csv)
-    app.state.hub = Hub()
+    # 보는 사람이 없으면 카메라를 놓는다. 화면을 닫았는데 LED 가 남아 있으면
+    # 그 기기는 무엇을 하고 있는지 모르는 기기가 된다.
+    app.state.hub = Hub(on_watched=registry.set_watched)
     app.state.latest = None
     # 세션 토큰 -> 그 세션이 자기 기기 카메라로 만든 지표. 여기 있는 값은 그
     # 세션에게만 나간다 (api/ws.py). 채우는 쪽은 api/routes/rppg.py 다.
@@ -165,6 +182,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.layouts = {}
     app.state.metrics_csv = metrics_csv
 
+    # 기동 때 열어 장치 유무를 확인했으니 첫 구독자가 붙을 때까지 놓아 둔다.
+    await registry.set_watched(False)
+
     task = asyncio.create_task(_sample_loop(app))
     try:
         yield
@@ -174,6 +194,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await task
         except asyncio.CancelledError:
             pass
+        await app.state.hub.close()
         await app.state.runner.stop()
         await registry.stop()
         for logger in (metrics_csv, interventions_csv):
@@ -208,6 +229,7 @@ app.include_router(camera_router, dependencies=guest)
 # 여기서 나온 값은 그 세션에게만 돌아간다 (api/ws.py).
 app.include_router(rppg_router, dependencies=guest)
 app.include_router(layout_router, dependencies=guest)
+app.include_router(mode_router, dependencies=member)
 app.include_router(interventions_router, dependencies=member)
 app.include_router(system_router, dependencies=member)
 app.include_router(export_router, dependencies=member)

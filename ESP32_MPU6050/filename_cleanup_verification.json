@@ -1,0 +1,20 @@
+{
+  "status": "PASS",
+  "renamed_files": 45,
+  "data_files_byte_identical": 40,
+  "npz_waveforms": 29,
+  "csv_waveforms": 5,
+  "pdf_pages": 10,
+  "backup": "C:\\Users\\aeron\\OneDrive\\바탕 화면\\Tieng\\ESP32_MPU6050\\_backup\\filename_cleanup_20260930.zip",
+  "report": "C:\\Users\\aeron\\OneDrive\\바탕 화면\\Tieng\\pcx125_sim\\pcx125_helmet\\output\\pdf\\ESP32_MPU6050_데이터_분석보고서.pdf",
+  "report_sha256": "9f12f3889bbe6c8326969e2811d309074f0d77c814ac334b46f608d335dad001",
+  "deployed_files": 59,
+  "checks": [
+    "source snapshot unchanged before edit",
+    "ZIP backup verified",
+    "all staged files match deployed files",
+    "40 CSV/NPZ SHA-256 preserved",
+    "active code parses and uses current paths",
+    "10 PDF pages rendered and visually reviewed"
+  ]
+}

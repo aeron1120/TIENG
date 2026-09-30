@@ -31,6 +31,16 @@ class EventSink(Protocol):
     def write_blocked(self, level: str, reason: str, ts: datetime) -> None: ...
 
 
+def _key(policy: InterventionPolicy) -> str:
+    """쿨다운과 사유 기록의 열쇠.
+
+    레벨만으로는 부족하다. 같은 레벨을 쓰는 정책이 둘 이상 있을 수 있고(졸음
+    사다리의 L4 와 l4_guardian), 그러면 한쪽이 발화한 것이 다른 쪽의 쿨다운이 된다.
+    CSV 와 로그에는 그대로 레벨을 적는다 — 읽는 사람에게는 그게 이름이다.
+    """
+    return f"{type(policy).__module__}:{policy.level}"
+
+
 class PolicyRunner:
     def __init__(self, policies: list[InterventionPolicy], sink: EventSink | None = None) -> None:
         self.policies = policies
@@ -107,10 +117,11 @@ class PolicyRunner:
 
     async def _maybe_fire(self, snapshot: Snapshot, now: float) -> None:
         for policy in self.policies:
-            last = self._last_fire.get(policy.level)
+            key = _key(policy)
+            last = self._last_fire.get(key)
             if last is not None and now - last < policy.cooldown_s:
-                self._note(policy.level, f"쿨다운 {policy.cooldown_s}초 대기 중", snapshot.ts,
-                           record=False)
+                self._note(key, policy.level, f"쿨다운 {policy.cooldown_s}초 대기 중",
+                           snapshot.ts, record=False)
                 continue
 
             try:
@@ -122,7 +133,7 @@ class PolicyRunner:
             if not ready:
                 # 주 조건이 맞았는데 막힌 경우만 CSV 에 남긴다. 매 틱 남기면
                 # "조건 안 맞음" 행이 파일을 덮어 정작 필요한 기록이 묻힌다.
-                self._note(policy.level, policy.last_reason, snapshot.ts,
+                self._note(key, policy.level, policy.last_reason, snapshot.ts,
                            record=policy.near_miss)
                 continue
 
@@ -132,10 +143,10 @@ class PolicyRunner:
                 log.warning("policy.fire_failed", level=policy.level, error=str(exc))
                 continue
 
-            self._last_fire[policy.level] = now
+            self._last_fire[key] = now
             self._recent.append(event)
             self._pending.append((policy, event, now + policy.evaluate_after_s))
-            self._last_note.pop(policy.level, None)
+            self._last_note.pop(key, None)
             if self._sink is not None:
                 self._sink.write_event(event)
             log.info(
@@ -143,10 +154,12 @@ class PolicyRunner:
                 action=event.action, trigger=event.trigger,
             )
 
-    def _note(self, level: str, reason: str, ts: datetime, *, record: bool) -> None:
-        if self._last_note.get(level) == reason:
+    def _note(
+        self, key: str, level: str, reason: str, ts: datetime, *, record: bool
+    ) -> None:
+        if self._last_note.get(key) == reason:
             return
-        self._last_note[level] = reason
+        self._last_note[key] = reason
         log.debug("policy.held", level=level, reason=reason)
         if record and self._sink is not None:
             self._sink.write_blocked(level, reason, ts)

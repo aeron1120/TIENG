@@ -1,0 +1,36 @@
+# Raspberry Pi Camera Module 3 (CSI, picamera2). **미측정.**
+#
+# 웹캠과 다른 점:
+#   - 고프레임률을 낼 수 있다 (설정에 fps: 60). 실측을 /api/camera 의 fps 로 확인할 것.
+#   - CPU 가 약하다. YuNet + rPPG 를 동시에 돌리면 서로 깎이므로 졸음 모드를 쓴다.
+#   - NoIR 로 바꾸면 개안도 원값의 범위가 통째로 달라진다 -> openness 를 다시 잡을 것.
+name: rasp_cam
+measured: false
+notes: "미측정. web_cam 복사본. NoIR 로 바꾸면 openness 부터 다시 잰다."
+window_s: 60
+baseline_s: 90
+geometry:
+  eye_box_w: 0.45
+  eye_box_h: 0.32
+  min_iod_px: 40
+  yunet_score: 0.6
+  yunet_nms: 0.3
+openness:
+  open_pctl: 90
+  closed_pctl: 2
+  min_samples: 60
+  min_span: 0.10
+blink:
+  enter: 0.55
+  exit: 0.35
+  min_s: 0.03
+  max_s: 1.20
+score:
+  z_full: 3.0
+  z_sd_floor_rel: 0.10
+  warn: 30
+  alert: 60
+  weights: { reopen: 0.35, duration: 0.25, blink_rate: 0.15, head: 0.15, perclos: 0.10 }
+track:
+  min_rate: 0.45
+  keep_rate: 0.30

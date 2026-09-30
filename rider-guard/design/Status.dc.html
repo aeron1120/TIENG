@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>사고 대응 진행 상황</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&amp;family=IBM+Plex+Sans+KR:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F4F1EA}
+a{color:#C2410C}a:hover{color:#9A3412}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; padding: 52px 20px 28px; display: flex; flex-direction: column; gap: 16px; background: #F4F1EA; color: #16181D; font-family: 'IBM Plex Sans KR', system-ui, sans-serif">
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="align-self: flex-start; padding: 5px 10px; border-radius: 999px; background: #FDE3D3; color: #9A3412; font-size: 12px; font-weight: 700">사고 대응 진행 중</div>
+<h1 style="margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px">도움 요청이 접수됐어요</h1>
+<p style="margin: 0; font-size: 14px; line-height: 1.5; color: #5B5E66">관제센터가 상황을 확인하고 있어요. 이 화면을 닫아도 대응은 계속돼요.</p>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+<a href="tel:119" style="display: flex; align-items: center; justify-content: center; gap: 8px; height: 56px; border-radius: 14px; background: #C2410C; color: #FFFFFF; font-size: 16px; font-weight: 700; text-decoration: none"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h4l2 5-3 2a11 11 0 0 0 5 5l2-3 5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"></path></svg>119 전화</a>
+<a href="tel:0000" style="display: flex; align-items: center; justify-content: center; height: 56px; border-radius: 14px; border: 1.5px solid #16181D; box-sizing: border-box; background: #FFFFFF; color: #16181D; font-size: 16px; font-weight: 700; text-decoration: none">관제센터 전화</a>
+</div>
+<div style="display: flex; flex-direction: column; padding: 18px 18px 6px; background: #FFFFFF; border: 1px solid #DDD6C8; border-radius: 16px">
+<div style="font-size: 14px; font-weight: 700; padding-bottom: 12px">대응 단계</div>
+<sc-for list="{{steps}}" as="s" hint-placeholder-count="6">
+<div style="display: flex; gap: 14px">
+<div style="display: flex; flex-direction: column; align-items: center; width: 20px">
+<sc-if value="{{s.done}}" hint-placeholder-val="{{ true }}">
+<div style="width: 20px; height: 20px; border-radius: 10px; background: #16181D; display: flex; align-items: center; justify-content: center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg></div>
+</sc-if>
+<sc-if value="{{s.now}}" hint-placeholder-val="{{ false }}">
+<div style="width: 20px; height: 20px; border-radius: 10px; background: #FFFFFF; border: 5px solid #C2410C; box-sizing: border-box"></div>
+</sc-if>
+<sc-if value="{{s.todo}}" hint-placeholder-val="{{ false }}">
+<div style="width: 20px; height: 20px; border-radius: 10px; background: #FFFFFF; border: 2px solid #C9C2B4; box-sizing: border-box"></div>
+</sc-if>
+<sc-if value="{{s.line}}" hint-placeholder-val="{{ true }}">
+<div style="width: 2px; flex-grow: 1; min-height: 18px; background: #DDD6C8"></div>
+</sc-if>
+</div>
+<div style="display: flex; flex-direction: column; gap: 1px; padding-bottom: 14px; flex-grow: 1">
+<div style="display: flex; justify-content: space-between; gap: 8px">
+<div style="font-size: 14px; font-weight: 600">{{s.label}}</div>
+<div style="font-size: 12px; color: #5B5E66; font-family: 'IBM Plex Mono', monospace">{{s.time}}</div>
+</div>
+<div style="font-size: 13px; color: #5B5E66">{{s.sub}}</div>
+</div>
+</div>
+</sc-for>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px; padding: 16px 18px; background: #FFFFFF; border: 1px solid #DDD6C8; border-radius: 16px">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="font-size: 14px; font-weight: 700">진행 중이던 주문</div>
+<div style="padding: 4px 9px; border-radius: 999px; background: #DBE4FB; color: #1D3FA8; font-size: 12px; font-weight: 700">보류됨</div>
+</div>
+<div style="font-size: 14px">[매장명] → [배달지]</div>
+<div style="font-size: 13px; color: #5B5E66">대체배차를 요청했고, 매장과 고객에게 지연 안내가 나갔어요. 라이더님이 따로 연락할 필요는 없어요.</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const raw = [
+      { label: '충격 감지', time: '21:42:05', sub: '감지 기기에서 사고 이벤트 수신', st: 'done' },
+      { label: '라이더 응답: 도움 요청', time: '21:42:19', sub: '확인 화면에서 직접 요청', st: 'done' },
+      { label: '비상연락 1순위 문자 발송', time: '21:42:20', sub: '현재 위치 링크 포함', st: 'done' },
+      { label: '관제센터 확인', time: '진행 중', sub: '담당자가 사고 내용을 검토하고 있어요', st: 'now' },
+      { label: '대체배차 완료', time: '', sub: '다른 라이더에게 주문 인계', st: 'todo' },
+      { label: '사고기록 저장', time: '', sub: '보험·산재 접수에 쓸 수 있어요', st: 'todo' }
+    ];
+    return {
+      steps: raw.map((s, i) => ({
+        label: s.label, time: s.time, sub: s.sub,
+        done: s.st === 'done', now: s.st === 'now', todo: s.st === 'todo',
+        line: i < raw.length - 1
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>

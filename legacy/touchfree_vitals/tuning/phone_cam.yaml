@@ -1,0 +1,39 @@
+# 폰 카메라. **미측정 — web_cam 을 베낀 출발점이다.**
+#
+# 폰이 웹캠과 다른 점:
+#   - 프레임률이 보통 더 높다 (60~240fps). 높으면 깜빡임을 훨씬 잘 자르므로
+#     blink.min_s 를 내릴 수 있고, 재개안 속도(AVR)도 비로소 잴 수 있다.
+#   - 화각이 좁고 해상도가 높아 같은 거리에서 얼굴이 크게 잡힌다 -> min_iod_px 재검토
+#   - 자동 노출/HDR 이 공격적이라 개안도 원값의 범위가 다를 수 있다
+#
+# 붙인 뒤 순서: 눈 상자가 제자리인지 미리보기로 확인 -> 음성 대조 -> 숫자 갱신.
+name: phone_cam
+measured: false
+notes: "미측정. web_cam 복사본."
+window_s: 60
+baseline_s: 90
+geometry:
+  eye_box_w: 0.45
+  eye_box_h: 0.32
+  min_iod_px: 60
+  yunet_score: 0.6
+  yunet_nms: 0.3
+openness:
+  open_pctl: 90
+  closed_pctl: 2
+  min_samples: 60
+  min_span: 0.10
+blink:
+  enter: 0.55
+  exit: 0.35
+  min_s: 0.03
+  max_s: 1.20
+score:
+  z_full: 3.0
+  z_sd_floor_rel: 0.10
+  warn: 30
+  alert: 60
+  weights: { reopen: 0.35, duration: 0.25, blink_rate: 0.15, head: 0.15, perclos: 0.10 }
+track:
+  min_rate: 0.45
+  keep_rate: 0.30

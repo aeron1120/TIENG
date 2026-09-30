@@ -50,12 +50,72 @@ export function recentLocation() {
 }
 
 /**
- * 지도 가운데에 둘 위치 — 보호 중 모은 마지막 위치, 없으면 서울 기본 좌표(시뮬레이션, 역삼역).
+ * 지도 가운데에 둘 위치 — 보호 중 모은 마지막 위치, 없으면 기기 GPS 현재 위치, 그것도 없으면 서울 기본 좌표(시뮬레이션, 역삼역).
  * const pos = useRiderPosition(); <RiderMap location={pos} … />  — pos.simulated 면 시뮬레이션 위치.
  */
 export function useRiderPosition(): SimPosition {
   const { last } = useLocationState();
-  return useMemo(() => simPosition(last ? { lat: last.lat, lng: last.lng, accuracy: last.accuracy ?? null, recordedAt: last.recordedAt } : null), [last]);
+  // 보호 중 수집한 위치가 없으면 기기 GPS 현재 위치 — 이 화면에 있는 동안 GPS 를 연다
+  const { fix } = useDevicePosition();
+  const real = last ?? fix;
+  return useMemo(() => simPosition(real ? { lat: real.lat, lng: real.lng, accuracy: real.accuracy ?? null, recordedAt: real.recordedAt } : null), [real]);
+}
+
+// ── 화면 표시용 현재 위치 (휴대폰·브라우저 GPS) ─────────────────
+
+/**
+ * 지도에 띄울 '지금 여기' — 기기 자체 GPS(웹은 브라우저 위치). 헬멧 센서와 무관하다.
+ * 화면에 보여 주기만 하고 서버로 보내지 않는다 — 수집·전송은 운행 세션 중 useLocationTracking 만 한다(설계문서 2.1).
+ * 여러 화면이 써도 GPS 구독은 하나만 연다.
+ */
+type DeviceFix = { lat: number; lng: number; accuracy: number | null; recordedAt: string };
+type DeviceState = { status: 'idle' | 'locating' | 'ok' | 'denied' | 'unavailable'; fix: DeviceFix | null };
+let device: DeviceState = { status: 'idle', fix: null };
+const deviceListeners = new Set<() => void>();
+const setDevice = (patch: Partial<DeviceState>) => {
+  device = { ...device, ...patch };
+  deviceListeners.forEach((l) => l());
+};
+let deviceWatch: { remove(): void } | null = null;
+let deviceUsers = 0;
+
+async function startDeviceWatch() {
+  setDevice({ status: device.fix ? 'ok' : 'locating' });
+  try {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') return setDevice({ status: 'denied' });
+    const sub = await Location.watchPositionAsync(
+      { accuracy: Location.Accuracy.High, timeInterval: 5_000, distanceInterval: 5 },
+      (pos) => setDevice({ status: 'ok', fix: { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy ?? null, recordedAt: new Date(pos.timestamp).toISOString() } }),
+    );
+    // 기다리는 사이 화면을 모두 떠났으면 바로 닫는다
+    if (deviceUsers === 0) sub.remove();
+    else deviceWatch = sub;
+  } catch {
+    // 위치 서비스 꺼짐·HTTPS 아님·기기에 GPS 없음
+    setDevice({ status: 'unavailable' });
+  }
+}
+
+export function useDevicePosition(): DeviceState {
+  useEffect(() => {
+    deviceUsers++;
+    if (deviceUsers === 1 && !deviceWatch) void startDeviceWatch();
+    return () => {
+      deviceUsers--;
+      if (deviceUsers === 0) {
+        deviceWatch?.remove();
+        deviceWatch = null;
+      }
+    };
+  }, []);
+  return useSyncExternalStore(
+    (l) => {
+      deviceListeners.add(l);
+      return () => deviceListeners.delete(l);
+    },
+    () => device,
+  );
 }
 
 const toPoint = (pos: Location.LocationObject): LocationPoint => ({

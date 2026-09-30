@@ -16,7 +16,7 @@ import { useToast } from '@/components/Toast';
 import { Button, Card, Divider, FadeIn, FadeSwap, IconCircle, Screen, Sheet, Skeleton, Txt } from '@/components/ui';
 import { acceptanceSummaryText, useContactAcceptance } from '@/features/contactSim';
 import { helmetInfo, helmetStatusText, useHelmet } from '@/features/helmet';
-import { recentLocation, useLocationState, useRiderPosition } from '@/features/location';
+import { recentLocation, useDevicePosition, useLocationState } from '@/features/location';
 import { riderDisplayName, useNow, useSimNotifications, wearTime, type SimNotification } from '@/features/sim';
 import { timeAgo, timeHM } from '@/lib/format';
 import { colors, font, radius, typography } from '@/theme';
@@ -77,7 +77,8 @@ export default function HomeScreen() {
   const { data: me, error: meError, refetch } = useMe({ refetchInterval: 15_000 });
   const helmet = useHelmet();
   const location = useLocationState();
-  const position = useRiderPosition();
+  // 지도는 휴대폰·브라우저 자체 GPS 로 '지금 여기'를 띄운다 (헬멧 센서와 무관, 서버로 보내지 않음)
+  const gps = useDevicePosition();
   const test = useCreateIncident();
   const toast = useToast();
   const acceptance = useContactAcceptance(me?.contacts);
@@ -137,7 +138,12 @@ export default function HomeScreen() {
   const info = helmetInfo(me?.device, worn);
   const contacts = me?.contacts ?? [];
   const lastLocation = me?.lastLocation;
-  const address = lastLocation?.address ?? (lastLocation ? `${lastLocation.lat.toFixed(4)}, ${lastLocation.lng.toFixed(4)}` : '위치 기록 없음');
+  const here = gps.fix;
+  const known = lastLocation ?? here;
+  const address = lastLocation?.address ?? (known ? `${known.lat.toFixed(4)}, ${known.lng.toFixed(4)}` : '위치 기록 없음');
+  const mapLabel = here ? '지금 여기' : lastLocation ? `${timeHM(lastLocation.recordedAt)} 마지막 위치` : null;
+  // 실제 위치가 없을 때만 — 서울 기본 좌표를 보여 주는 이유를 알린다
+  const mapNote = here || lastLocation ? null : gps.status === 'locating' || gps.status === 'idle' ? '위치 찾는 중' : gps.status === 'denied' ? '위치 권한 꺼짐 · 모의 위치' : '모의 지도 위치';
   const copy = loading ? null : copyFor(kind, startedAt, address);
 
   // 위치를 못 받으면 사고 때 위치를 알릴 수 없다 — 디자인에 없는 안내라 보호 중일 때만.
@@ -193,12 +199,12 @@ export default function HomeScreen() {
       <FadeIn delay={40} style={styles.mapCardWrap}>
         <Card style={styles.mapCard}>
           <RiderMap
-            location={lastLocation ?? (position.simulated ? null : position)}
-            label={lastLocation ? `${timeHM(lastLocation.recordedAt)} 마지막 위치` : null}
+            location={here ?? lastLocation ?? null}
+            label={mapLabel}
             height={228}
             radius={radius.card}
             dim={!loading && !active}
-            accessibilityLabel={lastLocation ? `지도, ${timeHM(lastLocation.recordedAt)} 마지막 위치` : '지도, 위치 기록 없음 · 배경 지도는 모의 위치'}
+            accessibilityLabel={mapLabel ? `지도, ${mapLabel}` : '지도, 위치 기록 없음 · 배경 지도는 모의 위치'}
             topLeft={
               copy ? (
                 <FadeSwap swapKey={copy.pill}>
@@ -206,7 +212,7 @@ export default function HomeScreen() {
                 </FadeSwap>
               ) : null
             }
-            topRight={!lastLocation ? <MapPill label="모의 지도 위치" /> : null}
+            topRight={mapNote ? <MapPill label={mapNote} /> : null}
             bottomLeft={<MapPill label="동의한 공개 범위에 따라 위치 전달" icon={<LockIcon size={16} color={colors.text} />} />}
           />
 
@@ -222,7 +228,7 @@ export default function HomeScreen() {
               <View style={styles.vline} />
               <Metric icon={<WaveformIcon size={16} color={colors.textFaint} />} label="음성 응답" value={voiceText} loading={loading} width={32} />
               <View style={styles.vline} />
-              <Metric icon={<MapPinIcon size={16} color={colors.textFaint} />} label="마지막 위치" value={lastLocation ? timeAgo(lastLocation.recordedAt, now) : '기록 없음'} loading={loading} width={60} />
+              <Metric icon={<MapPinIcon size={16} color={colors.textFaint} />} label="마지막 위치" value={here ? '지금' : lastLocation ? timeAgo(lastLocation.recordedAt, now) : '기록 없음'} loading={loading} width={60} />
             </View>
           </View>
         </Card>

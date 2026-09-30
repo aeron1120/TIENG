@@ -35,12 +35,15 @@ npm start
 
 ## 배포 (Render + Turso, 둘 다 무료)
 
+웹 앱은 Cloudflare Pages의 https://tieng.pages.dev 에 배포한다.
+Pages 빌드와 Google OAuth 설정은 [배포 안내](docs/deployment.md)를 참고한다.
+
 같은 Wi-Fi 가 아니어도 쓰려면 서버와 DB 를 클라우드에 두고, 앱은 코드가 들어간 APK 로 만든다.
 
 1. DB — Turso 에 데이터베이스를 만들고 주소(`libsql://…turso.io`)와 토큰을 받는다. 스키마는 서버가 처음 뜰 때 만든다.
 2. 서버 — Render 대시보드 → New → Blueprint → 이 저장소, Blueprint 경로 `rider-guard/render.yaml`.
    `DATABASE_URL`·`DATABASE_AUTH_TOKEN` 은 이때 대시보드에 넣는다(저장소에 적지 않는다). `OPS_TOKEN` 은 Render 가 만들고,
-   `PUBLIC_BASE_URL` 은 비워 두면 Render 주소(`https://<이름>.onrender.com`)를 쓴다. `Justin` 브랜치에 올리면 다시 배포된다.
+   `PUBLIC_BASE_URL` 은 비워 두면 Render 주소(`https://<이름>.onrender.com`)를 쓴다. 배포 브랜치는 `main`이다.
 3. 앱 — `cd apps/rider && npm run build:android:preview` — `eas.json` preview 프로필의 `EXPO_PUBLIC_API_URL`(Render 주소)이
    들어간 APK 를 만든다. Metro 없이 어디서나 동작한다. 개발 빌드와 패키지 이름이 같아 설치하면 개발 빌드를 대신한다.
    시연용이라 `EXPO_PUBLIC_SHOW_DEV_TOOLS` 로 홈의 '개발용 · 사고 감지 테스트' 버튼을 켜 둔다 (production 프로필에는 없음).
@@ -48,7 +51,8 @@ npm start
 지금 배포된 서버: `https://rider-guard-api.onrender.com` (운영 모니터 `/ops`, 토큰은 Render 대시보드의 `OPS_TOKEN`).
 운영 모니터는 읽기 전용이다 — 자동 대응이 어디까지 갔는지와 판정 근거만 보고, 위치·전화번호·의료정보는 보이지 않는다.
 토큰 칸은 서버가 `OPS_TOKEN` 없이 떴을 때(로컬)만 미리 채워진다.
-공개 저장소 주소로 연결한 서비스라 `Justin` 에 올려도 자동 배포되지 않는다 — Render 에서 Manual Deploy.
+기존 서비스가 `Justin`을 보고 있다면 Render Settings에서 `main`으로 바꾼다.
+공개 저장소 주소로 연결한 서비스는 자동 배포되지 않을 수 있으므로 Render에서 Manual Deploy로 최신 커밋을 배포한다.
 
 - 무료 Render 는 15분 동안 요청이 없으면 잠들고, 첫 요청이 30~60초 걸린다. 운행 중에는 위치를 15초마다 보내 깨어 있다.
 - Turso 는 읽은 행 수로 무료 한도를 센다 — 자주 도는 조회는 전부 인덱스를 타게 해 두었다(스키마 v3). `GET /me` 는 조회를 한 번에 묶어 보낸다.
@@ -72,7 +76,7 @@ npm start
 - 비밀번호는 확인하기 전에 시도 횟수를 먼저 센다 — 동시에 수백 개를 보내도 잠금 창 하나에서 확인까지 가는 시도는 5번.
 - 회원 탈퇴는 앱 설정에서 (Google Play 정책). 진행 중인 사고가 있으면 거부. 위치 이용 기록은 위치정보법에 따라 남기고 184일(6개월)이 지나면 스케줄러가 지운다. 카카오 회원이면 카카오 연결 끊기를 보낸다(`KAKAO_ADMIN_KEY`, 실패하면 재시도).
 
-SNS 로그인은 서버가 인가 코드를 받는 방식이다 — 앱이 시스템 브라우저로 제공자 로그인을 열고, 제공자는 서버 콜백으로, 서버는 60초짜리 1회용 코드를 붙여 앱(`riderguard://auth/callback`)으로 돌려보낸다. 시크릿은 서버에만 있다.
+SNS 로그인은 서버가 인가 코드를 받는 방식이다 — 앱이 시스템 브라우저로 제공자 로그인을 열고, 제공자는 서버 콜백으로, 서버는 60초짜리 1회용 코드를 붙여 모바일 앱(`riderguard://auth/callback`) 또는 웹(`https://tieng.pages.dev/auth/callback`)으로 돌려보낸다. 시크릿은 서버에만 있다.
 1회용 코드는 로그인을 시작할 때 서버가 앱에만 준 `sessionKey` 가 있어야 토큰으로 바뀐다(PKCE 와 같은 역할) — 같은 스킴을 가로챈 다른 앱이나 남의 코드를 심은 링크로는 로그인되지 않는다. 앱은 이 키를 보안 저장소에 두므로, 로그인 중 안드로이드가 앱을 정리해도 돌아와서 마칠 수 있다.
 
 켜는 법: 제공자 콘솔에서 앱을 만들고 콜백 주소 `<PUBLIC_BASE_URL>/auth/oauth/<kakao|naver|google>/callback` 을 등록한 뒤, 키를 `apps/server/.env` 에 넣는다 (`.env.example` 참고). 두 값이 다 있는 제공자만 앱에 버튼이 보인다.

@@ -30,7 +30,7 @@ export const callbackUrl = (ctx: AppContext, provider: SocialProvider) => `${ctx
 
 /**
  * 로그인이 끝나고 돌아갈 앱 주소. 아무 주소나 받으면 로그인 코드를 남의 사이트로 넘기는 통로가 된다.
- * 운영: 앱 스킴(riderguard://)만. 개발: Expo Go(exp://)와 웹 개발 서버(http://localhost…)도.
+ * 운영: 앱 스킴(riderguard://)과 배포 웹의 정확한 콜백만. 개발: Expo Go와 localhost도.
  */
 function allowedAppRedirect(ctx: AppContext, raw: string): boolean {
   let url: URL;
@@ -40,6 +40,7 @@ function allowedAppRedirect(ctx: AppContext, raw: string): boolean {
     return false;
   }
   if (url.protocol === `${ctx.config.appScheme}:`) return true;
+  if (raw === 'https://tieng.pages.dev/auth/callback') return true;
   if (ctx.config.env === 'production') return false;
   if (url.protocol === 'exp:' || url.protocol === 'exps:') return true;
   return (url.protocol === 'http:' || url.protocol === 'https:') && (url.hostname === 'localhost' || url.hostname === '127.0.0.1');

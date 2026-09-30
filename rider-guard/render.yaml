@@ -8,7 +8,7 @@ services:
     plan: free
     # Turso DB(도쿄)와 가장 가까운 지역
     region: singapore
-    branch: Justin
+    branch: main
     rootDir: rider-guard/apps/server
     # 런타임에는 개발 도구가 필요 없다 (TypeScript 는 Node 24 가 바로 실행)
     buildCommand: npm ci --omit=dev

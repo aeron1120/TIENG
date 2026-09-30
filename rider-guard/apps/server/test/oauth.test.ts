@@ -11,6 +11,7 @@ const KEYS = {
   GOOGLE_CLIENT_SECRET: 'google-secret',
 };
 const APP = 'riderguard://auth/callback';
+const WEB_APP = 'https://tieng.pages.dev/auth/callback';
 type T = Awaited<ReturnType<typeof setup>>;
 
 /** 앱이 로그인 시작 → 제공자 로그인 주소에서 state 를 꺼낸다. sessionKey 는 앱만 가진다. */
@@ -48,6 +49,44 @@ test('로그인 버튼은 서버에 키가 둘 다 있는 제공자만', async (
   assert.deepEqual((await t.call('GET', '/auth/providers')).json, { email: true, social: ['kakao', 'google'] });
   const naver = await t.call('POST', '/auth/oauth/naver/start', { body: { redirectUri: APP } });
   assert.equal(naver.status, 404);
+});
+
+test('운영 웹: Google 콜백은 API 서버로, 로그인 결과는 tieng.pages.dev로 돌아온다', async () => {
+  const t = await setup({
+    ...KEYS,
+    NODE_ENV: 'production',
+    OPS_TOKEN: 'x'.repeat(24),
+    PUBLIC_BASE_URL: 'https://rider-guard-api.onrender.com',
+  });
+  const { url, state, sessionKey } = await start(t, 'google', WEB_APP);
+  assert.equal(url.searchParams.get('redirect_uri'), 'https://rider-guard-api.onrender.com/auth/oauth/google/callback');
+  t.socialProfiles.set('web-google-code', { provider: 'google', subject: 'web-rider', email: null, name: null, phone: null });
+  const back = await callback(t, 'google', { code: 'web-google-code', state });
+  assert.equal(back.status, 302);
+  const target = location(back);
+  assert.equal(target.origin + target.pathname, WEB_APP);
+  const result = await exchange(t, target.searchParams.get('code')!, sessionKey);
+  assert.equal(result.status, 200);
+  assert.ok(result.json.token);
+});
+
+test('운영 웹 복귀 주소는 등록된 콜백 하나만 허용한다', async () => {
+  const t = await setup({ ...KEYS, NODE_ENV: 'production', OPS_TOKEN: 'x'.repeat(24) });
+  for (const bad of [
+    'https://tieng.pages.dev.evil.example/auth/callback',
+    'https://preview.tieng.pages.dev/auth/callback',
+    'https://tieng.pages.dev@evil.example/auth/callback',
+    'https://user:pass@tieng.pages.dev/auth/callback',
+    'http://tieng.pages.dev/auth/callback',
+    'https://tieng.pages.dev/',
+    `${WEB_APP}/`,
+    `${WEB_APP}?next=https://evil.example`,
+    `${WEB_APP}#fragment`,
+  ]) {
+    const result = await t.call('POST', '/auth/oauth/google/start', { body: { redirectUri: bad } });
+    assert.equal(result.status, 400, bad);
+    assert.equal(result.json.error.code, 'invalid_redirect', bad);
+  }
 });
 
 test('카카오: 시작 → 콜백 → 앱으로 1회용 코드 → 토큰, 가입 정보는 제공자 값으로 미리 채운다', async () => {
@@ -138,7 +177,7 @@ test('1회용 코드는 로그인을 시작한 앱의 sessionKey 로만 바꿀 �
   assert.equal((await t.call('POST', '/auth/oauth/exchange', { body: { code: planted } })).status, 400);
 });
 
-test('돌아갈 앱 주소 제한: 운영은 앱 스킴만, 개발은 Expo Go·localhost 까지 (열린 리다이렉트 방지)', async () => {
+test('돌아갈 앱 주소 제한: 모바일 앱 스킴과 개발 환경의 Expo Go·localhost (열린 리다이렉트 방지)', async () => {
   const dev = await setup(KEYS);
   for (const ok of [APP, 'exp://10.0.0.5:8081/--/auth/callback', 'http://localhost:8081/auth/callback']) {
     assert.equal((await dev.call('POST', '/auth/oauth/kakao/start', { body: { redirectUri: ok } })).status, 200, ok);

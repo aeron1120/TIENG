@@ -565,3 +565,24 @@ export type OpsJudgmentDto = {
   incidentId: string | null;
   traces: RuleTrace[];
 };
+/** 운영 모니터: 지금 서버 규칙을 실측 기록(ESP32·MPU6050 29조건 1회차)에 다시 돌린 결과 */
+export type OpsRuleCheckDto = {
+  ruleVersion: string;
+  dataSource: DataSource;
+  /** 실험 판정과 후보 여부·첫 후보 시각이 모두 맞은 조건 수 / 전체 */
+  matched: number;
+  total: number;
+  items: {
+    id: string;
+    name: string;
+    class: string;
+    /** 이 1회차의 실험 당시 첫 후보 시각(초) */
+    expectedAt: number | null;
+    decision: SensorAnalysis['decision'];
+    candidateAt: number | null;
+    match: boolean;
+    passed: SensorMetricEvidence['key'][];
+    missingPackets: number;
+    dvValid: boolean;
+  }[];
+};

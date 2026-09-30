@@ -40,6 +40,9 @@
   .fired { font-weight:700; font-size:12px; padding:1px 8px; border-radius:999px; white-space:nowrap }
   .fired.on { background:var(--accent); color:#fff } .fired.off { background:#EDE9E0; color:#8A8C92 }
   .fired.none { border:1px solid var(--line); color:var(--muted) }
+  #rulecheck { margin:0 20px 20px; padding:14px 18px } #rulecheck summary { cursor:pointer; font-weight:700 }
+  #rulecheck table { margin-top:10px; font-size:13px } #rulecheck th { text-align:left; font-weight:600; color:var(--muted); padding:5px 8px }
+  .miss { color:var(--accent); font-weight:700 }
 </style>
 </head>
 <body>
@@ -55,6 +58,10 @@
   <section class="panel" id="list"><div class="empty">불러오는 중…</div></section>
   <section class="panel" id="detail"><div class="empty">왼쪽에서 사고를 선택하세요.</div></section>
 </main>
+<details class="panel" id="rulecheck">
+  <summary>실측 기록 규칙 대조 — ESP32·MPU6050 29조건 1회차</summary>
+  <div id="rulebody" class="muted">펼치면 지금 서버 규칙을 실측 기록에 다시 돌려요.</div>
+</details>
 <script>
   const $ = (id) => document.getElementById(id);
   const STATUS = { countdown: '라이더 확인 대기', escalated: '대응 중', cancelled: '종료', resolved: '종료' };
@@ -294,6 +301,35 @@
         el('li', { textContent: `${time(e.at)} ${eventText(e)}${e.data && e.data.priority ? ` (${e.data.priority}순위 ${e.data.name || ''})` : ''}${e.data && e.data.outcome ? ` — ${RESOLUTION[e.data.outcome] || e.data.outcome}` : ''}` })))),
     );
   }
+
+  // ── 실측 기록 규칙 대조 ───────────────────────────────────────
+  // 실험 당시 첫 후보 시각과 서버 규칙의 첫 후보 시각을 나란히 본다. 정확도·검출률로 부르지 않는다 — 1회차 29건뿐이다.
+  const CLASS = { accident: '사고', boundary: '경계', unrealized: '미재현', normal: '정상' };
+  const AN = { candidate: '사고 후보', no_candidate: '후보 없음', insufficient: '후보 없음 (판정창에 누락)' };
+  const KEY = { peak_g: '가속도', peak_gyro: '각속도', delta_v150: 'ΔV', bank_deg: '뱅크각' };
+  const sec = (v) => (v == null ? '—' : Number(v).toFixed(3) + ' s');
+  $('rulecheck').addEventListener('toggle', async () => {
+    if (!$('rulecheck').open) return;
+    $('rulebody').textContent = '불러오는 중…';
+    try {
+      const r = await api('/rule-check');
+      $('rulebody').replaceChildren(
+        el('p', { textContent: `규칙 ${r.ruleVersion} · 실험 판정과 ${r.matched}/${r.total} 일치. 출처: 사용자 확인 실측, 보드·펌웨어 기록 없음. 실세계 검출률이 아니에요.` }),
+        el('table', {},
+          el('tr', {}, ...['조건', '분류', '실험 첫 후보', '서버 판정', '서버 첫 후보', '통과 지표', '누락', 'ΔV'].map((h) => el('th', { textContent: h }))),
+          ...r.items.map((i) => el('tr', {},
+            el('td', { textContent: `${i.id} ${i.name}` }),
+            el('td', { textContent: CLASS[i.class] || i.class }),
+            el('td', { className: 'num', textContent: sec(i.expectedAt) }),
+            el('td', { className: i.match ? '' : 'miss', textContent: (AN[i.decision] || i.decision) + (i.match ? '' : ' · 불일치') }),
+            el('td', { className: 'num', textContent: sec(i.candidateAt) }),
+            el('td', { textContent: i.passed.map((k) => KEY[k] || k).join(' + ') || '—' }),
+            el('td', { className: 'num', textContent: String(i.missingPackets) }),
+            el('td', { textContent: i.dvValid ? '유효' : '일부 계산 불가' })))));
+    } catch (e) {
+      $('rulebody').textContent = e.message;
+    }
+  });
 
   // 데모 모드 표시 (인증 없는 /healthz). 실패해도 모니터는 그대로 쓴다
   fetch('/healthz').then((r) => r.json()).then((h) => { demoMode = !!h.demo_mode; $('demo').style.display = demoMode ? 'inline-block' : 'none'; }).catch(() => {});

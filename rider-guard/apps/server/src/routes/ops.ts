@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import type { OpsDetectionDto, OpsIncidentDetailDto, OpsIncidentDto, OpsJudgmentDto } from '@rider-guard/contract';
+import type { OpsDetectionDto, OpsIncidentDetailDto, OpsIncidentDto, OpsJudgmentDto, OpsRuleCheckDto } from '@rider-guard/contract';
 import { Hono } from 'hono';
 
 import { DEV_OPS_TOKEN } from '../config.ts';
@@ -9,6 +9,7 @@ import { ApiError, safeEqual } from '../lib.ts';
 import { recentDetections } from '../services/detections.ts';
 import { listForOps, opsDetail } from '../services/incidents.ts';
 import { listJudgments } from '../services/judgments.ts';
+import { measuredRuleCheck } from '../services/measured-cases.ts';
 
 const consoleHtml = readFileSync(new URL('../ops-console.html', import.meta.url), 'utf8');
 
@@ -18,6 +19,8 @@ const consoleHtml = readFileSync(new URL('../ops-console.html', import.meta.url)
  */
 export function opsRoutes(ctx: AppContext) {
   const app = new Hono();
+  // 규칙·기록이 배포 중에 바뀌지 않으니 한 번만 돌린다
+  let ruleCheck: OpsRuleCheckDto | undefined;
 
   // 개발용 기본 토큰은 서버가 그 토큰으로 떴을 때만 미리 채운다 — 운영 모니터에 엉뚱한 값이 들어가지 않게
   const page = ctx.config.opsToken === DEV_OPS_TOKEN
@@ -39,6 +42,9 @@ export function opsRoutes(ctx: AppContext) {
   app.get('/api/incidents', async (c) => c.json<{ items: OpsIncidentDto[] }>({ items: await listForOps(ctx) }));
 
   app.get('/api/incidents/:id', async (c) => c.json<OpsIncidentDetailDto>(await opsDetail(ctx, c.req.param('id'))));
+
+  // 배포된 규칙이 실측 기록의 실험 판정을 재현하는지 — 규칙을 바꿨을 때 여기서 어긋난 조건이 보인다
+  app.get('/api/rule-check', (c) => c.json<OpsRuleCheckDto>(ruleCheck ??= measuredRuleCheck()));
 
   return app;
 }

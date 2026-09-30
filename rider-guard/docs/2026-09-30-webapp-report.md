@@ -44,3 +44,13 @@ cd rider-guard/apps/server && node scripts/demo-cases.ts            # 판정 요
 # 로컬 서버 + 웹앱 로그인 + 운행 시작 후:
 RIDER_TOKEN=<토큰> node scripts/demo-cases.ts --post C3            # 기록 상세 화면에서 확인
 ```
+
+## 실측 기록 재생 (추가)
+
+- `legacy/moto_sensing/ESP32_MPU6050/data/REAL_*_repeat1.npz` 29조건 1회차를 `apps/server/fixtures/measured/*.json.gz`(사건 중심 −1.0~+0.5초, 880KB)로 옮겼다. 다시 만들기: `scripts/export-measured.py`(numpy 필요).
+  - 옮긴 것: 센서 시각·순번·원시 코드·가속도/각속도 크기·추정 뱅크각·추정 ΔV(NaN은 null+사유). 출처가 확인되지 않은 참조 채널(dv_true·roll_true·latent_*)은 옮기지 않았다.
+  - `dataSource: measured`, provenance에 '사용자 확인 실측, 보드·펌웨어·측정일 기록 없음'.
+- 결과: 현재 규칙 `imu-report-v1`이 29/29 조건에서 실험 판정의 후보 여부와 **첫 후보 시각(같은 표본)** 을 재현한다. 1회차 29건 대조일 뿐이며 검출률·오경보율로 일반화하지 않는다.
+- 운영 모니터 `/ops` 하단 '실측 기록 규칙 대조' (`GET /ops/api/rule-check`, 모니터 토큰 필요).
+- 데모: `node scripts/demo-cases.ts --measured [D6 B3 C3 | A1 …] [--post]`. 운영 서버는 replay라 사고를 열지 않는다(`not_live`).
+- 발견: 정상 주행 10건 중 8건은 판정창에 1~3개 순번 누락이 있어 `no_candidate`가 아니라 `insufficient`(판정 정보 부족)로 나온다. 사고를 열지는 않지만, 누락 한 표본을 '후보 없음'으로 볼지는 새 규칙 버전으로 따로 검증할 일이라 바꾸지 않았다(테스트에 현재 동작 고정).

@@ -18,15 +18,6 @@ import { KEYS, storage } from '@/lib/storage';
  * 안드로이드는 같은 복귀가 두 번 온다 — 브라우저 결과와, 딥링크로 열린 /auth/callback 화면. 한 코드는 한 번만 교환한다.
  */
 
-/** 웹: 이 창이 로그인 팝업이면 결과를 연 창에 넘긴다(연 창이 팝업을 닫는다). 이 창에서는 교환하지 않는다. */
-export const isAuthPopup = (() => {
-  try {
-    return WebBrowser.maybeCompleteAuthSession().type === 'success';
-  } catch {
-    return false;
-  }
-})();
-
 export type SocialResult = { kind: 'ok'; auth: AuthResponse } | { kind: 'cancelled' } | { kind: 'handled' };
 
 /**
@@ -44,10 +35,9 @@ function redirectUri() {
 const PENDING_TTL_MS = 10 * 60_000;
 type Pending = { sessionKey: string; startedAt: number };
 
-/** 진행 중인 로그인의 sessionKey 를 꺼내면서 지운다 (한 번만 쓴다) */
-async function takePending(): Promise<Pending | null> {
+/** Keep the key until exchange succeeds, so a network error can be retried after navigation. */
+async function readPending(): Promise<Pending | null> {
   const raw = await storage.get(KEYS.oauth).catch(() => null);
-  await storage.set(KEYS.oauth, null).catch(() => undefined);
   if (!raw) return null;
   try {
     const pending = JSON.parse(raw) as Pending;
@@ -57,12 +47,18 @@ async function takePending(): Promise<Pending | null> {
   }
 }
 
-const exchanged = new Set<string>();
+const exchanging = new Set<string>();
 
 export async function loginWithSocial(provider: SocialProvider): Promise<SocialResult> {
   const uri = redirectUri();
   const { authorizeUrl, sessionKey } = await api<OAuthStartResponse>('POST', `/auth/oauth/${provider}/start`, { redirectUri: uri });
   await storage.set(KEYS.oauth, JSON.stringify({ sessionKey, startedAt: Date.now() } satisfies Pending));
+  if (Platform.OS === 'web') {
+    // Full-page authorization keeps browser navigation within the user-initiated flow,
+    // and the exchange key survives the trip in localStorage.
+    window.location.assign(authorizeUrl);
+    return { kind: 'handled' };
+  }
   const result = await WebBrowser.openAuthSessionAsync(authorizeUrl, uri);
   // 안드로이드는 딥링크보다 '앱으로 돌아옴'을 먼저 알아채 dismiss 로 끝나기도 한다 — 그때는 /auth/callback 화면이 마무리하므로
   // sessionKey 를 지우지 않는다. 남은 키로는 이 로그인의 코드만 바꿀 수 있고, 10분 뒤에는 쓰지 않는다.
@@ -82,9 +78,15 @@ export async function completeSocialLogin(params: CallbackParams): Promise<Socia
     throw new ApiError(400, 'social_failed', error ? 'SNS 로그인에 실패했어요. 잠시 후 다시 시도해 주세요.' : 'SNS 로그인 응답이 올바르지 않아요.');
   }
   // 저장소를 읽기(비동기) 전에 표시한다 — 같은 코드가 두 경로로 거의 동시에 온다
-  if (exchanged.has(code)) return { kind: 'handled' };
-  exchanged.add(code);
-  const pending = await takePending();
+  if (exchanging.has(code)) return { kind: 'handled' };
+  exchanging.add(code);
+  try {
+  const pending = await readPending();
   if (!pending) throw new ApiError(400, 'login_expired', '로그인 요청이 만료됐어요. 로그인 화면에서 다시 시도해 주세요.');
-  return { kind: 'ok', auth: await api<AuthResponse>('POST', '/auth/oauth/exchange', { code, sessionKey: pending.sessionKey }) };
+  const auth = await api<AuthResponse>('POST', '/auth/oauth/exchange', { code, sessionKey: pending.sessionKey });
+  await storage.set(KEYS.oauth, null);
+  return { kind: 'ok', auth };
+  } finally {
+    exchanging.delete(code);
+  }
 }

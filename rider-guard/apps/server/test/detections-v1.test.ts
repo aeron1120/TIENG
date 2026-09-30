@@ -216,9 +216,9 @@ test('데모 모드: 무응답이어도 문자·119·배차 요청은 밖으로 
   // 재생 데이터는 사후 관찰 구간이 없어 무동작 확인 불가
   assert.equal(detail.level, 'alert_no_stillness');
   const types = detail.timeline.map((e: { type: string; data: { demo?: boolean } | null }) => `${e.type}${e.data?.demo ? ':demo' : ''}`);
-  assert.ok(types.includes('contact_notified:demo'), types.join());
-  assert.ok(types.includes('emergency_reported:demo'), types.join());
-  assert.ok(types.includes('order_reassigned:demo'), types.join());
+  assert.ok(types.includes('contact_notification_simulated:demo'), types.join());
+  assert.ok(types.includes('emergency_report_simulated:demo'), types.join());
+  assert.ok(types.includes('order_reassignment_simulated:demo'), types.join());
   // 보내는 쪽이 알려 준 주문을 보류했다
   assert.equal(detail.order.id, 'demo-order-0001');
 });

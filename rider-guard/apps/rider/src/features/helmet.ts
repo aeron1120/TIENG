@@ -10,7 +10,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { keys, useEndSession, useMe, useStartSession } from '@/api/hooks';
-import { SIM } from '@/features/sim';
 import { batteryText } from '@/lib/format';
 import { KEYS, storage } from '@/lib/storage';
 
@@ -20,7 +19,7 @@ export type HelmetSim = { worn: boolean; voice: boolean };
 /** 보호를 켜거나(start) 끄는(end) 요청이 진행 중인가 */
 export type ProtectionPending = 'start' | 'end' | null;
 
-const DEFAULT_SIM: HelmetSim = { worn: true, voice: true };
+const DEFAULT_SIM: HelmetSim = { worn: false, voice: false };
 
 type HelmetState = HelmetSim & {
   /** 저장된 값을 읽었는가. 네이티브는 첫 렌더 직후 잠깐 false */
@@ -86,9 +85,8 @@ export function setHelmetWorn(worn: boolean) {
 
 /** '말로 응답하기' (시뮬레이션 — 실제 음성 인식은 없다) */
 export function setHelmetVoice(voice: boolean) {
-  touched = true;
-  emit({ voice });
-  persist();
+  // Voice recognition is not wired to incident responses on any platform yet.
+  void voice;
 }
 
 function subscribe(listener: () => void) {
@@ -115,7 +113,7 @@ export function useHelmet(): HelmetApi {
   const s = useSyncExternalStore(subscribe, getState, getState);
   return {
     worn: s.worn,
-    voice: s.voice,
+    voice: false,
     ready: s.ready,
     setWorn: setHelmetWorn,
     setVoice: setHelmetVoice,
@@ -139,20 +137,20 @@ export type HelmetInfo = {
 };
 
 const HELMET_NAME = '헬멧 모듈';
-const VIRTUAL_HELMET: HelmetInfo = { name: HELMET_NAME, detail: '개발용 웹캠 detector', connected: true, battery: SIM.battery, simulated: true };
+const VIRTUAL_HELMET: HelmetInfo = { name: HELMET_NAME, detail: '모의 헬멧 · 실제 센서 연결 없음', connected: false, battery: null, simulated: true };
 
 /**
  * 헬멧 모듈 표시 정보. 헬멧 연결·배터리는 시뮬레이션이라 페어링된 기기(me.device)가 없으면 가상 헬멧을 보여 준다.
  * 기기가 있으면 종류·배터리는 그 값을 쓰고, 연결은 기기 신호와 착용(시뮬레이션)을 합친다 — 쓰고 있으면(보호 중) 연결됨.
  * worn = useHelmet().worn (잠금화면 상시 알림처럼 보호 중에만 보이는 곳은 true)
  */
-export function helmetInfo(device: DeviceDto | null | undefined, worn: boolean): HelmetInfo {
+export function helmetInfo(device: DeviceDto | null | undefined, _worn: boolean): HelmetInfo {
   if (!device) return VIRTUAL_HELMET;
   return {
     name: HELMET_NAME,
     detail: device.kind === 'webcam' ? '개발용 웹캠 detector' : '헬멧 태그',
-    connected: device.connected || worn,
-    battery: device.battery ?? SIM.battery,
+    connected: device.connected,
+    battery: device.battery,
     simulated: false,
   };
 }
@@ -164,7 +162,7 @@ export const helmetTitle = (info: HelmetInfo) => `${info.name} ${info.connected 
 export const helmetLine = (info: HelmetInfo) => `${info.detail}, 배터리 ${batteryText(info.battery)}`;
 
 /** v3·5 홈 '헬멧' 칸 — '연결됨 78%' / '끊김' */
-export const helmetStatusText = (info: HelmetInfo) => (info.connected ? `연결됨 ${batteryText(info.battery)}` : '끊김');
+export const helmetStatusText = (info: HelmetInfo) => (info.simulated ? '모의 기기' : info.connected ? `연결됨 ${batteryText(info.battery)}` : '연결 끊김');
 
 // ── 보호 상태 (화면용) ────────────────────────────────────────
 

@@ -1,14 +1,9 @@
 import type { Decision, Indicator, IndicatorKey, IndicatorUnits, RuleTrace } from '@rider-guard/contract';
 
 /**
- * 지표 → 판정. 설계문서 5.1 흐름에 헬멧 IMU 실험(2026-09-28)이 고른 사고 후보 규칙을 앞 단계로 넣는다.
- *
- *   충격(가속도) AND 보조(각속도 OR ΔV OR 기울기)  →  사후 무동작(30초 관찰)  →  경보
- *
- * 앞 단계는 놓치지 않는 쪽(민감도), 뒤 단계는 헛경보를 거르는 쪽(특이도)이다 (2.3 — 특이도는 '충격 이후'에서 나온다).
- * 앞 단계는 시뮬레이션에서만 고른 값이고 뒤 단계는 아직 어떤 데이터로도 맞추지 않았다.
- * 순수 함수다. 시계를 읽거나 I/O 를 하지 않으므로 같은 지표면 언제 돌려도 같은 판정이 나온다 — 시뮬레이션 결과로
- * 임계값을 맞출 때 이 성질이 필요하다.
+ * 지표 요약의 센서 시각으로 최근 0.5초를 평가한다. 원시 시계열은 sensor-analysis.ts가 담당한다.
+ * 초기 보고서 규칙: 6g AND (300deg/s OR 유효한 DV 3m/s OR |bank| 45deg).
+ * 무동작/주행 속도는 후보의 필수 조건이 아니다. 상해 등급이나 최적화된 기준을 뜻하지 않는다.
  */
 
 export type Thresholds = {
@@ -25,11 +20,9 @@ export type Thresholds = {
 };
 
 /**
- * 앞 네 값은 실험이 nominal_200hz calibration 145회에서 고정한 값이다 (analysis/locked_thresholds.json).
- * 실측 데이터가 0건이라 실도로 기준은 아니다. 무동작 20초는 30초 관찰 중 처음 10초를 미끄러짐·구름이 멎는 여유로 둔 값이다
- * (시뮬레이션에서 첫 충돌 → 마지막 움직임은 최대 2.9초).
+ * 요청된 초기값. stillQuietMinS는 기존 v1 라우터 기록 표시와의 호환용이며 새 후보 판정에 쓰지 않는다.
  */
-export const DEFAULT_THRESHOLDS: Thresholds = { impactGMin: 4, rotationDpsMin: 600, deltaVMin: 3, bankMinDeg: 75, stillQuietMinS: 20 };
+export const DEFAULT_THRESHOLDS: Thresholds = { impactGMin: 6, rotationDpsMin: 300, deltaVMin: 3, bankMinDeg: 45, stillQuietMinS: 20 };
 
 export const INDICATOR_UNITS: IndicatorUnits = {
   peak_g: 'g',
@@ -43,7 +36,9 @@ type Read = { value: number } | { blocked: string };
 
 /** 믿을 수 있는 값만 쓴다. 없거나 품질 미달이거나 단위가 다르면 '판정 불가' 사유를 돌려준다 — 0 으로 메우지 않는다. */
 function read(indicators: Indicator[], key: IndicatorKey): Read {
-  const m = indicators.find((i) => i.key === key);
+  const options = indicators.filter((i) => i.key === key);
+  const valid = options.filter((i) => i.state === 'ok' && i.value != null && Number.isFinite(i.value) && i.unit === INDICATOR_UNITS[key]);
+  const m = valid.sort((a, b) => Math.abs(b.value!) - Math.abs(a.value!))[0] ?? options[0];
   if (!m) return { blocked: `missing:${key}` };
   if (m.state !== 'ok') return { blocked: `${m.state}:${key}` };
   if (m.value == null || !Number.isFinite(m.value)) return { blocked: `no_value:${key}` };
@@ -56,6 +51,19 @@ const blockedOf = (...rs: Read[]) => rs.map((r) => ('blocked' in r ? r.blocked :
 const atLeast = (r: Read, min: number) => 'value' in r && r.value >= min;
 
 export function judge(indicators: Indicator[], th: Thresholds = DEFAULT_THRESHOLDS): { decision: Decision; traces: RuleTrace[] } {
+  const times = [...new Set(indicators.filter((i) => i.key !== 'quiet_s').map((i) => i.t).filter((t) => Number.isFinite(t) && t >= 0.15))].sort((a, b) => a - b);
+  let result: ReturnType<typeof judgeWindow> | undefined;
+  for (const t of times) {
+    const window = indicators.filter((i) => i.t <= t && i.t >= t - 0.5 - 1e-9);
+    const next = judgeWindow(window, th);
+    if (next.decision === 'alarm') return next;
+    // Separate timestamped support summaries do not erase a valid below-threshold acceleration observation.
+    if (!result || !next.traces[0]!.blocked_by && (result.traces[0]!.blocked_by || next.decision === 'undetermined')) result = next;
+  }
+  return result ?? judgeWindow([], th);
+}
+
+function judgeWindow(indicators: Indicator[], th: Thresholds): { decision: Decision; traces: RuleTrace[] } {
   const g = read(indicators, 'peak_g');
   const gyro = read(indicators, 'peak_gyro');
   const dv = read(indicators, 'delta_v150');
@@ -87,13 +95,9 @@ export function judge(indicators: Indicator[], th: Thresholds = DEFAULT_THRESHOL
     decision = 'undetermined';
   } else if (!impactFired || (!supportFired && !supportBlocked)) {
     decision = 'reject';
-  } else if (!stillFired && !stillBlocked) {
-    // 후보 뒤 계속 움직였다 — 보조 조건을 확인 못 했어도 기각한다.
-    decision = 'reject';
   } else {
-    // 충격이 섰는데 보조 조건이나 무동작을 확인할 수 없으면 경보한다. 놓침은 되돌릴 수 없고(1.3),
-    // 헛경보는 라이더가 카운트다운에서 한 번 눌러 끝낼 수 있다.
-    decision = supportFired && stillFired ? 'alarm' : 'alarm_unverified';
+    // 무동작은 참고 지표이며 후보의 필수 조건이 아니다. 결측을 사고/정상으로 확정하지 않는다.
+    decision = supportFired ? 'alarm' : 'undetermined';
   }
   return { decision, traces };
 }

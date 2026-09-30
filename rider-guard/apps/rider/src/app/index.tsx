@@ -6,7 +6,7 @@ import { useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, View, type TextInput } from 'react-native';
 
 import { useAuthProviders, useEmailLogin } from '@/api/hooks';
-import { AfterSignIn } from '@/auth/AfterSignIn';
+import { AfterSignIn, Loading } from '@/auth/AfterSignIn';
 import { useAuth } from '@/auth/AuthProvider';
 import { Field, Notice, SocialButton } from '@/components/forms';
 import { LogoIcon } from '@/components/Icons';
@@ -18,9 +18,11 @@ import { colors, font, typography } from '@/theme';
 const SOCIAL_ORDER: SocialProvider[] = ['kakao', 'naver', 'google'];
 
 export default function LoginScreen() {
-  const { status } = useAuth();
+  const { status, restoreError, retryRestore, signOut } = useAuth();
   // 어디서 로그인했든 여기로 돌아오면 가입 정보 여부에 따라 홈 또는 가입 정보 입력으로 보낸다.
   if (status === 'signedIn') return <AfterSignIn />;
+  if (status === 'loading') return <Loading />;
+  if (status === 'error') return <Screen top={63} side={24}><Notice message={restoreError ?? '로그인 상태를 확인할 수 없어요.'} onRetry={() => void retryRestore()} /><Button label="다른 계정으로 로그인" onPress={() => signOut({ tokenInvalid: true })} /></Screen>;
   return <LoginForm />;
 }
 
@@ -34,23 +36,27 @@ function LoginForm() {
   const [password, setPassword] = useState('');
   // 빈 칸으로 '로그인'을 누른 뒤에만 칸 아래에 알려 준다
   const [tried, setTried] = useState(false);
+  const [sessionError, setSessionError] = useState<unknown>(null);
+  const [authBusy, setAuthBusy] = useState(false);
   const emailRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
   const login = useEmailLogin();
   const social = useMutation({
-    mutationFn: loginWithSocial,
-    onSuccess: (result) => {
-      if (result.kind === 'ok') signIn(result.auth.token);
+    mutationFn: async (provider: SocialProvider) => {
+      const result = await loginWithSocial(provider);
+      if (result.kind === 'ok') await signIn(result.auth.token);
+      return result;
     },
   });
 
-  const busy = login.isPending || social.isPending;
-  const socialProviders = SOCIAL_ORDER.filter((p) => providers.data?.social.includes(p));
-  const error = login.error ?? social.error;
+  const busy = login.isPending || social.isPending || authBusy;
+  const socialProviders = SOCIAL_ORDER.filter((p) => p === 'google' || providers.data?.social.includes(p));
+  const googleEnabled = !!providers.data?.social.includes('google');
+  const error = sessionError ?? login.error ?? social.error;
   const emailMissing = tried && !email.trim() ? '이메일을 입력해 주세요.' : null;
   const passwordMissing = tried && !password ? '비밀번호를 입력해 주세요.' : null;
 
-  const submit = () => {
+  const submit = async () => {
     // 키보드 '이동'과 버튼이 겹쳐 두 번 보내지 않게
     if (busy) return;
     // 버튼은 늘 아스팔트 — 빈 칸이 있으면 그 칸으로 데려가 알려 준다
@@ -60,7 +66,16 @@ function LoginForm() {
       return;
     }
     social.reset();
-    login.mutate({ email: email.trim(), password }, { onSuccess: ({ token }) => signIn(token) });
+    setSessionError(null);
+    try {
+      const { token } = await login.mutateAsync({ email: email.trim(), password });
+      setAuthBusy(true);
+      await signIn(token);
+    } catch (failure) {
+      if (!login.error) setSessionError(failure);
+    } finally {
+      setAuthBusy(false);
+    }
   };
   // 다시 입력하기 시작하면 지난 오류는 걷어 낸다
   const edit = (set: (v: string) => void) => (v: string) => {
@@ -120,7 +135,7 @@ function LoginForm() {
       <Spacer />
 
       <FadeIn delay={120} style={styles.actions}>
-        <Button label="로그인" loading={login.isPending} disabled={social.isPending} onPress={submit} />
+        <Button label="로그인" loading={login.isPending || authBusy} disabled={social.isPending} onPress={() => void submit()} />
         <SignupLink onPress={() => router.push('/signup')} disabled={busy} />
       </FadeIn>
 
@@ -136,13 +151,15 @@ function LoginForm() {
             <SocialButton
               key={p}
               provider={p}
-              disabled={busy}
+              disabled={busy || (p === 'google' && !googleEnabled)}
               onPress={() => {
                 login.reset();
+                setSessionError(null);
                 social.mutate(p);
               }}
             />
           ))}
+          {!googleEnabled && <Notice tone="info" message={providers.isError ? 'Google 로그인 설정을 확인할 수 없어요. 네트워크를 확인해 주세요.' : providers.isPending ? 'Google 로그인 설정을 확인하는 중이에요.' : 'Google 로그인이 아직 설정되지 않았어요.'} onRetry={providers.isError ? () => void providers.refetch() : undefined} />}
         </FadeIn>
       )}
     </Screen>

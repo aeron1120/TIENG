@@ -2,6 +2,7 @@ import type { LocationPoint, SessionDto } from '@rider-guard/contract';
 
 import type { AppContext, LocationRow, SessionRow } from '../context.ts';
 import { ApiError, iso, newId, seoulDayStart } from '../lib.ts';
+import { consentsOf } from './riders.ts';
 
 /** 휴대폰 시계가 조금 빨라도 받아 주는 여유 */
 const CLOCK_SKEW_MS = 60_000;
@@ -75,6 +76,7 @@ export function driveSecondsToday(rows: TodaySessionRow[], now: number): number 
  * 이미 끝난 세션이라도 그 기간에 기록된 점이면 받는다 (통신 음영 후 일괄 전송, 4.1.4).
  */
 export async function addLocations(ctx: AppContext, riderId: string, sessionId: string, points: LocationPoint[]) {
+  if (!(await consentsOf(ctx, riderId)).locationSensor) throw new ApiError(403, 'consent_required', '위치·센서 수집 동의가 필요해요.');
   const session = await ctx.db.get<SessionRow>('SELECT * FROM sessions WHERE id = :id AND riderId = :riderId', { id: sessionId, riderId });
   if (!session) throw new ApiError(404, 'not_found', '운행 기록을 찾을 수 없어요.');
 

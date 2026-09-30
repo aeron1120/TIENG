@@ -1,4 +1,4 @@
-// 디자인: spec-v3 v3·7 — 사고 확인 (SOS 구 · 막대 카운트다운 · 음성 응답 시뮬레이션)
+// 디자인: spec-v3 v3·7 — 사고 확인 (SOS 구 · 막대 카운트다운). 음성 응답은 어떤 플랫폼에서도 사건 응답에 연결돼 있지 않아 화면 버튼만 쓴다.
 import type { IncidentKind, RiderResponse } from '@rider-guard/contract';
 import { router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -23,7 +23,6 @@ import { Notice } from '@/components/forms';
 import { AlertCircleFilledIcon } from '@/components/Icons';
 import { useToast } from '@/components/Toast';
 import { Badge, Button, FadeIn, FadeSwap, PressableScale, Screen, ScreenFooter, Skeleton, Txt, useReducedMotion } from '@/components/ui';
-import { useHelmet } from '@/features/helmet';
 import { useCountdown } from '@/hooks/useCountdown';
 import { resetTo } from '@/lib/nav';
 import { colors, font, motion, radius, shadow } from '@/theme';
@@ -56,7 +55,6 @@ export default function AlertScreen() {
   const { data: incident, dataUpdatedAt, error, refetch } = useIncident(id);
   // 응답은 URL 의 id 만으로 보낸다 — 상세 조회가 늦거나 실패해도 SOS·괜찮아요는 바로 누를 수 있어야 한다.
   const respond = useRespond(id);
-  const helmet = useHelmet();
   const toast = useToast();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
@@ -135,8 +133,9 @@ export default function AlertScreen() {
           leave(() => router.replace({ pathname: '/status', params: { id } }));
           return;
         }
-        // 비상연락이 시작된 뒤의 '괜찮아요'도 사고를 닫는다 — 서버가 이미 알린 연락처와 119 에 무사하다고 알린다.
-        toast.success(next.status === 'cancelled' ? '괜찮다고 기록했어요' : '괜찮다고 알리고 대응을 마쳤어요');
+        // 비상연락이 시작된 뒤의 '괜찮아요'도 사고를 닫는다 — 서버가 연락 절차가 진행된 곳에 괜찮다는 소식을 보낸다.
+        // 본인 응답일 뿐 '실제 사고 아님' 정답 라벨이 아니다(서버 feedback.groundTruth 는 unknown 으로 남는다).
+        toast.success(next.status === 'cancelled' ? '괜찮다고 응답했어요' : '괜찮다고 응답하고 대응을 마쳤어요');
         leave(() => resetTo('/home'));
       },
     });
@@ -144,8 +143,6 @@ export default function AlertScreen() {
   // 조회 오류는 상세를 아직 못 받았을 때만 — 받은 뒤의 폴링 실패는 응답과 상관없다.
   const problem = respond.error ?? (incident ? null : error);
 
-  // 음성 응답은 시뮬레이션 — 헬멧을 쓰고 '말로 응답하기'를 켰을 때만 안내한다.
-  const showVoice = helmet.ready && helmet.voice && helmet.worn;
   const urgent = phase === 'count' && left != null && left <= 10;
 
   // 붉은 빛은 SOS 구 가운데에 맞춘다 — 구의 실제 위치를 재서 맨 뒤 층에 그린다.
@@ -172,11 +169,13 @@ export default function AlertScreen() {
           onDark
           disabled={respond.isPending}
           loading={sending === 'ok'}
-          accessibilityHint={expired ? '비상연락처와 119에 괜찮다고 알리고 대응을 마쳐요' : '오탐으로 기록하고 보호를 이어가요'}
+          accessibilityHint={expired ? '대응을 마치고 알림을 받은 연락처에 괜찮다는 소식을 보내요' : '본인 응답으로 기록하고 보호를 이어가요'}
           onPress={() => send('ok')}
         />
         <Txt style={styles.foot}>
-          {expired ? '지금 ‘괜찮아요’를 누르면 비상연락처와 119에 괜찮다고 알리고 대응을 마쳐요.' : '‘괜찮아요’를 누르면 오탐으로 기록되고 보호는 계속돼요.'}
+          {expired
+            ? '지금 ‘괜찮아요’를 누르면 대응을 마치고, 알림을 받은 연락처에 괜찮다는 소식을 보내요.'
+            : '‘괜찮아요’는 본인 응답으로 기록되고 보호는 계속돼요.'}
         </Txt>
       </FadeIn>
     </ScreenFooter>
@@ -211,20 +210,14 @@ export default function AlertScreen() {
             <Skeleton onDark width={202} height={38} radius={radius.pill} />
           )}
         </FadeSwap>
-        <Txt
-          accessibilityRole="header"
-          style={[styles.title, { fontSize: size.title, lineHeight: size.titleLh, marginTop: size.pillGap }]}
-        >
-          괜찮으세요?
-        </Txt>
-        {showVoice && (
-          <FadeIn offset={4} style={[styles.voice, { marginTop: size.voiceGap }]}>
-            <View accessible accessibilityLabel='음성 응답. "괜찮아"라고 말해도 돼요.' style={styles.voiceRow}>
-              <VoiceBars />
-              <Txt style={styles.voiceText}>“괜찮아”라고 말해도 돼요</Txt>
-            </View>
-          </FadeIn>
-        )}
+        <View accessible accessibilityRole="header" accessibilityLabel="사고가 의심돼요. 괜찮으신가요?" style={{ marginTop: size.pillGap }}>
+          <Txt style={styles.question}>사고가 의심돼요.</Txt>
+          <Txt style={[styles.title, { fontSize: size.title, lineHeight: size.titleLh }]}>괜찮으신가요?</Txt>
+        </View>
+        {/* 음성 인식은 없다 — 무응답과 '음성 인식 실패'를 섞지 않도록 화면 버튼 응답만 안내한다 */}
+        <View style={[styles.voiceRow, { marginTop: size.voiceGap }]}>
+          <Txt style={styles.voiceText}>음성 응답 미지원 · 화면 버튼으로 알려 주세요</Txt>
+        </View>
       </FadeIn>
 
       <View onLayout={onSphereLayout} style={{ marginTop: size.blockGap }}>
@@ -233,8 +226,8 @@ export default function AlertScreen() {
             size={size}
             sending={sending === 'help'}
             disabled={respond.isPending}
-            label={expired ? '도움이 필요하다고 알리기' : '비상연락처에 바로 알리기'}
-            hint={expired ? '119 신고에 도움이 필요하다고 덧붙여요' : '비상연락처와 119에 바로 알려요'}
+            label={expired ? '도움이 필요하다고 알리기' : '도움이 필요해요'}
+            hint={expired ? '진행 중인 연락에 도움이 필요하다고 덧붙여요' : '기다리지 않고 비상연락 절차를 바로 시작해요'}
             onPress={() => send('help')}
           />
         </FadeIn>
@@ -456,61 +449,15 @@ function Ripples({ size }: { size: Sizes }) {
   );
 }
 
-// ── 음성 응답 (시뮬레이션) ─────────────────────────────────────
-
-/** 파형 막대 6개 — 디자인의 가는 파형(15×13). 헬멧이 듣고 있다는 느낌으로 살짝 움직인다. */
-const BARS = [
-  { left: 0, h: 3.5 },
-  { left: 2.6, h: 8 },
-  { left: 5.2, h: 12.2 },
-  { left: 7.8, h: 6.2 },
-  { left: 10.4, h: 10.5 },
-  { left: 13.9, h: 3.5 },
-];
-/** 막대마다 다른 흐름 — 첫 값과 끝 값이 같아 반복이 끊기지 않는다. */
-const BAR_PATTERN = [
-  [1, 0.7, 1, 0.8, 1],
-  [0.7, 1, 0.6, 1, 0.7],
-  [1, 0.75, 0.9, 0.6, 1],
-  [0.8, 1, 0.65, 1, 0.8],
-  [0.65, 0.9, 1, 0.7, 0.65],
-  [1, 0.8, 0.7, 1, 1],
-];
-const BAR_STEPS = [0, 0.25, 0.5, 0.75, 1];
-
-function VoiceBars() {
-  const reduced = useReducedMotion();
-  const [t] = useState(() => new Animated.Value(0));
-  useEffect(() => {
-    if (reduced) return;
-    const loop = Animated.loop(Animated.timing(t, { toValue: 1, duration: 1400, easing: Easing.linear, useNativeDriver: motion.native }));
-    loop.start();
-    return () => loop.stop();
-  }, [t, reduced]);
-  const scales = useMemo(() => BAR_PATTERN.map((outputRange) => t.interpolate({ inputRange: BAR_STEPS, outputRange })), [t]);
-  return (
-    <View style={styles.bars} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-      {BARS.map((b, i) => (
-        <Animated.View
-          key={i}
-          style={[styles.voiceBar, { left: b.left, height: b.h, top: (13 - b.h) / 2, transform: [{ scaleY: reduced ? 1 : scales[i] }] }]}
-        />
-      ))}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   glowLayer: { position: 'absolute', top: 0, bottom: 0, overflow: 'hidden', alignItems: 'center', pointerEvents: 'none' },
   head: { alignItems: 'center' },
   pill: { alignSelf: 'center', minHeight: 38, paddingVertical: 8, paddingLeft: 9, paddingRight: 18, gap: 7, boxShadow: PILL_GLOW },
   pillText: { fontSize: 16, lineHeight: 22 },
   title: { ...font.sans(800), letterSpacing: -1, color: colors.textOnDark, textAlign: 'center' },
-  voice: { alignItems: 'center' },
-  voiceRow: { flexDirection: 'row', alignItems: 'center', gap: 9, height: 22, opacity: DIM.voice },
-  voiceText: { ...font.sans(400), fontSize: 15, lineHeight: 22, letterSpacing: -0.2, color: colors.textOnDark },
-  bars: { width: 15.2, height: 13 },
-  voiceBar: { position: 'absolute', width: 1.3, borderRadius: 0.65, backgroundColor: colors.textOnDark },
+  question: { ...font.sans(700), fontSize: 18, lineHeight: 26, letterSpacing: -0.4, color: colors.textOnDark, textAlign: 'center' },
+  voiceRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', height: 22, opacity: DIM.voice },
+  voiceText: { ...font.sans(400), fontSize: 13.5, lineHeight: 20, letterSpacing: -0.2, color: colors.textOnDark },
   sosBlock: { alignSelf: 'center', alignItems: 'center', justifyContent: 'center' },
   ring: { position: 'absolute', borderWidth: 1, borderColor: colors.sosRing },
   rippleRing: { borderWidth: 1.1 },

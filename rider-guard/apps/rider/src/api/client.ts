@@ -23,13 +23,13 @@ export class ApiError extends Error {
 }
 
 let token: string | null = null;
-let onUnauthorized: (() => void) | null = null;
+let onUnauthorized: ((failedToken: string) => void) | null = null;
 
 export const setApiToken = (value: string | null) => {
   token = value;
 };
 export const getApiToken = () => token;
-export const setUnauthorizedHandler = (fn: (() => void) | null) => {
+export const setUnauthorizedHandler = (fn: ((failedToken: string) => void) | null) => {
   onUnauthorized = fn;
 };
 
@@ -38,7 +38,7 @@ export async function api<T>(
   method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   path: string,
   body?: unknown,
-  options: { token?: string } = {},
+  options: { token?: string; timeoutMs?: number } = {},
 ): Promise<T> {
   const auth = options.token ?? token;
   let res: Response;
@@ -50,6 +50,7 @@ export async function api<T>(
         ...(auth ? { authorization: `Bearer ${auth}` } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(options.timeoutMs ?? 10_000),
     });
   } catch {
     throw new ApiError(0, 'network', '서버에 연결할 수 없어요. 네트워크를 확인해 주세요.');
@@ -57,7 +58,7 @@ export async function api<T>(
   if (res.status === 204) return undefined as T;
   const json = (await res.json().catch(() => null)) as (T & Partial<ApiErrorBody>) | null;
   if (!res.ok) {
-    if (res.status === 401 && !options.token && token) onUnauthorized?.();
+    if (res.status === 401 && !options.token && auth && token === auth) onUnauthorized?.(auth);
     throw new ApiError(res.status, json?.error?.code ?? 'http_error', json?.error?.message ?? `요청에 실패했어요 (${res.status})`);
   }
   return json as T;

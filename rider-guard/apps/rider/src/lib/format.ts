@@ -145,6 +145,7 @@ const EMERGENCY_TEXT: Record<EmergencyDelivery, { label: string; sub: string; ti
   sent: { label: '119 자동 신고', sub: '위치와 라이더 정보를 담아 문자로 신고했어요', timed: true },
   failed: { label: '119 자동 신고 실패', sub: '위의 119 전화로 직접 신고해 주세요', timed: false },
   cancelled: { label: '119 신고', sub: '신고하지 않았어요', timed: false },
+  simulated: { label: '119 신고 모의 처리', sub: '실제 119에는 전송하지 않았어요', timed: false },
 };
 
 /** 알린 연락처 — 1명이면 '1순위 김민지', 여럿이면 '1·2순위 김민지 외 1명' */
@@ -172,13 +173,14 @@ export function stepText(step: IncidentStep, incident: IncidentDetailDto): { lab
     case 'response': {
       const r = step.detail.response;
       if (r === 'help') return { label: '도움 요청', sub: '확인 화면에서 직접 요청했어요', time };
-      if (r === 'ok') return { label: '괜찮아요 응답', sub: '오탐으로 기록됐어요', time };
+      if (r === 'ok') return { label: '괜찮아요 응답', sub: '본인 응답으로 대응을 마쳤어요. 실제 사고 여부는 확인되지 않았어요', time };
       if (r === 'none') return { label: '응답 없음', sub: `${incident.countdownSeconds}초 동안 응답이 없었어요`, time };
       return { label: '라이더 응답 기다리는 중', sub: '확인 화면에서 응답할 수 있어요', time };
     }
     case 'contacts': {
       const d = step.detail;
       if (d.reason === 'no_contacts') return { label: '비상연락처 없음', sub: '비상연락처를 등록해 주세요', time: '' };
+      if (d.reason === 'simulated') return { label: '비상연락 모의 처리', sub: '실제 연락처에는 전송하지 않았어요', time: '' };
       if (step.state === 'skipped') return { label: '비상연락 문자', sub: '보내지 않았어요', time: '' };
       if (!d.notified.length) {
         return step.state === 'todo'
@@ -197,7 +199,7 @@ export function stepText(step: IncidentStep, incident: IncidentDetailDto): { lab
         ? { label: '대체배차 요청', sub: '다른 라이더에게 주문을 넘기는 중이에요', time }
         : { label: '대체배차 완료', sub: '다른 라이더에게 주문을 넘겼어요', time };
     case 'record':
-      return { label: '사고기록 저장', sub: '보험·산재 접수에 쓸 수 있어요', time };
+      return { label: '사고기록 저장', sub: '앱에서 저장된 내용을 확인할 수 있어요', time };
   }
 }
 
@@ -205,7 +207,7 @@ export function stepText(step: IncidentStep, incident: IncidentDetailDto): { lab
 
 export function recordTag(r: Pick<IncidentSummaryDto, 'status' | 'resolution'>): string {
   if (r.status === 'countdown' || r.status === 'escalated') return '대응 중';
-  return r.resolution === 'false_alarm' ? '오탐' : '대응 완료';
+  return r.resolution === 'false_alarm' || r.resolution === 'rider_cancelled' ? '본인 응답 종료' : '대응 완료';
 }
 
 export function responseText(r: IncidentSummaryDto): string {
@@ -229,17 +231,3 @@ export const orderText = (r: IncidentSummaryDto) => (r.orderStatus ? ORDER_LABEL
 
 export const placeText = (r: IncidentSummaryDto) =>
   r.location ? (r.location.address ?? `${r.location.lat.toFixed(4)}, ${r.location.lng.toFixed(4)}`) : '위치 기록 없음';
-
-/** 기록 화면 '기록 공유' — 보험·산재 접수 때 문자·메신저로 보낼 수 있는 글 */
-export function recordShareText(r: IncidentSummaryDto): string {
-  const map = r.location ? `\n지도: https://maps.google.com/?q=${r.location.lat},${r.location.lng}` : '';
-  return [
-    '[Rider Guard 사고 기록]',
-    `감지 시각: ${dateTime(r.detectedAt)}`,
-    `내용: ${recordSummary(r)} (${recordTag(r)})`,
-    `감지 위치: ${placeText(r)}${map}`,
-    `라이더 응답: ${responseText(r)}`,
-    `비상연락: ${contactText(r)}`,
-    `주문 처리: ${orderText(r)}`,
-  ].join('\n');
-}

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { createHash } from 'node:crypto';
 
 import { processDue } from '../src/services/scheduler.ts';
+import { httpSocialAuth } from '../src/services/social.ts';
 import { setup } from './helpers.ts';
 
 const KEYS = {
@@ -12,6 +14,7 @@ const KEYS = {
 };
 const APP = 'riderguard://auth/callback';
 const WEB_APP = 'https://tieng.pages.dev/auth/callback';
+const EXPO_APP = 'https://rider-guard.expo.app/auth/callback';
 type T = Awaited<ReturnType<typeof setup>>;
 
 /** 앱이 로그인 시작 → 제공자 로그인 주소에서 state 를 꺼낸다. sessionKey 는 앱만 가진다. */
@@ -72,6 +75,7 @@ test('운영 웹: Google 콜백은 API 서버로, 로그인 결과는 tieng.page
 
 test('운영 웹 복귀 주소는 등록된 콜백 하나만 허용한다', async () => {
   const t = await setup({ ...KEYS, NODE_ENV: 'production', OPS_TOKEN: 'x'.repeat(24) });
+  assert.equal((await t.call('POST', '/auth/oauth/google/start', { body: { redirectUri: EXPO_APP } })).status, 200);
   for (const bad of [
     'https://tieng.pages.dev.evil.example/auth/callback',
     'https://preview.tieng.pages.dev/auth/callback',
@@ -87,6 +91,47 @@ test('운영 웹 복귀 주소는 등록된 콜백 하나만 허용한다', asyn
     assert.equal(result.status, 400, bad);
     assert.equal(result.json.error.code, 'invalid_redirect', bad);
   }
+});
+
+test('동시 콜백은 state 를 한 번만 소비하고 한 번만 코드 교환한다', async () => {
+  const t = await setup(KEYS);
+  t.socialProfiles.set('same-code', { provider: 'google', subject: 'one', email: null, name: null, phone: null });
+  const { state } = await start(t, 'google');
+  const responses = await Promise.all(Array.from({ length: 8 }, () => callback(t, 'google', { state, code: 'same-code' })));
+  assert.equal(responses.filter((r) => r.status === 302).length, 1);
+  assert.equal(responses.filter((r) => r.status === 400).length, 7);
+  assert.equal(t.socialCalls.length, 1);
+});
+
+test('동시 로그인 코드 교환은 Rider Guard 토큰을 하나만 발급한다', async () => {
+  const t = await setup(KEYS);
+  t.socialProfiles.set('one-code', { provider: 'google', subject: 'one', email: null, name: null, phone: null });
+  const { state, sessionKey } = await start(t, 'google');
+  const code = location(await callback(t, 'google', { state, code: 'one-code' })).searchParams.get('code')!;
+  const responses = await Promise.all(Array.from({ length: 8 }, () => exchange(t, code, sessionKey)));
+  assert.equal(responses.filter((r) => r.status === 200).length, 1);
+  assert.equal(responses.filter((r) => r.status === 400).length, 7);
+  assert.equal((await t.ctx.db.all('SELECT 1 FROM authTokens')).length, 1);
+});
+
+test('Google callback uses the PKCE verifier and nonce bound to its state', async () => {
+  const t = await setup(KEYS);
+  t.socialProfiles.set('google-code', { provider: 'google', subject: 'stable-sub', email: null, name: null, phone: null });
+  const { state } = await start(t, 'google');
+  assert.equal((await callback(t, 'google', { state, code: 'google-code' })).status, 302);
+  const call = t.socialCalls[0]!;
+  assert.ok(call.verifier && call.nonce);
+  const row = await t.ctx.db.get('SELECT 1 FROM oauthStates WHERE state = :state', { state });
+  assert.equal(row, undefined);
+});
+
+test('Google 인가 요청은 S256 PKCE 와 nonce 를 제공자에 전달한다', () => {
+  const verifier = 'a'.repeat(43);
+  const nonce = 'nonce-123';
+  const url = new URL(httpSocialAuth.authorizeUrl('google', { clientId: 'id', clientSecret: 'secret' }, 'https://api.test/callback', 'state-123', { verifier, nonce }));
+  assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
+  assert.equal(url.searchParams.get('code_challenge'), createHash('sha256').update(verifier).digest('base64url'));
+  assert.equal(url.searchParams.get('nonce'), nonce);
 });
 
 test('카카오: 시작 → 콜백 → 앱으로 1회용 코드 → 토큰, 가입 정보는 제공자 값으로 미리 채운다', async () => {

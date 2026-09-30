@@ -63,8 +63,35 @@ export const storage = {
     try {
       if (value) localStorage.setItem(key, value);
       else localStorage.removeItem(key);
-    } catch {
-      /* 저장 못 해도 이번 실행 동안은 메모리 상태로 동작 */
+    } catch (error) {
+      if (key === KEYS.oauth || key === KEYS.token) throw error;
+      /* 시뮬레이션 상태는 저장 못 해도 이번 실행 동안 메모리로 동작 */
     }
+  },
+};
+
+/** Auth writes are serialized so a late logout cannot erase a newer sign-in. */
+let authWrite: Promise<unknown> = Promise.resolve();
+const serializeAuth = <T>(fn: () => Promise<T>): Promise<T> => {
+  const next = authWrite.then(fn, fn);
+  authWrite = next.catch(() => undefined);
+  return next;
+};
+
+export const authTokenStore = {
+  get: () => storage.get(KEYS.token),
+  set(value: string): Promise<void> {
+    return serializeAuth(async () => {
+      if (Platform.OS === 'web') localStorage.setItem(KEYS.token, value);
+      else await storage.set(KEYS.token, value);
+    });
+  },
+  clearIfCurrent(expected: string): Promise<boolean> {
+    return serializeAuth(async () => {
+      if (await storage.get(KEYS.token) !== expected) return false;
+      if (Platform.OS === 'web') localStorage.removeItem(KEYS.token);
+      else await storage.set(KEYS.token, null);
+      return true;
+    });
   },
 };

@@ -17,15 +17,15 @@ import { Button, Card, Divider, FadeIn, FadeSwap, IconCircle, Screen, Sheet, Ske
 import { acceptanceSummaryText, useContactAcceptance } from '@/features/contactSim';
 import { helmetInfo, helmetStatusText, useHelmet } from '@/features/helmet';
 import { recentLocation, useLocationState, useRiderPosition } from '@/features/location';
-import { riderDisplayName, simAddress, useNow, useSimNotifications, wearTime, type SimNotification } from '@/features/sim';
-import { timeHM } from '@/lib/format';
+import { riderDisplayName, useNow, useSimNotifications, wearTime, type SimNotification } from '@/features/sim';
+import { timeAgo, timeHM } from '@/lib/format';
 import { colors, font, radius, typography } from '@/theme';
 
 // 사고 감지 테스트·헬멧 쓰기/벗기 — 개발 빌드, 또는 시연용 preview 빌드(eas.json 의 EXPO_PUBLIC_SHOW_DEV_TOOLS)에서만
 const showDevTools = __DEV__ || process.env.EXPO_PUBLIC_SHOW_DEV_TOOLS === 'true';
 
 /** 화면 상태. on·held·ending·endFailed 는 세션이 살아 있는 동안(보호 중 모양) */
-type Kind = 'loading' | 'on' | 'held' | 'ending' | 'endFailed' | 'starting' | 'failed' | 'off';
+type Kind = 'loading' | 'on' | 'sensorWaiting' | 'sensorStale' | 'held' | 'ending' | 'endFailed' | 'starting' | 'failed' | 'off';
 
 /** 지도 카드 안쪽 여백 — 지도 모서리(radius.card)와 카드 모서리가 동심원이 되게 카드는 radius.card + 이 값 */
 const CARD_PAD = 8;
@@ -52,7 +52,11 @@ function copyFor(kind: Exclude<Kind, 'loading'>, startedAt: string | null, addre
   const off = { dot: colors.textFaint, halo: colors.curb, counting: false };
   switch (kind) {
     case 'on':
-      return { ...on, sub: '앱을 닫아도 계속 보호돼요' };
+      return { ...on, first: startedAt ? `${timeHM(startedAt)} 운행 시작` : '운행 시작', sub: '최근 측정 센서 신호가 확인됐어요' };
+    case 'sensorWaiting':
+      return { ...off, pill: '센서 정보 대기 중', first: startedAt ? `${timeHM(startedAt)} 운행 시작` : '운행 시작', firstDone: true, now: '첫 센서 측정을 기다리고 있어요', sub: '운행 세션만으로 감지를 확인할 수 없어요' };
+    case 'sensorStale':
+      return { ...off, pill: '센서 연결 확인 필요', first: startedAt ? `${timeHM(startedAt)} 운행 시작` : '운행 시작', firstDone: true, now: '최근 센서 정보가 없어요', sub: '기기 연결과 측정 전송을 확인해 주세요' };
     case 'held':
       return { ...on, sub: '사고 대응이 끝나면 보호가 꺼져요' };
     case 'ending':
@@ -79,14 +83,16 @@ export default function HomeScreen() {
   const acceptance = useContactAcceptance(me?.contacts);
   const notifications = useSimNotifications(me);
 
-  const active = !!me?.session;
+  const sessionActive = !!me?.session;
+  const sensorFresh = !!me?.device && !me.device.kind.includes('webcam') && me.device.sensorState === 'fresh' && !!me.device.lastSensorAt;
+  const active = sessionActive && sensorFresh;
   const { worn } = helmet;
   const kind: Kind =
     !me || !helmet.ready
       ? 'loading'
-      : active
+      : sessionActive
         ? worn
-          ? 'on'
+          ? active ? 'on' : me.device?.sensorState === 'stale' ? 'sensorStale' : 'sensorWaiting'
           : helmet.heldByIncident
             ? 'held'
             : helmet.protectionError
@@ -130,14 +136,14 @@ export default function HomeScreen() {
 
   const info = helmetInfo(me?.device, worn);
   const contacts = me?.contacts ?? [];
-  // 좌표 → 주소 변환이 없어 주소는 시뮬레이션 (features/sim)
-  const address = simAddress(null);
+  const lastLocation = me?.lastLocation;
+  const address = lastLocation?.address ?? (lastLocation ? `${lastLocation.lat.toFixed(4)}, ${lastLocation.lng.toFixed(4)}` : '위치 기록 없음');
   const copy = loading ? null : copyFor(kind, startedAt, address);
 
   // 위치를 못 받으면 사고 때 위치를 알릴 수 없다 — 디자인에 없는 안내라 보호 중일 때만.
   // 웹은 거부했을 때만('앱을 켜 둔 동안만'은 브라우저에서 늘 그래서 소음), 네이티브는 '항상 허용'이 아닐 때도
   const native = Platform.OS !== 'web';
-  const locationNote = !active
+  const locationNote = !sessionActive
     ? null
     : location.permission === 'denied'
       ? native
@@ -157,9 +163,11 @@ export default function HomeScreen() {
   const contactSummary = acceptanceSummaryText(contacts, acceptance.statusOf);
   const contactTitle = contacts.length ? `비상연락처 ${contacts.length}명` : '비상연락처를 등록해 주세요';
   const contactSub = contacts.length ? contactSummary : '사고 때 1순위부터 차례로 알려요';
-  const voiceText = helmet.voice ? '켜짐' : '꺼짐';
+  const voiceText = '미지원';
   const helmetText = helmetStatusText(info);
   const wear = copy?.counting ? wearTime(startedAt, now) : kind === 'starting' ? '00:00' : '--:--';
+
+  if (!me && meError) return <Screen top={56} side={16}><Notice error={meError} onRetry={() => void refetch()} /><Button label="다시 시도" onPress={() => void refetch()} /></Screen>;
 
   return (
     <Screen top={56} side={16} bottom={24} gap={0} enter="none" footer={<BottomNav active="home" />}>
@@ -185,12 +193,12 @@ export default function HomeScreen() {
       <FadeIn delay={40} style={styles.mapCardWrap}>
         <Card style={styles.mapCard}>
           <RiderMap
-            location={position}
-            label={active ? '지금 여기' : null}
+            location={lastLocation ?? (position.simulated ? null : position)}
+            label={lastLocation ? `${timeHM(lastLocation.recordedAt)} 마지막 위치` : null}
             height={228}
             radius={radius.card}
             dim={!loading && !active}
-            accessibilityLabel={active ? '지도, 지금 여기' : '지도, 마지막 위치'}
+            accessibilityLabel={lastLocation ? `지도, ${timeHM(lastLocation.recordedAt)} 마지막 위치` : '지도, 위치 기록 없음 · 배경 지도는 모의 위치'}
             topLeft={
               copy ? (
                 <FadeSwap swapKey={copy.pill}>
@@ -198,7 +206,8 @@ export default function HomeScreen() {
                 </FadeSwap>
               ) : null
             }
-            bottomLeft={<MapPill label="사고 때만 비상연락처에 전달돼요" icon={<LockIcon size={16} color={colors.text} />} />}
+            topRight={!lastLocation ? <MapPill label="모의 지도 위치" /> : null}
+            bottomLeft={<MapPill label="동의한 공개 범위에 따라 위치 전달" icon={<LockIcon size={16} color={colors.text} />} />}
           />
 
           <View style={styles.body}>
@@ -213,13 +222,13 @@ export default function HomeScreen() {
               <View style={styles.vline} />
               <Metric icon={<WaveformIcon size={16} color={colors.textFaint} />} label="음성 응답" value={voiceText} loading={loading} width={32} />
               <View style={styles.vline} />
-              <Metric icon={<MapPinIcon size={16} color={colors.textFaint} />} label="위치 수집" value="착용 중에만" loading={loading} width={60} />
+              <Metric icon={<MapPinIcon size={16} color={colors.textFaint} />} label="마지막 위치" value={lastLocation ? timeAgo(lastLocation.recordedAt, now) : '기록 없음'} loading={loading} width={60} />
             </View>
           </View>
         </Card>
       </FadeIn>
 
-      {!me && meError ? <Notice error={meError} onRetry={() => void refetch()} style={styles.notice} /> : null}
+      {sessionActive && !active && !loading ? <Notice tone="info" message={me?.device?.lastSensorAt ? `최근 센서 측정 ${timeAgo(me.device.lastSensorAt, now)} · ${me.device.staleAfterSeconds ?? 60}초 기준 연결 확인 필요` : '측정된 센서 정보가 없어요. 운행 세션이 있어도 충격 감지를 확인할 수 없어요.'} style={styles.notice} /> : null}
       {helmet.protectionError && !loading ? (
         <Notice message={`보호를 ${worn ? '켜지' : '끄지'} 못했어요. ${errorMessage(helmet.protectionError)}`} style={styles.notice} />
       ) : null}
@@ -262,7 +271,7 @@ export default function HomeScreen() {
       {showDevTools && !loading && (
         <FadeIn delay={120} style={styles.dev}>
           {/* 테스트 사고는 운행 세션이 있어야 만들 수 있다 (서버가 거절). 헬멧 벗기는 길게 누르기 · 설정의 '헬멧 착용' */}
-          {active ? (
+          {sessionActive ? (
             <Button
               label="개발용 사고 감지 테스트"
               variant="dashed"

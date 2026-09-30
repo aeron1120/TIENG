@@ -19,7 +19,8 @@ export function createApp(ctx: AppContext) {
   for (const path of ['/auth/*', '/me', '/me/*']) app.use(path, cors());
   // 센서 로그 업로드만 1MB(라우트에서 제한), 나머지는 64KB. /v1 은 인증을 먼저 보고 나서 크기를 잰다(라우트에서)
   const defaultLimit = bodyLimit({ maxSize: 64 * 1024, onError: tooLarge });
-  app.use('*', (c, next) => (c.req.path.endsWith('/sensor-log') || c.req.path.startsWith('/v1/') ? next() : defaultLimit(c, next)));
+  const sensorLimit = bodyLimit({ maxSize: 4 * 1024 * 1024, onError: tooLarge });
+  app.use('*', (c, next) => c.req.path.endsWith('/indicators') ? sensorLimit(c, next) : (c.req.path.endsWith('/sensor-log') || c.req.path.startsWith('/v1/') ? next() : defaultLimit(c, next)));
 
   app.get('/health', (c) => c.json({ ok: true }));
   // 발표 전에 서버를 깨우는 용도 — 인증 없음

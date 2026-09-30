@@ -11,7 +11,7 @@ export const LEVEL_LABEL: Record<IncidentLevel, string> = {
   candidate: '후보 (라이더 확인 대기)',
   alert: '경보',
   alert_no_stillness: '경보 (무동작 확인 불가)',
-  dismissed: '기각',
+  dismissed: '본인 응답으로 종료 (사고 여부 미확인)',
   undetermined: '판정 불가',
 };
 
@@ -46,7 +46,7 @@ export function levelOf(
   stillnessMinS: number,
 ): { level: IncidentLevel; label: string } {
   const is = (level: IncidentLevel) => ({ level, label: LEVEL_LABEL[level] });
-  if (incident.resolution === 'false_alarm' || incident.resolution === 'rider_ok') return is('dismissed');
+  if (incident.resolution === 'false_alarm' || incident.resolution === 'rider_cancelled' || incident.resolution === 'rider_ok') return is('dismissed');
   if (incident.riderResponse === 'help') return is('alert');
   if (incident.escalationReason === 'no_response') {
     const p = d.post_event;

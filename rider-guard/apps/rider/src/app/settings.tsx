@@ -111,10 +111,16 @@ export default function SettingsScreen() {
             sub={<WornSub />}
             right={<Toggle value={helmet.worn} onValueChange={helmet.setWorn} disabled={!helmet.ready} accessibilityLabel="헬멧 착용" style={styles.toggle} />}
           />
+          {/* 음성 인식은 어떤 플랫폼에서도 사건 응답에 연결돼 있지 않다 — 켤 수 있는 것처럼 보이지 않게 */}
           <Row
             title="말로 응답하기"
-            sub="사고 때 헬멧 스피커로 묻고 음성으로 답해요"
-            right={<Toggle value={helmet.voice} onValueChange={helmet.setVoice} disabled={!helmet.ready} accessibilityLabel="말로 응답하기" style={styles.toggle} />}
+            sub="아직 지원하지 않아요. 사고 확인 화면의 버튼으로 응답해요"
+            right={
+              <Badge tone="neutral" size="sm">
+                미지원
+              </Badge>
+            }
+            accessibilityLabel="말로 응답하기, 미지원. 사고 확인 화면의 버튼으로 응답해요"
           />
         </ListGroup>
       </Section>
@@ -410,7 +416,8 @@ function PushRow() {
 // ── 동의 관리 ────────────────────────────────────────────────
 
 /**
- * v3·1 동의 문구 그대로 — 필수 둘 + 선택 '오탐 구간'(기기에만 남기는 시뮬레이션) + 가입 때 받은 선택 둘.
+ * v3·1 동의 — 필수 둘 + 선택 '감지 구간 개선 제공'(서버 계약에 없어 기기에만 남는다) + 가입 때 받은 선택 둘.
+ * 로그인(Google 등) 동의는 이 항목들을 대신하지 않는다. insuranceRecords 는 서버의 기록 파일 내보내기를 여닫는다.
  * 줄을 누르면 가입 정보 수정 화면에서 바꾼다 (서버 동의는 이름·번호와 함께 저장된다).
  */
 function ConsentGroup({ me }: { me: MeDto | undefined }) {
@@ -419,8 +426,8 @@ function ConsentGroup({ me }: { me: MeDto | undefined }) {
   const items: { key: string; required: boolean; label: string; agreed: boolean | undefined }[] = [
     { key: 'locationSensor', required: true, label: '헬멧 착용 중에만 위치·센서 수집', agreed: c?.locationSensor },
     { key: 'shareOnIncident', required: true, label: '사고 때 비상연락처에 위치 전달', agreed: c?.shareOnIncident },
-    { key: 'falsePositive', required: false, label: '오탐 구간을 정확도 개선에 제공', agreed: falsePositive },
-    { key: 'insuranceRecords', required: false, label: '보험·산재 접수용 사고기록 제공', agreed: c?.insuranceRecords },
+    { key: 'falsePositive', required: false, label: '감지 구간을 정확도 개선에 제공 (기기에만 저장)', agreed: falsePositive },
+    { key: 'insuranceRecords', required: false, label: '사고기록 파일 제공 (기록 파일 받기)', agreed: c?.insuranceRecords },
     { key: 'medicalInfo', required: false, label: '119 신고 때 의료정보 함께 전달', agreed: c?.medicalInfo },
   ];
   return (
@@ -461,14 +468,14 @@ function ConsentRow({ required, label, agreed, loading }: { required: boolean; l
 
 // ── 개발 · 미리보기 ───────────────────────────────────────────
 
-/** 비상연락처가 받는 화면과 잠금화면 알림을 앱 안에서 미리 본다 (모두 시뮬레이션 — 서버에 보내지 않는다) */
+/** 비상연락처가 받는 화면과 잠금화면 알림을 앱 안에서 미리 본다 (모두 모의 화면 — 서버에 보내지 않고 실제 연락도 하지 않는다) */
 function DevPreview({ me, delay }: { me: MeDto | undefined; delay: number }) {
   const { data } = useIncidents();
   const first: ContactDto | undefined = [...(me?.contacts ?? [])].sort((a, b) => a.priority - b.priority)[0];
   const latestId = data?.items[0]?.id;
   const openEmergency = () => (latestId ? router.push({ pathname: '/emergency', params: { id: latestId } }) : router.push('/emergency'));
   return (
-    <Section title="미리보기" right={<SimBadge />} delay={delay}>
+    <Section title="미리보기" right={<SimBadge label="모의 화면 · 실제 전송 없음" />} delay={delay}>
       <ListGroup>
         <Row
           leading={

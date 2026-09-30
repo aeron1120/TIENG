@@ -1,7 +1,7 @@
 /**
  * v3 시뮬레이션 도우미 — 실제로 받을 수 없는 값을 앱 안에서 그럴듯하게 채운다. 서버에는 아무것도 보내지 않는다.
  *
- *   SIM                 기본값 (헬멧 배터리 · 주소 · 위치 · 이름 · 3분 에스컬레이션 · 30초 본인 확인)
+ *   SIM                 기본값 (헬멧 배터리 · 주소 · 위치 · 이름 · 60초 에스컬레이션 · 30초 본인 확인)
  *   useOtpSim           휴대폰 인증번호 — '인증 요청' 후 약 1.2초 뒤 6자리가 자동으로 채워진다
  *   useConsentSim       선택 동의 '오탐 구간을 정확도 개선에 제공' (로컬 저장)
  *   pending name        가입 화면의 이름 → v3·1 에서 가입 정보로 저장
@@ -19,7 +19,8 @@ import { KEYS, storage } from '@/lib/storage';
 
 // ── 기본값 ────────────────────────────────────────────────────
 
-export const ESCALATION_STEP_S = 180;
+/** 서버 CONTACT_STAGGER_SECONDS 기본값(60초)과 같다 — 서버는 이 간격으로 다음 순위 문자를 예약한다. 센서 판정 창과 무관한 운영값. */
+export const ESCALATION_STEP_S = 60;
 export const SELF_CHECK_S = 30;
 
 export const SIM = {
@@ -33,7 +34,7 @@ export const SIM = {
   riderName: '김도윤',
   /** 연락처 이름이 없을 때 (1순위, 2순위…) */
   contactNames: ['김민지', '박준호', '이서연'],
-  /** 다음 순위로 넘어가기까지 (v3·3 '3분 안에 확인이 없으면 2순위에게도 가고') */
+  /** 다음 순위로 넘어가기까지 (서버 기본 60초) */
   escalationStepS: ESCALATION_STEP_S,
   /** 사고 확인 화면에서 본인 응답을 기다리는 시간 (v3·8 '본인 확인 응답 없음 (30초)') */
   selfCheckS: SELF_CHECK_S,
@@ -96,7 +97,7 @@ export type EscalationCountdown = {
 };
 
 /**
- * 3분 단위 에스컬레이션 카운트다운 (시뮬레이션 — 서버는 3분마다 다음 순위로 넘기지 않는다).
+ * 순위별 에스컬레이션 카운트다운 — 서버 기본 간격(60초)으로 화면에서 계산한다(서버는 다음 순위까지 남은 시간을 주지 않는다).
  * stepStartedAt = 1순위에게 알린 시각(예: 대응 단계 contacts 의 at, 없으면 incident.escalatedAt).
  * steps = 순위 수(연락처 수). 마지막 차례가 끝나면 0 에 멈춘다.
  */

@@ -1,5 +1,6 @@
 // 디자인: spec-v3 09 '비상연락처 긴급 알림 웹' — 1순위 연락처가 받는 긴급 알림 페이지를 앱 안에서 그대로 보여 주는 미리보기. ?id=<사고 id>
-// 서버 공개 페이지는 건드리지 않는다. 버튼 동작(확인·연락 안 됨·119 신고)은 이 화면 안의 시뮬레이션이고, 전화·지도 열기만 실제로 연다.
+// 실제 수신자 페이지는 서버의 /s/:token (사건·수신자 범위 권한, 라이더 로그인 없음)이다. 이 화면은 라이더 앱 안의 모의 화면이라
+// 버튼 동작(확인·연락 안 됨·119 신고)은 서버에 보내지 않고 누구에게도 연락하지 않는다. 전화·지도 열기만 실제로 연다.
 // 사고: ?id= → 없으면 가장 최근 사고 → 그것도 없으면 시뮬레이션 값. 닫기 버튼은 없다(브라우저·하드웨어 뒤로, iOS 는 쓸어내리기 — _layout).
 import type { IncidentDetailDto, IncidentStep } from '@rider-guard/contract';
 import { useLocalSearchParams } from 'expo-router';
@@ -10,7 +11,7 @@ import { isOpenStatus, useIncident, useIncidents, useMe } from '@/api/hooks';
 import { ArrowUpRightIcon, CheckIcon, LogoIcon, PhoneIcon, WarningTriangleIcon } from '@/components/Icons';
 import { RiderMap } from '@/components/RiderMap';
 import { useToast } from '@/components/Toast';
-import { Button, Card, FadeIn, FadeSwap, IconCircle, PressableScale, ProgressBar, Screen, Skeleton, Txt } from '@/components/ui';
+import { Button, Card, FadeIn, FadeSwap, IconCircle, PressableScale, ProgressBar, Screen, SimBadge, Skeleton, Txt } from '@/components/ui';
 import { useRiderPosition } from '@/features/location';
 import { escalationCountdown, riderDisplayName, SELF_CHECK_S, simAddress, useNow } from '@/features/sim';
 import { timeHM } from '@/lib/format';
@@ -19,7 +20,7 @@ import { colors, font, motion, radius, typography } from '@/theme';
 type ContactsStep = Extract<IncidentStep, { key: 'contacts' }>;
 const contactsStep = (incident: IncidentDetailDto) => incident.steps.find((s): s is ContactsStep => s.key === 'contacts');
 
-/** 사고가 없거나 끝난 사고일 때 — 1순위에게 알린 지 19초 지난 것처럼(디자인의 '02:41'에서 시작) */
+/** 사고가 없거나 끝난 사고일 때 — 1순위에게 알린 지 19초 지난 것처럼 */
 const SIM_ELAPSED_S = 19;
 /** 확인 요청을 보내는 척 기다리는 시간 */
 const SIM_SEND_MS = 600;
@@ -73,6 +74,7 @@ export default function EmergencyScreen() {
   const location = inc?.location ?? pos;
   const locationAt = inc?.location?.recordedAt ?? detectedAt;
   const address = simAddress(inc?.location);
+  const helpRequested = inc?.riderResponse === 'help';
 
   const call = useCallback(() => {
     if (!phone) {
@@ -91,7 +93,7 @@ export default function EmergencyScreen() {
     timer.current = setTimeout(() => {
       setSending(false);
       setAckAt(Date.now());
-      toast.success('확인했어요. 다른 연락처에는 더 알리지 않아요');
+      toast.info('미리보기라 실제 확인 응답은 보내지 않았어요');
     }, SIM_SEND_MS);
   };
 
@@ -101,7 +103,7 @@ export default function EmergencyScreen() {
       return;
     }
     setSkipped(true);
-    toast.info('2순위 연락처에게도 바로 알렸어요');
+    toast.info('미리보기라 2순위 연락처에게 실제로 알리지 않았어요');
   };
 
   if (loading) {
@@ -120,17 +122,20 @@ export default function EmergencyScreen() {
     <Screen tone="white" side={20} top={56} bottom={28} gap={0} enter="none">
       <FadeIn>
         <Brand />
+        <SimBadge label="미리보기 · 모의 화면 · 실제 전송 없음" style={styles.mock} />
       </FadeIn>
       <FadeIn delay={seq(1)}>
         <Warning />
       </FadeIn>
 
       <FadeIn delay={seq(2)}>
+        {/* 발생한 사실만 — 도움 요청이면 그 사실을, 무응답이면 '응답을 확인하지 못했다'고. 사고 확정처럼 말하지 않는다 */}
         <Txt accessibilityRole="header" style={styles.title}>
-          {`${rider}님에게\n사고가 감지됐어요`}
+          {helpRequested ? `${rider}님이\n도움을 요청했어요` : `${rider}님에게\n강한 충격이 감지됐어요`}
         </Txt>
         <Txt style={styles.lead}>
-          <Txt style={styles.leadTime}>{timeHM(detectedAt)}</Txt> 충격 감지 후 본인 확인에 응답하지 않았어요
+          <Txt style={styles.leadTime}>{timeHM(detectedAt)}</Txt>{' '}
+          {helpRequested ? '충격 감지 후 본인이 도움이 필요하다고 응답했어요' : '충격 감지 후 본인 응답을 확인하지 못했어요'}
         </Txt>
       </FadeIn>
 
@@ -236,7 +241,8 @@ export default function EmergencyScreen() {
             fontSize={15}
             style={styles.pairButton}
             textStyle={styles.pairLabel}
-            onPress={() => toast.success('119 신고를 기록했어요')}
+            // 실제 수신자 페이지에서도 이 버튼은 '수신자가 직접 신고했다'는 응답만 기록한다. 앱이 119에 신고하지 않는다
+            onPress={() => toast.info('미리보기예요. 실제 페이지에서는 직접 신고했다는 응답만 기록돼요')}
           />
         </View>
       </FadeIn>
@@ -280,6 +286,7 @@ const PAIR_H = 50;
 
 const styles = StyleSheet.create({
   brand: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  mock: { alignSelf: 'center', marginTop: 8 },
   brandText: { ...font.sans(700), fontSize: 15, lineHeight: 22, letterSpacing: -0.45, color: colors.text },
   warning: { alignItems: 'center', marginTop: 19 },
   // 이 화면 제목은 다른 화면(28)보다 한 단계 크다 (디자인 글리프 폭 198.5 · 높이 26.5)

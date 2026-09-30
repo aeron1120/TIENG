@@ -10,7 +10,7 @@ const UNITS: Record<string, string> = { peak_g: 'g', peak_gyro: 'deg/s', delta_v
 const ind = (values: Record<string, number | null>): Indicator[] =>
   Object.entries(values).map(([key, value]) => ({ key, value, unit: UNITS[key] ?? null, state: value == null ? 'low_quality' : 'ok', sqi: null, t: 30 }));
 
-// 헬멧 IMU 실험(2026-09-28) analysis/run_evaluation.csv 의 실제 실행 값. 가속도·각속도·ΔV 는 실행 전체 최대값이라
+// Mock summary fixtures inspired by prior reports; not measured validation. 가속도·각속도·ΔV 는 실행 전체 최대값이라
 // 창 안 최대값보다 크거나 같다. 표에 기울기 열이 없어 0 으로 둔다 — 아래 실행은 기울기 없이도 판정이 갈린다.
 // quiet_s 는 시뮬레이션이 30초를 다 보지 못해 없는 값이라, 쓰러진 채 가만히 있었다고 보고 25초로 둔다.
 const RUNS = {
@@ -24,21 +24,21 @@ const RUNS = {
 };
 const still = (run: keyof typeof RUNS) => ind({ ...RUNS[run], bank_deg: 0, quiet_s: 25 });
 
-test('실험의 사고 실행은 경보, 가장 센 정상 주행은 기각', () => {
+test('mock summary fixtures exercise the initial report thresholds', () => {
   const decisions = Object.fromEntries(Object.keys(RUNS).map((run) => [run, judge(still(run as keyof typeof RUNS)).decision]));
   assert.deepEqual(decisions, { A1_v00: 'alarm', B2_v00: 'alarm', C1_v00: 'alarm', C9_v00: 'alarm', D3_v09: 'reject', D6_v09: 'reject', D7_v03: 'reject' });
 });
 
-test('연석(D6)은 4g 를 넘지만 보조 조건이 하나도 안 서서 기각 — ΔV 여유가 0.14 m/s 뿐이다', () => {
+test('mock D6: 회전 조건은 통과해도 6g 미만이면 후보가 아니다', () => {
   const [impact, support] = judge(still('D6_v09')).traces;
-  assert.equal(impact!.fired, true);
-  assert.equal(support!.fired, false);
+  assert.equal(impact!.fired, false);
+  assert.equal(support!.fired, true);
   assert.equal(support!.blocked_by, null);
 });
 
-test('stress_100hz 에서 실험이 놓친 A3 사선 충돌은 서버도 놓친다 — 알려진 한계', () => {
+test('mock A3: 새 초기값 300deg/s를 적용한다', () => {
   // A3_v03 stress_100hz: 11.76g, 434°/s, ΔV 2.77 — 후보가 서지 않았으니 기울기도 75° 미만이었다
-  assert.equal(judge(ind({ peak_g: 11.76, peak_gyro: 434, delta_v150: 2.77, bank_deg: 0, quiet_s: 25 })).decision, 'reject');
+  assert.equal(judge(ind({ peak_g: 11.76, peak_gyro: 434, delta_v150: 2.77, bank_deg: 0, quiet_s: 25 })).decision, 'alarm');
 });
 
 test('기울기만으로 선 후보는 넘어짐, 회전·ΔV 로 선 후보는 충격으로 연다', () => {
@@ -50,22 +50,22 @@ test('기울기는 좌우 상관없이 절댓값으로 본다', () => {
   assert.equal(judge(ind({ peak_g: 6, peak_gyro: 200, delta_v150: 1, bank_deg: -80, quiet_s: 25 })).decision, 'alarm');
 });
 
-test('후보 뒤 계속 움직이면 기각 — 특이도는 충격 이후에서 나온다 (2.3)', () => {
-  assert.equal(judge(ind({ ...RUNS.A1_v00, bank_deg: 0, quiet_s: 3 })).decision, 'reject');
+test('후보 뒤 움직임으로 후보를 취소하지 않는다', () => {
+  assert.equal(judge(ind({ ...RUNS.A1_v00, bank_deg: 0, quiet_s: 3 })).decision, 'alarm');
 });
 
 test('후보는 확실한데 무동작을 못 재면 경보한다 — 놓침은 되돌릴 수 없다 (1.3)', () => {
   const { decision, traces } = judge(ind({ ...RUNS.A1_v00, bank_deg: 0, quiet_s: null }));
-  assert.equal(decision, 'alarm_unverified');
+  assert.equal(decision, 'alarm');
   assert.equal(traces.find((t) => t.rule === 'post_still')!.blocked_by, 'low_quality:quiet_s');
 });
 
-test('충격은 섰는데 보조 지표가 비어 있으면 기각하지 않는다 — 무동작이면 경보, 움직이면 기각', () => {
+test('보조 지표가 없으면 무동작과 무관하게 정보 부족', () => {
   const onlyImpact = (quiet_s: number) => [...ind({ peak_g: 10, quiet_s }), { key: 'peak_gyro', value: 12, unit: 'rad/s', state: 'ok' as const, sqi: null, t: 30 }];
   const { decision, traces } = judge(onlyImpact(25));
-  assert.equal(decision, 'alarm_unverified');
+  assert.equal(decision, 'undetermined');
   assert.equal(traces.find((t) => t.rule === 'support')!.blocked_by, 'unit:peak_gyro(rad/s≠deg/s),missing:delta_v150,missing:bank_deg');
-  assert.equal(judge(onlyImpact(2)).decision, 'reject');
+  assert.equal(judge(onlyImpact(2)).decision, 'undetermined');
 });
 
 test('보조 하나만 서면 나머지가 비어 있어도 상관없다', () => {
@@ -117,7 +117,7 @@ test('0.5초 넘게 떨어진 두 충격은 창도 둘이다 — 추돌 직후 �
   });
   const reports = reportsFromImu(rows);
   assert.deepEqual(reports.map((r) => r.tPeak), [1.5, 2.3]);
-  assert.deepEqual(reports.map((r) => judge(r.indicators).traces.find((t) => t.rule === 'support')!.fired), [true, false]);
+  assert.deepEqual(reports.map((r) => r.analysis.decision), ['candidate', 'no_candidate']);
 });
 
 test('30초를 다 보지 못한 기록은 quiet_s 를 품질 미달로 보낸다', () => {
@@ -125,7 +125,7 @@ test('30초를 다 보지 못한 기록은 quiet_s 를 품질 미달로 보낸�
   const quiet = crash!.indicators.find((i) => i.key === 'quiet_s')!;
   assert.equal(quiet.state, 'low_quality');
   assert.equal(quiet.value, 1);
-  assert.equal(judge(crash!.indicators).decision, 'alarm_unverified');
+  assert.equal(judge(crash!.indicators).decision, 'alarm');
 });
 
 test('3g 를 넘지 않은 기록은 보낼 것이 없다', () => {

@@ -3,6 +3,7 @@ import { closeStaleIncidents, escalate, queueContactUpdate } from './incidents.t
 import { deliverPushes } from './push.ts';
 import { expireSessions } from './sessions.ts';
 import { CONFIRMED_STATUSES, createShareLink } from './sharing.ts';
+import { consentsOf } from './riders.ts';
 
 /** 재시도: 비상연락 문자는 30초·60초 뒤 두 번 더, 119 신고는 10초씩 늘려 가며 아홉 번 더 (약 7분) */
 const RETRY: Record<'contact' | 'emergency', { max: number; baseMs: number }> = {
@@ -38,10 +39,15 @@ export async function processDue(ctx: AppContext) {
     try {
       const incident = order.incidentId ? await ctx.db.get<IncidentRow>('SELECT * FROM incidents WHERE id = :id', { id: order.incidentId }) : undefined;
       const demo = incident ? isDemoIncident(ctx, incident) : ctx.config.demoMode;
+      const simulated = demo || ctx.providers.dispatch.deliveryMode !== 'real';
       if (demo) ctx.log.info(`[데모 — 실제 요청 안 함] 주문 ${order.id} 대체배차`);
       else await ctx.providers.dispatch.requestReassignment(order, order.riderId);
       await ctx.db.tx(async () => {
         const at = ctx.clock.now();
+        if (simulated) {
+          if (order.incidentId) await addEvent(ctx, order.incidentId, 'order_reassignment_simulated', { orderId: order.id, demo: true }, at);
+          return;
+        }
         if (!(await ctx.db.run("UPDATE orders SET status = 'reassigned', updatedAt = :at WHERE id = :id AND status = 'held'", { id: order.id, at }))) return;
         if (order.incidentId) await addEvent(ctx, order.incidentId, 'order_reassigned', { orderId: order.id, ...(demo ? { demo: true } : null) }, at);
       });
@@ -127,7 +133,7 @@ async function deliver(ctx: AppContext, n: NotificationRow) {
   const emergency = n.purpose === 'emergency_report' || n.purpose === 'emergency_update';
   const confirmed = (CONFIRMED_STATUSES as readonly string[]).includes(incident.status);
   // 그사이 사고가 끝났으면 사고 문자·119 신고는 보내지 않는다 (후속 안내는 사고가 끝난 뒤에 가는 것이라 보낸다)
-  const stale = (n.purpose === 'contact_alert' && (!contact || !confirmed)) || (n.purpose === 'emergency_report' && !confirmed);
+  const stale = !(await consentsOf(ctx, incident.riderId)).shareOnIncident || (n.purpose === 'contact_alert' && (!contact || !confirmed)) || (n.purpose === 'emergency_report' && !confirmed);
   if (stale) {
     await ctx.db.run("UPDATE notifications SET status = 'cancelled' WHERE id = :id", { id: n.id });
     return;
@@ -135,6 +141,7 @@ async function deliver(ctx: AppContext, n: NotificationRow) {
 
   // 데모 모드와 재생·테스트 사고는 문자·119 를 절대 밖으로 보내지 않는다. 발송 입구는 여기 하나다 — 흐름(단계·타임라인)은 그대로 진행한다.
   const demo = isDemoIncident(ctx, incident);
+  const simulated = demo || (emergency ? ctx.providers.emergency : ctx.providers.sms).deliveryMode !== 'real';
   // 링크는 보낼 때 만든다. 토큰 원문은 문자에만 실리고 DB 에는 해시만 남는다.
   const body = !n.body.includes('{link}')
     ? n.body
@@ -144,14 +151,14 @@ async function deliver(ctx: AppContext, n: NotificationRow) {
     else if (emergency) await ctx.providers.emergency.report(body);
     else await ctx.providers.sms.send(n.recipient, body);
     const sentAt = ctx.clock.now();
-    const mark = demo ? { demo: true } : null;
+    const mark = simulated ? { demo: true, delivery: 'simulated' } : null;
     await ctx.db.tx(async () => {
-      await ctx.db.run("UPDATE notifications SET status = 'sent', sentAt = :sentAt, error = NULL WHERE id = :id", { id: n.id, sentAt });
+      await ctx.db.run("UPDATE notifications SET status = :status, sentAt = :sentAt, error = NULL WHERE id = :id", { id: n.id, sentAt: simulated ? null : sentAt, status: simulated ? 'simulated' : 'sent' });
       if (n.purpose === 'contact_alert' && contact) {
-        await addEvent(ctx, incident.id, 'contact_notified', { contactId: contact.id, priority: contact.priority, name: contact.name, ...mark }, sentAt);
+        await addEvent(ctx, incident.id, simulated ? 'contact_notification_simulated' : 'contact_notified', { contactId: contact.id, priority: contact.priority, name: contact.name, ...mark }, sentAt);
       }
-      if (n.purpose === 'emergency_report') await addEvent(ctx, incident.id, 'emergency_reported', mark, sentAt);
-      if (n.purpose === 'emergency_update') await addEvent(ctx, incident.id, 'emergency_updated', mark, sentAt);
+      if (n.purpose === 'emergency_report') await addEvent(ctx, incident.id, simulated ? 'emergency_report_simulated' : 'emergency_reported', mark, sentAt);
+      if (n.purpose === 'emergency_update') await addEvent(ctx, incident.id, simulated ? 'emergency_update_simulated' : 'emergency_updated', mark, sentAt);
     });
   } catch (error) {
     const attempts = n.attempts + 1;

@@ -3,6 +3,8 @@ import type {
   EmergencyDelivery,
   EscalationReason,
   IncidentDetailDto,
+  SensorAnalysis,
+  SensorSample,
   IncidentLocation,
   IncidentStep,
   IncidentSummaryDto,
@@ -87,6 +89,7 @@ export type NewIncident = {
   deviceId?: string;
   /** 판정 근거 (지표·규칙 추적). 운영 모니터에서 임계값을 맞출 때 본다 */
   evidence?: unknown;
+  sensorLog?: SensorSample[];
   /** 같은 보고를 두 번 받아도 사고를 한 번만 여는 키. 이미 끝난 사고라도 다시 열지 않는다 */
   reportKey?: string;
   /** 보류·대체배차할 주문. 없으면 에스컬레이션 때 라이더의 최근 배달 중 주문 */
@@ -104,6 +107,7 @@ export type NewIncident = {
  * 이미 진행 중인 사고가 있으면 새로 만들지 않고 그것을 돌려준다 — 같은 충격의 반복 트리거로 경보가 겹치지 않게.
  */
 export async function createIncident(ctx: AppContext, input: NewIncident): Promise<{ created: boolean; incident: IncidentRow }> {
+  if (!(await consentsOf(ctx, input.riderId)).locationSensor) throw new ApiError(403, 'consent_required', '위치·센서 수집 동의가 필요해요.');
   const session = await activeSession(ctx, input.riderId);
   if (!session) throw new ApiError(409, 'no_active_session', '운행 중에만 사고 감지가 동작해요.');
 
@@ -150,7 +154,7 @@ export async function createIncident(ctx: AppContext, input: NewIncident): Promi
       locationAt: input.location ? now : (fallback?.recordedAt ?? null),
       address: input.location ? (input.address ?? null) : null,
       metricsJson: input.metrics ? JSON.stringify(input.metrics) : null,
-      sensorLogJson: null,
+      sensorLogJson: input.sensorLog ? JSON.stringify(input.sensorLog) : null,
       evidenceJson: input.evidence === undefined ? null : JSON.stringify(input.evidence),
       reportKey: input.reportKey ?? null,
       orderId: input.orderId ?? null,
@@ -184,7 +188,7 @@ export async function respond(ctx: AppContext, riderId: string, id: string, resp
     if (incident.status === 'countdown') {
       if (response === 'ok') {
         await ctx.db.run(
-          `UPDATE incidents SET status = 'cancelled', riderResponse = 'ok', respondedAt = :now, resolution = 'false_alarm', resolvedAt = :now
+          `UPDATE incidents SET status = 'cancelled', riderResponse = 'ok', respondedAt = :now, resolution = 'rider_cancelled', resolvedAt = :now
            WHERE id = :id`,
           { id, now },
         );
@@ -210,6 +214,7 @@ export async function respond(ctx: AppContext, riderId: string, id: string, resp
       return await reload(ctx, id);
     }
 
+    if (incident.riderResponse === response) return incident;
     throw new ApiError(409, 'incident_closed', '이미 종료된 사고예요.');
   });
 }
@@ -233,6 +238,10 @@ export async function escalate(ctx: AppContext, incident: IncidentRow, reason: E
     );
     if (!changed) return false;
     await addEvent(ctx, incident.id, 'escalated', { reason });
+    if (!(await consentsOf(ctx, incident.riderId)).shareOnIncident) {
+      await addEvent(ctx, incident.id, 'sharing_disabled', { reason: 'consent_revoked' });
+      return true;
+    }
     // 도움 요청은 라이더가 방금 앱에서 누른 것이라 알릴 필요가 없다.
     if (reason === 'no_response') await enqueuePush(ctx, incident, 'escalated');
 
@@ -241,8 +250,8 @@ export async function escalate(ctx: AppContext, incident: IncidentRow, reason: E
     const what =
       reason === 'rider_requested'
         ? `${name}님이 사고 후 도움을 요청했어요.`
-        : `${name}님에게 사고가 감지됐고 ${incident.countdownSeconds}초 동안 응답이 없었어요.`;
-    const body = `[Rider Guard] ${what} 현재 위치: {link} 119에도 자동으로 신고해요.`;
+        : `${name}님에게 강한 충격이 감지됐고 ${incident.countdownSeconds}초 동안 본인 응답을 확인하지 못했어요.`;
+    const body = `[Rider Guard] ${what} 마지막 위치와 전송 상태: {link}`;
 
     // 1순위부터 순서대로. 앞 순위가 링크에서 '확인'을 누르면 뒤 순위 문자는 취소된다.
     const contacts = await listContacts(ctx, incident.riderId);
@@ -423,6 +432,7 @@ const EMERGENCY_STEP: Record<EmergencyDelivery, StepState> = {
   sending: 'now',
   retrying: 'now',
   sent: 'done',
+  simulated: 'skipped',
   // 끝내 실패하면 사람이 직접 신고해야 하는 일이 남아 있다
   failed: 'now',
   cancelled: 'skipped',
@@ -433,6 +443,7 @@ const EMERGENCY_STEP: Record<EmergencyDelivery, StepState> = {
 /** 충격 전후 ±5초 원시 센서 데이터 (5.7). 보험·산재 증빙과 알고리즘 튜닝의 원본. */
 export async function saveSensorLog(ctx: AppContext, riderId: string, id: string, log: unknown) {
   await riderIncident(ctx, riderId, id);
+  if (!(await consentsOf(ctx, riderId)).locationSensor) throw new ApiError(403, 'consent_required', '센서 수집 동의가 필요해요.');
   await ctx.db.tx(async () => {
     await ctx.db.run('UPDATE incidents SET sensorLogJson = :json WHERE id = :id', { id, json: JSON.stringify(log) });
     await addEvent(ctx, id, 'sensor_log_saved');
@@ -446,14 +457,18 @@ async function incidentLocation(ctx: AppContext, incident: IncidentRow): Promise
     return { lat: incident.lat, lng: incident.lng, accuracy: incident.accuracy, address: incident.address, recordedAt: iso(incident.locationAt ?? incident.detectedAt) };
   }
   // 감지 순간 위치가 없으면 직전 10분 안의 최신 위치
-  const latest = await latestLocation(ctx, incident.riderId, incident.detectedAt - 10 * 60_000);
-  return latest ? { lat: latest.lat, lng: latest.lng, accuracy: latest.accuracy, address: null, recordedAt: iso(latest.recordedAt) } : null;
+  return null;
 }
 
 const toOrderDto = (o: OrderRow): OrderDto => ({ id: o.id, storeName: o.storeName, destination: o.destination, status: o.status });
 
 export async function toDetailDto(ctx: AppContext, incident: IncidentRow): Promise<IncidentDetailDto> {
   const order = await orderOf(ctx, incident.id);
+  let evidence = parseJson<{ analysis?: SensorAnalysis; dataSource?: 'mock' | 'simulation' | 'measured'; upstream?: unknown }>(incident.evidenceJson);
+  if (!evidence) {
+    const detection = await ctx.db.get<{ bodyJson: string }>('SELECT bodyJson FROM detections WHERE incidentId = :id LIMIT 1', { id: incident.id });
+    if (detection) evidence = { upstream: parseJson<unknown>(detection.bodyJson) };
+  }
   return {
     id: incident.id,
     status: incident.status,
@@ -472,6 +487,12 @@ export async function toDetailDto(ctx: AppContext, incident: IncidentRow): Promi
     order: order ? toOrderDto(order) : null,
     steps: await buildSteps(ctx, incident, order),
     serverTime: iso(ctx.clock.now()),
+    evidence,
+    analysis: evidence?.analysis ?? null,
+    dataSource: evidence?.dataSource ?? (incident.source === 'test' ? 'mock' : 'unknown'),
+    timeline: (await eventsOf(ctx, incident.id)).map((e) => ({ type: e.type, at: iso(e.at), data: parseJson<Record<string, unknown>>(e.dataJson) })),
+    feedback: { response: incident.riderResponse, groundTruth: 'unknown' },
+    exportAvailable: (await consentsOf(ctx, incident.riderId)).insuranceRecords,
   };
 }
 
@@ -512,9 +533,9 @@ async function buildSteps(ctx: AppContext, incident: IncidentRow, order: OrderRo
   const noContacts = !!first('no_contacts');
   steps.push({
     key: 'contacts',
-    state: closed ? 'skipped' : status === 'countdown' ? 'todo' : notified.length ? 'done' : noContacts || status === 'resolved' ? 'skipped' : 'now',
+    state: closed ? 'skipped' : status === 'countdown' ? 'todo' : notified.length ? 'done' : noContacts || status === 'resolved' || count('simulated') > 0 && count('pending', 'sending') === 0 ? 'skipped' : 'now',
     at: iso(notifiedEvents[0]?.at),
-    detail: { notified, pending: count('pending', 'sending'), failed: count('failed'), acknowledgedBy: ack?.name ?? null, reason: noContacts ? 'no_contacts' : null },
+    detail: { notified, pending: count('pending', 'sending'), failed: count('failed'), acknowledgedBy: ack?.name ?? null, reason: noContacts ? 'no_contacts' : count('simulated') ? 'simulated' : null },
   });
 
   // 119 자동 신고. 상담원이 신고하던 때의 기록은 outbox 행 없이 이벤트만 있다.

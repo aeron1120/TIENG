@@ -19,7 +19,7 @@ import type {
 import type { AppContext, ContactRow, DeviceRow, RiderRow, SessionRow } from '../context.ts';
 import { parseJson } from '../db.ts';
 import { ApiError, iso, newId, notFound, seoulDayStart } from '../lib.ts';
-import { ACTIVE_SESSION_SQL, driveSecondsToday, TODAY_SESSIONS_SQL, toSessionDto, type TodaySessionRow } from './sessions.ts';
+import { ACTIVE_SESSION_SQL, driveSecondsToday, latestLocation, TODAY_SESSIONS_SQL, toSessionDto, type TodaySessionRow } from './sessions.ts';
 
 export const CONSENT_VERSION = '2026-09';
 export const CONSENT_KEYS: ConsentKey[] = ['locationSensor', 'shareOnIncident', 'insuranceRecords', 'medicalInfo'];
@@ -126,6 +126,12 @@ export async function setConsents(ctx: AppContext, riderId: string, consents: Pa
   }
   // 의료정보 동의를 철회하면 저장된 의료정보도 지운다.
   if (consents.medicalInfo === false) await ctx.db.run('UPDATE riders SET medicalJson = NULL WHERE id = :riderId', { riderId });
+  if (consents.locationSensor === false) {
+    await ctx.db.run("UPDATE sessions SET endedAt = :now, endReason = 'rider' WHERE riderId = :riderId AND endedAt IS NULL", { riderId, now: updatedAt });
+  }
+  if (consents.shareOnIncident === false) {
+    await ctx.db.run("UPDATE notifications SET status = 'cancelled' WHERE status = 'pending' AND incidentId IN (SELECT id FROM incidents WHERE riderId = :riderId)", { riderId });
+  }
 }
 
 // ── 비상연락망 ─────────────────────────────────────────────────
@@ -223,7 +229,8 @@ export async function riderDevice(ctx: AppContext, riderId: string): Promise<Dev
 
 export function toDeviceDto(ctx: AppContext, d: DeviceRow): DeviceDto {
   const connected = d.lastSeenAt != null && ctx.clock.now() - d.lastSeenAt < DEVICE_ONLINE_MS;
-  return { id: d.id, name: d.name, kind: d.kind, pairingCode: d.pairingCode, connected, battery: d.battery, lastSeenAt: iso(d.lastSeenAt) };
+  const sensorState = d.lastSensorAt == null ? 'waiting' : ctx.clock.now() - d.lastSensorAt < ctx.config.sensorStaleSeconds * 1000 ? 'fresh' : 'stale';
+  return { id: d.id, name: d.name, kind: d.kind, pairingCode: d.pairingCode, connected, battery: d.battery, lastSeenAt: iso(d.lastSeenAt), lastSensorAt: iso(d.lastSensorAt), sensorState, staleAfterSeconds: ctx.config.sensorStaleSeconds };
 }
 
 /** 기기에 표시된 페어링 코드로 연결한다. 라이더당 기기는 하나라 기존 기기는 해제된다. */
@@ -262,6 +269,7 @@ export async function buildMe(ctx: AppContext, riderId: string): Promise<MeDto> 
   const session = sessions[0];
   const device = devices[0];
   const consents = consentsFrom(consentRows);
+  const last = await latestLocation(ctx, riderId, 0);
   return {
     rider: toRiderDto(rider),
     account: accountWith(rider, identities),
@@ -271,5 +279,6 @@ export async function buildMe(ctx: AppContext, riderId: string): Promise<MeDto> 
     device: device ? toDeviceDto(ctx, device) : null,
     session: session ? toSessionDto(session) : null,
     today: { driveSeconds: driveSecondsToday(todaySessions, now), asOf: iso(now) },
+    lastLocation: last ? { lat: last.lat, lng: last.lng, accuracy: last.accuracy, address: null, recordedAt: iso(last.recordedAt) } : null,
   };
 }

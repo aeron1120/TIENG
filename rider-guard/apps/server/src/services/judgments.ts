@@ -5,6 +5,8 @@ import { ApiError, iso, newId } from '../lib.ts';
 import { isAlarm, judge, kindOf } from './detection.ts';
 import { createIncident } from './incidents.ts';
 import { activeSession } from './sessions.ts';
+import { analyzeImu, SENSOR_RULE } from './sensor-analysis.ts';
+import { consentsOf } from './riders.ts';
 
 /**
  * 지표 보고 하나를 판정하고, 경보면 사고를 연다. 판정은 결과와 상관없이 전부 기록한다.
@@ -21,10 +23,21 @@ export async function receiveIndicators(
   from: { riderId: string | null; deviceId: string | null; via: 'device' | 'phone' },
   report: IndicatorReport,
 ): Promise<IndicatorReportResponse> {
-  const { decision, traces } = judge(report.indicators, ctx.config.thresholds);
+  const analysis = report.samples ? analyzeImu(report.samples, report.sensorMetadata ?? { dataSource: 'mock' }) : null;
+  const indicators = analysis ? analysis.evidence.map((e) => ({ key: e.key, value: e.value ?? e.peak, unit: e.unit, state: (e.value ?? e.peak) === null ? 'low_quality' as const : 'ok' as const, sqi: null, t: e.passedAt ?? e.peakAt ?? 0 })) : report.indicators;
+  const judged = judge(indicators, ctx.config.thresholds);
+  const decision = analysis ? analysis.decision === 'candidate' ? 'alarm' : analysis.decision === 'insufficient' ? 'undetermined' : 'reject' : judged.decision;
+  const traces = judged.traces;
   if (report.dryRun) return { decision, traces, action: 'dry_run', reason: null, incidentId: null, judgmentId: null };
 
+  if (from.riderId && !(await consentsOf(ctx, from.riderId)).locationSensor) throw new ApiError(403, 'consent_required', '위치·센서 수집 동의가 필요해요.');
+
   const mode = report.mode ?? 'live';
+  const dataSource = report.sensorMetadata?.dataSource ?? (mode === 'simulated' ? 'simulation' : 'mock');
+  const hasSensor = report.samples ? report.samples.some((s) => s.accG !== null || s.gyroDps !== null) : report.indicators.some((i) => i.state === 'ok' && i.value !== null && ['peak_g', 'peak_gyro'].includes(i.key));
+  if (from.deviceId && mode === 'live' && dataSource === 'measured' && hasSensor) {
+    await ctx.db.run('UPDATE devices SET lastSensorAt = :now WHERE id = :id', { id: from.deviceId, now: ctx.clock.now() });
+  }
   let action: IndicatorReportResponse['action'] = 'logged';
   let reason: IndicatorReportResponse['reason'] = null;
   let incident: IncidentRow | null = null;
@@ -32,21 +45,22 @@ export async function receiveIndicators(
   if (isAlarm(decision)) {
     if (!from.riderId) reason = 'not_paired';
     else if (!ctx.config.detectionEnabled) reason = 'detection_disabled';
-    else if (mode !== 'live' && ctx.config.env === 'production') reason = 'not_live';
+    else if ((mode !== 'live' || dataSource !== 'measured') && ctx.config.env === 'production') reason = 'not_live';
     else if (!(await activeSession(ctx, from.riderId))) reason = 'no_active_session';
     else {
       try {
         const res = await createIncident(ctx, {
           riderId: from.riderId,
           // 합성 지표로 연 사고는 개발 서버에서만 생기고, 기록에서 테스트로 구분한다.
-          source: mode !== 'live' ? 'test' : from.via === 'device' ? 'device' : 'tag',
+          source: mode !== 'live' || dataSource !== 'measured' ? 'test' : from.via === 'device' ? 'device' : 'tag',
           kind: kindOf(traces),
           detectedAt: report.detectedAt ? Date.parse(report.detectedAt) : undefined,
           metrics: Object.fromEntries(
             report.indicators.filter((i) => i.state === 'ok' && typeof i.value === 'number').map((i) => [i.key, i.value as number]),
           ),
           deviceId: from.deviceId ?? undefined,
-          evidence: { producer: report.producer ?? null, mode, decision, traces, indicators: report.indicators },
+          evidence: { producer: report.producer ?? null, mode, dataSource, ruleVersion: analysis?.ruleVersion ?? 'imu-indicators-v1', thresholds: ctx.config.thresholds, windowS: SENSOR_RULE.windowS, decision, traces, indicators, analysis, receivedAt: iso(ctx.clock.now()), timeBasis: 'sensor seconds since recording start', consents: from.riderId ? await consentsOf(ctx, from.riderId) : null },
+          sensorLog: report.samples,
           reportKey: report.reportId ? `${from.deviceId ?? 'phone'}:${report.reportId}` : undefined,
         });
         incident = res.incident;

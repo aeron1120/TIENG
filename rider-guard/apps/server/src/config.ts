@@ -21,6 +21,8 @@ export type Config = {
   contactStaggerSeconds: number;
   /** 운행 종료를 잊었을 때 자동 종료까지 (4.1.1) */
   sessionMaxHours: number;
+  /** 기존 장치 heartbeat 온라인 기준 60초. 사고 판정 시간창과 독립된 운영 설정. */
+  sensorStaleSeconds: number;
   /** 운영 모니터(/ops, 읽기 전용) 토큰 */
   opsToken: string;
   /** 지표 라우터 → POST /v1/detections 전송 토큰. 운영 모니터 토큰과 따로 둔다. 없으면 수신을 받지 않는다(모두 401) */
@@ -69,6 +71,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     countdownSeconds: int(env.COUNTDOWN_SECONDS, 30),
     contactStaggerSeconds: int(env.CONTACT_STAGGER_SECONDS, 60),
     sessionMaxHours: int(env.SESSION_MAX_HOURS, 12),
+    sensorStaleSeconds: int(env.SENSOR_STALE_SECONDS, 60),
     opsToken: env.OPS_TOKEN ?? DEV_OPS_TOKEN,
     ingestToken: env.INGEST_TOKEN || (mode === 'production' ? undefined : DEV_INGEST_TOKEN),
     demoMode: env.DEMO_MODE === 'true',
@@ -96,6 +99,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (config.countdownSeconds < 30 || config.countdownSeconds > 60) {
     throw new Error(`COUNTDOWN_SECONDS 는 30~60 사이여야 합니다 (설계문서 4.3). 현재: ${config.countdownSeconds}`);
   }
+  if (config.sensorStaleSeconds <= 0) throw new Error('SENSOR_STALE_SECONDS must be positive');
   if (mode === 'production') {
     if (config.opsToken === DEV_OPS_TOKEN || config.opsToken.length < 24) throw new Error('운영 환경에서는 24자 이상의 OPS_TOKEN 이 필요합니다.');
     // 없으면 수신만 꺼진다(서버는 뜬다). 넣었는데 짧으면 실수라 멈춘다

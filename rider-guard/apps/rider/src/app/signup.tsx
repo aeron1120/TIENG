@@ -22,6 +22,8 @@ const ALL_TOUCHED: Record<FieldKey, boolean> = { name: true, email: true, passwo
 export default function SignupScreen() {
   const { signIn } = useAuth();
   const signup = useEmailSignup();
+  const [sessionError, setSessionError] = useState<unknown>(null);
+  const [authBusy, setAuthBusy] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -51,8 +53,8 @@ export default function SignupScreen() {
   const firstProblem = (Object.keys(problems) as FieldKey[]).find((k) => problems[k]);
   const emailTaken = signup.error instanceof ApiError && signup.error.code === 'email_taken';
 
-  const submit = () => {
-    if (signup.isPending) return;
+  const submit = async () => {
+    if (signup.isPending || authBusy) return;
     // 버튼은 늘 아스팔트 — 비어 있거나 틀린 칸이 있으면 모두 알려 주고 첫 칸으로 데려간다
     if (firstProblem) {
       setTouched(ALL_TOUCHED);
@@ -60,18 +62,18 @@ export default function SignupScreen() {
       target.current?.focus();
       return;
     }
-    signup.mutate(
-      { email: email.trim(), password },
-      {
-        onSuccess: ({ token }) => {
-          // 이름은 서버 가입 정보에 아직 넣지 않는다 — 시작·동의(v3·1)가 휴대폰·동의와 함께 저장한다
-          setPendingName(name.trim());
-          signIn(token);
-          // 스택을 비우고 시작·동의로 — 뒤로 가기로 가입 화면에 돌아오지 않게
-          resetTo('/onboarding');
-        },
-      },
-    );
+    setSessionError(null);
+    try {
+      const { token } = await signup.mutateAsync({ email: email.trim(), password });
+      setAuthBusy(true);
+      await signIn(token);
+      setPendingName(name.trim());
+      resetTo('/onboarding');
+    } catch (failure) {
+      setSessionError(failure);
+    } finally {
+      setAuthBusy(false);
+    }
   };
 
   return (
@@ -83,7 +85,7 @@ export default function SignupScreen() {
       footer={
         // 시작·동의(v3·1)의 '동의하고 다음'과 같은 자리 — 가입하고 넘어가도 버튼이 움직이지 않는다
         <ScreenFooter>
-          <Button label="가입하기" loading={signup.isPending} onPress={submit} />
+          <Button label="가입하기" loading={signup.isPending || authBusy} onPress={() => void submit()} />
         </ScreenFooter>
       }
     >
@@ -162,7 +164,7 @@ export default function SignupScreen() {
         />
         {/* 이미 가입된 이메일이면 그 이메일을 채운 로그인 화면으로 */}
         <Notice
-          error={signup.error}
+          error={sessionError ?? signup.error}
           onRetry={emailTaken ? () => resetTo({ pathname: '/', params: { email: email.trim() } }) : undefined}
           retryLabel="로그인하기"
         />

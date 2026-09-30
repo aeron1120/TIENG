@@ -40,7 +40,7 @@ function allowedAppRedirect(ctx: AppContext, raw: string): boolean {
     return false;
   }
   if (url.protocol === `${ctx.config.appScheme}:`) return true;
-  if (raw === 'https://tieng.pages.dev/auth/callback') return true;
+  if (raw === 'https://tieng.pages.dev/auth/callback' || raw === 'https://rider-guard.expo.app/auth/callback') return true;
   if (ctx.config.env === 'production') return false;
   if (url.protocol === 'exp:' || url.protocol === 'exps:') return true;
   return (url.protocol === 'http:' || url.protocol === 'https:') && (url.hostname === 'localhost' || url.hostname === '127.0.0.1');
@@ -57,12 +57,14 @@ export async function startOAuth(ctx: AppContext, providerName: string, appRedir
   if (!allowedAppRedirect(ctx, appRedirect)) throw new ApiError(400, 'invalid_redirect', '앱으로 돌아갈 주소가 올바르지 않아요.');
   const state = newToken();
   const sessionKey = newToken();
+  const verifier = provider === 'google' ? newToken() : null;
+  const nonce = provider === 'google' ? newToken() : null;
   const now = ctx.clock.now();
   await ctx.db.run(
-    'INSERT INTO oauthStates (state, provider, appRedirect, keyHash, createdAt, expiresAt) VALUES (:state, :provider, :appRedirect, :keyHash, :now, :expiresAt)',
-    { state, provider, appRedirect, keyHash: sha256(sessionKey), now, expiresAt: now + STATE_TTL_MS },
+    'INSERT INTO oauthStates (state, provider, appRedirect, keyHash, verifier, nonce, createdAt, expiresAt) VALUES (:state, :provider, :appRedirect, :keyHash, :verifier, :nonce, :now, :expiresAt)',
+    { state, provider, appRedirect, keyHash: sha256(sessionKey), verifier, nonce, now, expiresAt: now + STATE_TTL_MS },
   );
-  return { authorizeUrl: ctx.providers.social.authorizeUrl(provider, creds, callbackUrl(ctx, provider), state), sessionKey };
+  return { authorizeUrl: ctx.providers.social.authorizeUrl(provider, creds, callbackUrl(ctx, provider), state, verifier && nonce ? { verifier, nonce } : undefined), sessionKey };
 }
 
 const withQuery = (base: string, params: Record<string, string>) => `${base}${base.includes('?') ? '&' : '?'}${new URLSearchParams(params)}`;
@@ -81,22 +83,22 @@ export async function completeOAuth(
   const { provider, creds } = credentials(ctx, providerName);
   const now = ctx.clock.now();
   const saved = query.state
-    ? await ctx.db.get<{ appRedirect: string; keyHash: string | null; expiresAt: number }>('SELECT appRedirect, keyHash, expiresAt FROM oauthStates WHERE state = :state AND provider = :provider', {
+    ? await ctx.db.get<{ appRedirect: string; keyHash: string | null; verifier: string | null; nonce: string | null }>('DELETE FROM oauthStates WHERE state = :state AND provider = :provider AND expiresAt > :now RETURNING appRedirect, keyHash, verifier, nonce', {
         state: query.state,
         provider,
+        now,
       })
     : undefined;
-  if (!saved || saved.expiresAt <= now) {
+  if (!saved) {
     return { kind: 'page', status: 400, message: '로그인 요청이 만료됐어요. 앱으로 돌아가 다시 시도해 주세요.' };
   }
-  await ctx.db.run('DELETE FROM oauthStates WHERE state = :state', { state: query.state! });
 
   // 사용자가 취소했거나 동의하지 않음
   if (query.error || !query.code) return { kind: 'redirect', location: withQuery(saved.appRedirect, { error: query.error === 'access_denied' ? 'cancelled' : 'failed' }) };
 
   let profile;
   try {
-    profile = await ctx.providers.social.fetchProfile(provider, creds, { code: query.code, state: query.state!, redirectUri: callbackUrl(ctx, provider) });
+    profile = await ctx.providers.social.fetchProfile(provider, creds, { code: query.code, state: query.state!, redirectUri: callbackUrl(ctx, provider), verifier: saved.verifier, nonce: saved.nonce });
   } catch (error) {
     ctx.log.warn(`${provider} 로그인 실패: ${error instanceof SocialAuthError ? error.message : String(error)}`);
     return { kind: 'redirect', location: withQuery(saved.appRedirect, { error: 'failed' }) };

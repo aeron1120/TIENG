@@ -111,7 +111,7 @@ export default function SetupScreen() {
         <View style={styles.noticeIcon}>
           <ClockIcon size={18} color={colors.noticeText} />
         </View>
-        <Txt style={styles.noticeText}>1순위부터 알려요. 3분 안에 확인이 없으면 2순위에게도 가고, 누구든 먼저 확인하면 거기서 멈춰요.</Txt>
+        <Txt style={styles.noticeText}>1순위부터 알려요. 1분 안에 확인이 없으면 2순위에게도 가고, 누구든 먼저 확인하면 거기서 멈춰요.</Txt>
       </FadeIn>
     </Screen>
   );

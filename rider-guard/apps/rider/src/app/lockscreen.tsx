@@ -8,7 +8,7 @@ import Svg, { Defs, RadialGradient, Rect, Stop } from 'react-native-svg';
 
 import { useMe } from '@/api/hooks';
 import { LogoIcon } from '@/components/Icons';
-import { FadeIn, PressableScale, ProgressBar, PulseHalo, screenTopPadding, Txt } from '@/components/ui';
+import { FadeIn, PressableScale, ProgressBar, PulseHalo, screenTopPadding, SimBadge, Txt } from '@/components/ui';
 import { acceptedCountText, useContactAcceptance } from '@/features/contactSim';
 import { helmetInfo } from '@/features/helmet';
 import { SIM, useNow, useSimNotifications, wearTime } from '@/features/sim';
@@ -55,6 +55,8 @@ export default function LockscreenScreen() {
           <Txt style={styles.clock} accessibilityLabel={`지금 ${timeHM(now)}`}>
             {timeHM(now)}
           </Txt>
+          {/* 실제 잠금화면 알림이 아니라 앱 안의 모의 화면 — 웹에는 잠금화면 상시 알림이 없다 */}
+          <SimBadge onDark label="미리보기 · 모의 알림" style={styles.mock} />
         </FadeIn>
 
         <FadeIn delay={motion.stagger * 3} offset={motion.distance} style={styles.cardGap}>
@@ -179,6 +181,7 @@ const DOT = 9;
 const DOT_RING = 14.5;
 
 const styles = StyleSheet.create({
+  mock: { alignSelf: 'center', marginTop: 8 },
   root: { flex: 1, backgroundColor: colors.lockBottom },
   bg: { backgroundColor: colors.lockBottom, pointerEvents: 'none' },
   content: { flex: 1, paddingHorizontal: 14 },

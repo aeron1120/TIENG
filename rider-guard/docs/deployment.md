@@ -53,7 +53,11 @@ Google Cloud 콘솔에서 OAuth 클라이언트 유형은 **웹 애플리케이�
 
 ```text
 https://rider-guard-api.onrender.com/auth/oauth/google/callback
+http://localhost:4000/auth/oauth/google/callback   (로컬 서버로 시험할 때만)
 ```
+
+로컬 주소는 `npm run dev`(apps/server, 기본 포트 4000)로 Google 로그인을 시험할 때만 필요합니다.
+로컬 서버에는 `apps/server/.env`(Git 제외)에 같은 두 값을 넣습니다.
 
 Render 서비스의 Environment에는 같은 OAuth 클라이언트의 두 값을 설정합니다.
 
@@ -68,16 +72,18 @@ GOOGLE_CLIENT_SECRET=<클라이언트 보안 비밀>
 로그인 경로:
 
 ```text
-tieng.pages.dev 또는 모바일 앱
-  → Google 로그인
+rider-guard.expo.app · tieng.pages.dev 또는 모바일 앱
+  → Google 로그인 (전체 페이지 이동, 팝업 없음)
   → rider-guard-api.onrender.com/auth/oauth/google/callback
-  → 웹: tieng.pages.dev/auth/callback
+     (서버가 state·PKCE(S256)·nonce 확인 후 code 교환, ID token 서명·aud·iss·exp 검증, sub로 계정 식별)
+  → 웹: rider-guard.expo.app/auth/callback 또는 tieng.pages.dev/auth/callback
     모바일: riderguard://auth/callback
+    로컬 개발(운영 아님): http://localhost:8081/auth/callback
   → API에서 1회용 코드 + sessionKey를 로그인 토큰으로 교환
 ```
 
-웹 복귀 주소는 서버에서 위 주소 하나만 허용합니다. 미리보기 도메인, 임의 쿼리,
-외부 사이트를 허용하지 않습니다. Google 콘솔에 넣는 URI는 Render의 서버 콜백입니다.
+웹 복귀 주소는 서버에서 위 두 운영 주소만 정확히 허용합니다(`services/oauth.ts`). 미리보기 도메인, 임의 쿼리,
+외부 사이트를 허용하지 않습니다. 앱 복귀 주소는 Google 콘솔에 넣지 않습니다(Google은 Render 콜백만 압니다). Google 콘솔에 넣는 URI는 Render의 서버 콜백입니다.
 이 서버 측 OAuth 흐름은 Google JavaScript SDK를 사용하지 않으므로 승인된 JavaScript
 원본 설정은 필요하지 않습니다.
 

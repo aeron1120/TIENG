@@ -8,16 +8,19 @@
  * 구글은 https(또는 localhost)만 등록되므로 휴대폰으로 시험하려면 클라우드 주소가 필요하다.
  */
 import type { SocialProvider } from '@rider-guard/contract';
+import { createHash } from 'node:crypto';
+import { OAuth2Client } from 'google-auth-library';
 
-import { externalTimeout, normalizeMobile } from '../lib.ts';
+import { externalTimeout, normalizeMobile, safeEqual } from '../lib.ts';
 import type { SocialProfile } from './auth.ts';
 
 export type ProviderCredentials = { clientId: string; clientSecret: string };
+export type GoogleCodeBinding = { verifier: string; nonce: string };
 
 export interface SocialAuthClient {
-  authorizeUrl(provider: SocialProvider, creds: ProviderCredentials, redirectUri: string, state: string): string;
+  authorizeUrl(provider: SocialProvider, creds: ProviderCredentials, redirectUri: string, state: string, binding?: GoogleCodeBinding): string;
   /** code → 토큰 → 프로필. 실패하면 던진다. */
-  fetchProfile(provider: SocialProvider, creds: ProviderCredentials, input: { code: string; state: string; redirectUri: string }): Promise<SocialProfile>;
+  fetchProfile(provider: SocialProvider, creds: ProviderCredentials, input: { code: string; state: string; redirectUri: string; verifier?: string | null; nonce?: string | null }): Promise<SocialProfile>;
   /** 탈퇴한 회원의 카카오 연결 끊기 (Admin 키로 서버에서). 이미 끊겨 있으면 성공으로 본다. 실패하면 던진다. */
   unlinkKakao(subject: string, adminKey: string): Promise<void>;
 }
@@ -84,18 +87,38 @@ function subjectOf(v: unknown): string {
   return id;
 }
 
-export const httpSocialAuth: SocialAuthClient = {
-  authorizeUrl(provider, creds, redirectUri, state) {
+/** Google Auth Library checks rotating-key signature, audience, issuer and expiry. */
+export function createHttpSocialAuth(googleClient: Pick<OAuth2Client, 'verifyIdToken'> = new OAuth2Client()): SocialAuthClient {
+  return {
+  authorizeUrl(provider, creds, redirectUri, state, binding) {
     const params = new URLSearchParams({ client_id: creds.clientId, redirect_uri: redirectUri, response_type: 'code', state });
     // 카카오·네이버는 받을 항목을 개발자 콘솔의 동의항목/API 설정으로 정한다. 구글만 scope 로 요청한다.
-    if (provider === 'google') params.set('scope', 'openid email profile');
+    if (provider === 'google') {
+      if (!binding) throw new SocialAuthError('Google PKCE/nonce 가 없어요.');
+      params.set('scope', 'openid email profile');
+      params.set('code_challenge', createHash('sha256').update(binding.verifier).digest('base64url'));
+      params.set('code_challenge_method', 'S256');
+      params.set('nonce', binding.nonce);
+    }
     return `${AUTHORIZE[provider]}?${params}`;
   },
 
-  async fetchProfile(provider, creds, { code, state, redirectUri }) {
+  async fetchProfile(provider, creds, { code, state, redirectUri, verifier, nonce }) {
     const base = { grant_type: 'authorization_code', client_id: creds.clientId, client_secret: creds.clientSecret, code };
+    if (provider === 'google' && (!verifier || !nonce)) throw new SocialAuthError('Google PKCE/nonce 가 없어요.');
     // 카카오·구글은 인가 요청과 같은 redirect_uri 를, 네이버는 state 를 요구한다.
-    const token = await postForm(TOKEN[provider], provider === 'naver' ? { ...base, state } : { ...base, redirect_uri: redirectUri });
+    const token = await postForm(TOKEN[provider], provider === 'naver' ? { ...base, state } : { ...base, redirect_uri: redirectUri, ...(provider === 'google' ? { code_verifier: verifier! } : {}) });
+    if (provider === 'google') {
+      if (typeof token.id_token !== 'string') throw new SocialAuthError('Google ID token 이 없어요.');
+      let me;
+      try {
+        me = (await googleClient.verifyIdToken({ idToken: token.id_token, audience: creds.clientId })).getPayload();
+      } catch {
+        throw new SocialAuthError('Google ID token 검증에 실패했어요.');
+      }
+      if (!me?.sub || typeof me.nonce !== 'string' || !safeEqual(me.nonce, nonce!)) throw new SocialAuthError('Google ID token nonce 가 맞지 않아요.');
+      return { provider, subject: subjectOf(me.sub), email: me.email_verified ? str(me.email) : null, name: str(me.name), phone: null };
+    }
     const me = await getJson(PROFILE[provider], token.access_token as string);
 
     if (provider === 'kakao') {
@@ -122,9 +145,7 @@ export const httpSocialAuth: SocialAuthClient = {
         phone: normalizeMobile(str(r.mobile) ?? ''),
       };
     }
-    // google — sub 는 29자리까지 가는 문자열. 이메일은 인증된 것만.
-    const verified = me.email_verified === true || me.email_verified === 'true';
-    return { provider, subject: subjectOf(me.sub), email: verified ? str(me.email) : null, name: str(me.name), phone: null };
+    throw new SocialAuthError('지원하지 않는 로그인 제공자예요.');
   },
 
   async unlinkKakao(subject, adminKey) {
@@ -140,4 +161,7 @@ export const httpSocialAuth: SocialAuthClient = {
     if (body.code === -101) return;
     throw new SocialAuthError(`카카오 연결 끊기 실패 (${res.status} ${body.code ?? ''} ${body.msg ?? ''})`.trim());
   },
-};
+  };
+}
+
+export const httpSocialAuth = createHttpSocialAuth();

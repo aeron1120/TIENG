@@ -6,6 +6,67 @@
 
 export type ISODate = string;
 
+export type DataSource = 'simulation' | 'mock' | 'measured';
+export type Vector3 = [number, number, number];
+/** 센서 시각은 기록 시작 기준 초. receivedAt은 별도 수신 시각이며 적분에 사용하지 않는다. */
+export type SensorSample = {
+  t: number;
+  receivedAt?: ISODate;
+  seq?: number;
+  accG: number | null;
+  gyroDps: number | null;
+  bankDeg?: number | null;
+  dv150?: number | null;
+  dvValid?: boolean;
+  dvInvalidReason?: string | null;
+  /** sensor frame specific force (m/s²); quaternion [w,x,y,z] rotates sensor to world. */
+  accelMps2?: Vector3;
+  orientation?: [number, number, number, number];
+  rawAcc?: Vector3;
+  rawGyro?: Vector3;
+};
+export type SensorMetadata = {
+  dataSource: DataSource;
+  sampleRateHz?: number | null;
+  accRangeG?: number | null;
+  gyroRangeDps?: number | null;
+  filter?: string | null;
+  calibration?: string | null;
+  mount?: string | null;
+  provenance?: string | null;
+};
+export type SensorMetricEvidence = {
+  key: 'peak_g' | 'peak_gyro' | 'delta_v150' | 'bank_deg';
+  unit: string;
+  threshold: number;
+  value: number | null;
+  passedAt: number | null;
+  peak: number | null;
+  peakAt: number | null;
+};
+export type SensorAnalysis = {
+  ruleVersion: string;
+  decision: 'candidate' | 'no_candidate' | 'insufficient';
+  candidateAt: number | null;
+  windowS: number;
+  dvWindowS: number;
+  warmupS: number;
+  metadata: SensorMetadata;
+  evidence: SensorMetricEvidence[];
+  quality: {
+    missingPackets: number;
+    timeAnomalies: number;
+    sequenceAvailable: boolean;
+    dvValid: boolean;
+    dvInvalidReasons: string[];
+    dvValidRatio: number | null;
+    interval: { from: number; to: number; eligible: number; valid: number };
+    saturation: { t: number; accAxes: number[]; gyroAxes: number[] }[];
+  };
+  /** 表示用でも省略しないイベント波形。nullは欠測として描画する。原本はsensorLogJsonに別途保存。 */
+  waveform: { t: number; accG: number | null; gyroDps: number | null; bankDeg: number | null; dv150: number | null; gap: boolean; saturated: boolean }[];
+};
+
 export type ApiErrorBody = { error: { code: string; message: string } };
 
 // ── 인증 · 동의 ────────────────────────────────────────────────
@@ -91,6 +152,9 @@ export type DeviceDto = {
   connected: boolean;
   battery: number | null;
   lastSeenAt: ISODate | null;
+  lastSensorAt?: ISODate | null;
+  sensorState?: 'waiting' | 'fresh' | 'stale';
+  staleAfterSeconds?: number;
 };
 export type PairDeviceRequest = { pairingCode: string };
 
@@ -130,6 +194,7 @@ export type MeDto = {
   session: SessionDto | null;
   /** 오늘(한국 시간) 누적 운행 시간. 세션 진행 중이면 asOf 이후 경과분을 더해 표시한다. */
   today: { driveSeconds: number; asOf: ISODate };
+  lastLocation?: IncidentLocation | null;
 };
 
 export type LocationAccessDto = {
@@ -156,12 +221,12 @@ export type EscalationReason = 'no_response' | 'rider_requested';
  * rider_ok: 비상연락이 시작된 뒤 라이더가 '괜찮아요'로 닫음
  * handled: 라이더 응답 없이 24시간이 지나 자동 종료 (예전 기록에는 상담원이 대응 완료로 닫은 것도 있다)
  */
-export type Resolution = 'false_alarm' | 'rider_ok' | 'handled';
+export type Resolution = 'false_alarm' | 'rider_ok' | 'handled' | 'rider_cancelled';
 /**
  * 119 자동 신고가 어디까지 갔는가.
  * waiting: 카운트다운 중 / sending·retrying: 보내는 중(retrying 은 한 번 이상 실패) / failed: 끝내 실패 / cancelled: 보내기 전에 사고가 끝남
  */
-export type EmergencyDelivery = 'waiting' | 'sending' | 'retrying' | 'sent' | 'failed' | 'cancelled';
+export type EmergencyDelivery = 'waiting' | 'sending' | 'retrying' | 'sent' | 'failed' | 'cancelled' | 'simulated';
 export type OrderStatus = 'assigned' | 'held' | 'reassigned' | 'delivered';
 
 export type CreateIncidentRequest = {
@@ -190,7 +255,7 @@ type Step<K extends string, D> = { key: K; state: StepState; at: ISODate | null;
 export type IncidentStep =
   | Step<'detected', { source: IncidentSource; kind: IncidentKind }>
   | Step<'response', { response: RiderResponse | 'none' | null; seconds: number | null }>
-  | Step<'contacts', { notified: { priority: number; name: string }[]; pending: number; failed: number; acknowledgedBy: string | null; reason: 'no_contacts' | null }>
+  | Step<'contacts', { notified: { priority: number; name: string }[]; pending: number; failed: number; acknowledgedBy: string | null; reason: 'no_contacts' | 'simulated' | null }>
   | Step<'emergency', { delivery: EmergencyDelivery }>
   | Step<'order', { status: OrderStatus }>
   | Step<'record', Record<string, never>>;
@@ -215,6 +280,13 @@ export type IncidentDetailDto = {
   steps: IncidentStep[];
   /** 기기 시계 오차 보정용 서버 현재 시각 */
   serverTime: ISODate;
+  analysis?: SensorAnalysis | null;
+  /** 버전 없는 과거 근거는 그대로 제공하며 신형 메타데이터를 지어내지 않는다. */
+  evidence?: unknown;
+  timeline?: { type: string; at: ISODate; data: Record<string, unknown> | null }[];
+  dataSource?: DataSource | 'unknown';
+  feedback?: { response: RiderResponse | null; groundTruth: 'unknown' };
+  exportAvailable?: boolean;
 };
 export type ActiveIncidentResponse = { incident: IncidentDetailDto | null };
 export type CreateIncidentResponse = { created: boolean; incident: IncidentDetailDto };
@@ -306,6 +378,9 @@ export type IndicatorReport = {
   dryRun?: boolean;
   /** 어디서 온 지표인가 (예: "mujoco:2_frontal", "tag-v1") */
   producer?: string;
+  /** 기기/서버 어댑터가 보내는 센서 시각 표본. 웹에서 IMU 수신을 가정하지 않는다. */
+  samples?: SensorSample[];
+  sensorMetadata?: SensorMetadata;
 };
 
 export type RuleTrace = {

@@ -1,10 +1,11 @@
 // 사고 기록 — v3 디자인에 없는 화면이라 v3·5 홈 톤(콘크리트 바탕 · 흰 카드 · 회색 보조 글자 · 아스팔트 강조)으로 외삽했다.
-// 평소 화면이라 빨강을 쓰지 않는다 — 대응 중은 아스팔트, 대응 완료는 보호 초록, 오탐은 회색.
-// 보험·산재 접수에 쓸 수 있게 모든 감지 기록을 남기고, 기록을 글로 공유한다(서버 PDF 생성은 없다).
+// 평소 화면이라 빨강을 쓰지 않는다 — 대응 중은 아스팔트, 대응 완료는 보호 초록, 본인 응답으로 끝난 기록은 회색.
+// 모든 감지 기록을 서버에 남긴다. 파일은 '사고기록 파일 제공' 동의가 있을 때만 서버가 JSON 으로 내준다(PDF 생성은 없다).
+// 외부 기관(보험사·공단)이 그 파일을 인정하는지는 앱이 말하지 않는다.
 import type { IncidentSummaryDto } from '@rider-guard/contract';
 import { router } from 'expo-router';
-import { useRef } from 'react';
-import { Platform, Share, StyleSheet, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 
 import { isOpenStatus, useIncidents } from '@/api/hooks';
 import { BottomNav } from '@/components/BottomNav';
@@ -22,21 +23,23 @@ import {
 } from '@/components/Icons';
 import { useToast } from '@/components/Toast';
 import { Badge, Button, Card, Divider, FadeIn, IconCircle, IconHalo, ListGroup, LiveDot, PressableScale, Screen, Skeleton, Txt, type BadgeTone } from '@/components/ui';
-import { contactText, dayLabel, hm, orderText, placeText, recordShareText, recordSummary, recordTag, responseText } from '@/lib/format';
+import { exportIncidentRecord } from '@/features/recordExport';
+import { contactText, dayLabel, hm, orderText, placeText, recordSummary, recordTag, responseText } from '@/lib/format';
 import { colors, font, radius, typography } from '@/theme';
 
 // status 화면이 from=records 를 보고 '기록으로' 돌아온다
 const openStatus = (id: string) => router.push({ pathname: '/status', params: { id, from: 'records' } });
 
-/** 결과별 모양 — 대응 중은 아스팔트(깜빡이는 점), 대응 완료는 보호 초록 체크, 오탐은 회색 */
-type Outcome = 'open' | 'done' | 'falseAlarm';
-const outcomeOf = (r: IncidentSummaryDto): Outcome => (isOpenStatus(r.status) ? 'open' : r.resolution === 'false_alarm' ? 'falseAlarm' : 'done');
+/** 결과별 모양 — 대응 중은 아스팔트(깜빡이는 점), 대응 완료는 보호 초록 체크, 본인 응답 종료는 회색(실제 사고 아님 확정이 아니다) */
+type Outcome = 'open' | 'done' | 'selfClosed';
+const outcomeOf = (r: IncidentSummaryDto): Outcome =>
+  isOpenStatus(r.status) ? 'open' : r.resolution === 'false_alarm' || r.resolution === 'rider_cancelled' ? 'selfClosed' : 'done';
 
 const OUTCOME: Record<Outcome, { tone: BadgeTone; icon: IconComponent; color: string; circle: string }> = {
   // 대응 중 카드는 배지·'대응 과정' 버튼이 아스팔트라 원은 연석으로 한 단계 낮춘다
   open: { tone: 'dark', icon: AlertIcon, color: colors.asphalt, circle: colors.curb },
   done: { tone: 'green', icon: ShieldCheckIcon, color: colors.green, circle: colors.greenSoft },
-  falseAlarm: { tone: 'neutral', icon: CheckIcon, color: colors.textMuted, circle: colors.surfaceMuted },
+  selfClosed: { tone: 'neutral', icon: CheckIcon, color: colors.textMuted, circle: colors.surfaceMuted },
 };
 
 function OutcomeBadge({ record, size }: { record: IncidentSummaryDto; size?: 'sm' | 'md' }) {
@@ -83,7 +86,7 @@ export default function RecordsScreen() {
     <Screen top={56} side={16} bottom={28} gap={0} enter="none" footer={<BottomNav active="records" />}>
       {/* 홈 머리글과 같은 자리·크기 — 탭을 바꿔도 제목이 튀지 않게 */}
       <FadeIn style={styles.header}>
-        <Txt style={styles.kicker}>보험·산재 접수에 쓸 수 있어요</Txt>
+        <Txt style={styles.kicker}>감지 근거와 대응 과정을 저장해요</Txt>
         <Txt accessibilityRole="header" style={styles.title}>
           사고 기록
         </Txt>
@@ -130,7 +133,7 @@ function RecordRow({ record }: { record: IncidentSummaryDto }) {
     <PressableScale
       accessibilityRole="button"
       accessibilityLabel={`${when(record.detectedAt)}, ${summary.replace(' → ', ', ')}, ${recordTag(record)}`}
-      accessibilityHint="대응 과정을 봐요"
+      accessibilityHint="대응 과정과 감지 근거를 봐요"
       onPress={() => openStatus(record.id)}
       style={styles.row}
       pressedStyle={styles.pressed}
@@ -149,42 +152,6 @@ function RecordRow({ record }: { record: IncidentSummaryDto }) {
     </PressableScale>
   );
 }
-
-type ShareResult = 'shared' | 'copied' | 'cancelled' | 'failed';
-
-/**
- * 앱은 공유 시트, 웹은 브라우저 공유 기능을 쓴다. 웹에 공유 기능이 없거나(데스크톱 대부분) 막히면 클립보드에 복사한다.
- * (react-native-web 의 Share 는 navigator.share 가 없으면 그냥 실패한다)
- */
-async function shareText(text: string): Promise<ShareResult> {
-  if (Platform.OS !== 'web') {
-    try {
-      const r = await Share.share({ message: text });
-      return r.action === Share.dismissedAction ? 'cancelled' : 'shared';
-    } catch {
-      return 'failed';
-    }
-  }
-  if (typeof navigator.share === 'function') {
-    try {
-      await navigator.share({ text });
-      return 'shared';
-    } catch (e) {
-      // 사용자가 공유 창을 닫았으면 복사까지 하지 않는다
-      if ((e as { name?: string } | null)?.name === 'AbortError') return 'cancelled';
-    }
-  }
-  try {
-    if (!navigator.clipboard) return 'failed';
-    await navigator.clipboard.writeText(text);
-    return 'copied';
-  } catch {
-    return 'failed';
-  }
-}
-
-/** 웹에서 공유 기능이 없으면 버튼 이름부터 '복사'로 — 눌렀을 때 일어날 일과 맞게 */
-const canShare = Platform.OS !== 'web' || (typeof navigator !== 'undefined' && typeof navigator.share === 'function');
 
 type Fact = { key: string; icon: IconComponent; label: string; value: string; empty: boolean };
 
@@ -207,14 +174,17 @@ function LatestCard({ record }: { record: IncidentSummaryDto }) {
     { key: 'order', icon: DocIcon, label: '주문 처리', value: orderText(record), empty: !record.orderStatus },
   ];
 
-  const share = async () => {
-    // 공유 창이 떠 있는 동안 다시 누르면 웹 공유 API 가 오류를 낸다
+  const [exporting, setExporting] = useState(false);
+  const exportFile = async () => {
     if (busy.current) return;
     busy.current = true;
-    const result = await shareText(recordShareText(record));
+    setExporting(true);
+    const { outcome, message } = await exportIncidentRecord(record.id);
     busy.current = false;
-    if (result === 'copied') toast.show('기록을 복사했어요');
-    else if (result === 'failed') toast.error(Platform.OS === 'web' ? '이 브라우저에서는 공유할 수 없어요' : '공유하지 못했어요. 다시 시도해 주세요');
+    setExporting(false);
+    if (outcome === 'downloaded') toast.success('기록 파일을 저장했어요');
+    else if (outcome === 'consent_required') toast.error(message ?? '설정에서 사고기록 파일 제공에 먼저 동의해 주세요');
+    else if (outcome === 'failed') toast.error(message ?? '기록 파일을 만들지 못했어요');
   };
 
   return (
@@ -251,9 +221,17 @@ function LatestCard({ record }: { record: IncidentSummaryDto }) {
           size="md"
           style={styles.action}
           onPress={() => openStatus(record.id)}
-          accessibilityHint="시각별 대응 과정을 봐요"
+          accessibilityHint="시각별 대응 과정과 감지 근거를 봐요"
         />
-        <Button label={canShare ? '기록 공유' : '기록 복사'} variant="soft" size="md" style={styles.action} onPress={() => void share()} />
+        <Button
+          label="기록 파일"
+          variant="soft"
+          size="md"
+          loading={exporting}
+          style={styles.action}
+          accessibilityHint="사고기록 파일 제공에 동의했다면 저장된 기록을 JSON 파일로 받아요"
+          onPress={() => void exportFile()}
+        />
       </View>
     </Card>
   );

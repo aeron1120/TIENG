@@ -3,6 +3,7 @@ import type { LocationAccessDto } from '@rider-guard/contract';
 import type { AppContext, ContactRow, IncidentRow, LocationRow, RiderRow, ShareLinkRow } from '../context.ts';
 import { iso, newToken, sha256 } from '../lib.ts';
 import { activeSession, latestLocation } from './sessions.ts';
+import { consentsOf } from './riders.ts';
 
 /** 사고 문자 링크 유효 기간. 응답 없는 사고도 이 기간 동안 열어 둔다 (incidents.ts INCIDENT_AUTO_CLOSE_MS). */
 export const INCIDENT_LINK_TTL_MS = 24 * 3_600_000;
@@ -60,7 +61,7 @@ export async function viewShareLink(ctx: AppContext, token: string): Promise<Sha
   if (link.expiresAt <= ctx.clock.now()) return { kind: 'expired' };
   const rider = await ctx.db.get<RiderRow>('SELECT * FROM riders WHERE id = :id', { id: link.riderId });
   const contact = await ctx.db.get<ContactRow>('SELECT * FROM contacts WHERE id = :id', { id: link.contactId });
-  if (!rider || !contact) return { kind: 'invalid' };
+  if (!rider || !contact || contact.riderId !== rider.id || !(await consentsOf(ctx, rider.id)).shareOnIncident) return { kind: 'invalid' };
 
   const incident = link.incidentId
     ? ((await ctx.db.get<IncidentRow>('SELECT * FROM incidents WHERE id = :id', { id: link.incidentId })) ?? null)
@@ -69,6 +70,7 @@ export async function viewShareLink(ctx: AppContext, token: string): Promise<Sha
         { riderId: rider.id },
       )) ?? null);
 
+  if (incident && incident.riderId !== rider.id) return { kind: 'invalid' };
   const confirmed = !!incident && (CONFIRMED_STATUSES as readonly string[]).includes(incident.status);
   const anomaly = !!incident && (OPEN_STATUSES as readonly string[]).includes(incident.status);
   const session = await activeSession(ctx, rider.id);
@@ -104,28 +106,38 @@ export async function viewShareLink(ctx: AppContext, token: string): Promise<Sha
 
 /** 문자를 받은 연락처가 '확인했어요'를 누름 → 다음 순위에게는 보내지 않는다. */
 export async function acknowledgeShareLink(ctx: AppContext, token: string): Promise<boolean> {
+  return respondToShareLink(ctx, token, 'acknowledged');
+}
+
+/** Responses describe the recipient's action, never an automatic emergency-service delivery. */
+export async function respondToShareLink(ctx: AppContext, token: string, response: 'acknowledged' | 'unreachable' | 'reported_119'): Promise<boolean> {
+  return ctx.db.tx(async () => {
   const view = await viewShareLink(ctx, token);
   if (view.kind !== 'ok' || view.link.scope !== 'incident' || !view.incident || !view.visible) return false;
   const now = ctx.clock.now();
   const incidentId = view.incident.id;
-  await ctx.db.tx(async () => {
+  const type = `contact_${response}`;
+  const previous = await ctx.db.get('SELECT 1 FROM incidentEvents WHERE incidentId = :incidentId AND type = :type AND json_extract(dataJson, \'$.contactId\') = :contactId', { incidentId, type, contactId: view.contact.id });
+  if (previous) return true;
+  if (response !== 'unreachable') {
     const changed = await ctx.db.run('UPDATE shareLinks SET acknowledgedAt = :now WHERE tokenHash = :tokenHash AND acknowledgedAt IS NULL', {
       now,
       tokenHash: view.link.tokenHash,
     });
-    if (!changed) return;
+    void changed;
     await ctx.db.run(
       "UPDATE notifications SET status = 'cancelled' WHERE incidentId = :incidentId AND purpose = 'contact_alert' AND status = 'pending'",
       { incidentId },
     );
+  }
     await ctx.db.run('INSERT INTO incidentEvents (incidentId, type, at, dataJson) VALUES (:incidentId, :type, :at, :dataJson)', {
       incidentId,
-      type: 'contact_acknowledged',
+      type,
       at: now,
-      dataJson: JSON.stringify({ contactId: view.contact.id, priority: view.contact.priority, name: view.contact.name }),
+      dataJson: JSON.stringify({ contactId: view.contact.id, priority: view.contact.priority, name: view.contact.name, reportedBy: 'recipient', automaticTransmission: false }),
     });
-  });
   return true;
+  });
 }
 
 export async function logLocationAccess(

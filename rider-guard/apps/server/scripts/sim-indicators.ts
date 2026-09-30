@@ -6,7 +6,8 @@
  *   팀 telemetry.py 출력     t_s, imu_acc_norm_g, imu_gyro_norm_dps, imu_bank_est_deg, imu_delta_v150_mps (run_id 로 여러 실행)
  *   발표 자료 센서 프로파일  t_s, acc_norm_g, gyro_norm_dps, bank_est_deg, delta_v150_mps (data/runs/<id>/<profile>.csv.gz)
  */
-import type { Indicator } from '@rider-guard/contract';
+import type { Indicator, SensorAnalysis, SensorSample, SensorMetadata } from '@rider-guard/contract';
+import { analyzeImu } from '../src/services/sensor-analysis.ts';
 
 export type ImuRow = {
   t: number;
@@ -17,7 +18,7 @@ export type ImuRow = {
   dv150: number;
 };
 
-export type SimReport = { tPeak: number; indicators: Indicator[] };
+export type SimReport = { tPeak: number; indicators: Indicator[]; samples: SensorSample[]; sensorMetadata: SensorMetadata; analysis: SensorAnalysis };
 
 /** 실험의 초기 판단 유예. 이 앞의 표본은 이벤트·최대값 어디에도 쓰지 않는다 */
 const WARMUP_S = 0.15;
@@ -80,15 +81,26 @@ const isQuiet = (r: ImuRow) => Math.abs(r.accG - 1) < 0.15 && r.gyroDps < 30;
 /** 3g 이상 이벤트마다 보고 하나. 3g 를 한 번도 넘지 않은 실행은 보낼 것이 없다. */
 export function reportsFromImu(rows: ImuRow[]): SimReport[] {
   const settled = rows.filter((r) => r.t >= WARMUP_S);
-  const peaks: ImuRow[] = [];
+  const groups: { first: ImuRow; last: ImuRow; peak: ImuRow }[] = [];
   let last = -Infinity;
   for (const r of settled) {
     if (r.accG < WAKE_G) continue;
-    if (r.t - last > CLOSE_GAP_S) peaks.push(r);
-    else if (r.accG > peaks.at(-1)!.accG) peaks[peaks.length - 1] = r;
+    if (r.t - last > CLOSE_GAP_S) groups.push({ first: r, last: r, peak: r });
+    else {
+      const group = groups.at(-1)!;
+      group.last = r;
+      if (r.accG > group.peak.accG) group.peak = r;
+    }
     last = r.t;
   }
-  return peaks.map((peak) => ({ tPeak: peak.t, indicators: indicatorsAt(rows, settled, peak) }));
+  return groups.map(({ first, last, peak }) => {
+    const samples: SensorSample[] = rows.filter((r) => r.t >= first.t - WINDOW_S && r.t <= last.t + WINDOW_S).map((r) => ({ ...r, dv150: Number.isFinite(r.dv150) ? r.dv150 : null, dvValid: Number.isFinite(r.dv150), dvInvalidReason: Number.isFinite(r.dv150) ? null : 'upstream_invalid' }));
+    // A file name is not provenance. Only an independently documented source may upgrade this.
+    const sensorMetadata: SensorMetadata = { dataSource: 'mock', provenance: 'CSV source not independently verified' };
+    const analysis = analyzeImu(samples, sensorMetadata);
+    const indicators = indicatorsAt(rows, settled, peak);
+    return { tPeak: peak.t, indicators, samples, sensorMetadata, analysis };
+  });
 }
 
 function indicatorsAt(rows: ImuRow[], settled: ImuRow[], peak: ImuRow): Indicator[] {
@@ -104,12 +116,13 @@ function indicatorsAt(rows: ImuRow[], settled: ImuRow[], peak: ImuRow): Indicato
   const complete = rows.at(-1)!.t >= reportAt;
 
   const at = end.t;
-  const ok = (key: string, value: number, unit: string): Indicator => ({ key, value, unit, state: 'ok', sqi: null, t: at });
+  const ok = (key: string, value: number, unit: string, t: number): Indicator => ({ key, value, unit, state: 'ok', sqi: null, t });
+  const maxAt = (field: 'gyroDps' | 'dv150' | 'bankDeg') => window.reduce((best, r) => Number.isFinite(r[field]) && (!Number.isFinite(best[field]) || Math.abs(r[field]) > Math.abs(best[field])) ? r : best, window[0]!);
   return [
-    ok('peak_g', peak.accG, 'g'),
-    ok('peak_gyro', Math.max(...window.map((r) => r.gyroDps)), 'deg/s'),
-    dvs.length ? ok('delta_v150', Math.max(...dvs), 'm/s') : { key: 'delta_v150', value: null, unit: 'm/s', state: 'low_quality', sqi: null, t: at },
-    ok('bank_deg', Math.max(...window.map((r) => Math.abs(r.bankDeg))), 'deg'),
-    { ...ok('quiet_s', quietSince == null ? 0 : end.t - quietSince, 's'), state: complete ? 'ok' : 'low_quality' },
+    ok('peak_g', peak.accG, 'g', peak.t),
+    ok('peak_gyro', maxAt('gyroDps').gyroDps, 'deg/s', maxAt('gyroDps').t),
+    dvs.length ? ok('delta_v150', Math.max(...dvs), 'm/s', maxAt('dv150').t) : { key: 'delta_v150', value: null, unit: 'm/s', state: 'low_quality', sqi: null, t: peak.t },
+    ok('bank_deg', Math.abs(maxAt('bankDeg').bankDeg), 'deg', maxAt('bankDeg').t),
+    { ...ok('quiet_s', quietSince == null ? 0 : end.t - quietSince, 's', at), state: complete ? 'ok' : 'low_quality' },
   ];
 }

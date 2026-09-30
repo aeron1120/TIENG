@@ -44,13 +44,15 @@ export function useMe(options: { refetchInterval?: number } = {}) {
 }
 
 /** 운행 중에는 3초마다 진행 중 사고를 확인한다 — 태그/detector 가 서버로 바로 보낸 감지도 여기서 잡는다. */
-export const useActiveIncident = (enabled: boolean) =>
-  useQuery({
+export const useActiveIncident = (enabled: boolean) => {
+  const signedIn = useSignedIn();
+  return useQuery({
     queryKey: keys.active,
     queryFn: () => api<ActiveIncidentResponse>('GET', '/me/incidents/active'),
-    enabled,
-    refetchInterval: enabled ? 3000 : false,
+    enabled: signedIn && enabled,
+    refetchInterval: signedIn && enabled ? 3000 : false,
   });
+};
 
 export function useIncident(id: string | undefined) {
   const signedIn = useSignedIn();
@@ -77,7 +79,7 @@ export function useIncidents() {
 
 /** 서버에 키가 설정된 SNS 만 버튼으로 보인다. 서버에 못 붙으면 이메일만. */
 export const useAuthProviders = () =>
-  useQuery({ queryKey: ['auth', 'providers'], queryFn: () => api<AuthProvidersResponse>('GET', '/auth/providers'), staleTime: 60_000 });
+  useQuery({ queryKey: ['auth', 'providers'], queryFn: () => api<AuthProvidersResponse>('GET', '/auth/providers', undefined, { timeoutMs: 45_000 }), staleTime: 60_000 });
 
 export const useEmailSignup = () => useMutation({ mutationFn: (body: EmailSignupRequest) => api<AuthResponse>('POST', '/auth/signup', body) });
 

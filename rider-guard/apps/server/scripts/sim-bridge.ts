@@ -76,8 +76,8 @@ for (const file of files) {
     const reports = reportsFromImu(rows);
     console.log(`■ ${name}${reports.length ? '' : ': 보고 없음 (3g 이상 충격 없음)'}`);
     let strongest: Decision | null = null;
-    for (const [k, { tPeak, indicators }] of reports.entries()) {
-      const report: IndicatorReport = { indicators, mode: 'simulated', producer: `mujoco:${name}`, reportId: `${name}#${k}@${runId}`, dryRun };
+    for (const [k, { tPeak, indicators, samples, sensorMetadata }] of reports.entries()) {
+      const report: IndicatorReport = { indicators, samples, sensorMetadata, mode: 'simulated', producer: `csv:${name}`, reportId: `${name}#${k}@${runId}`, dryRun };
       const res = await post<IndicatorReportResponse>('/device-api/indicators', report);
       if (!strongest || RANK.indexOf(res.decision) > RANK.indexOf(strongest)) strongest = res.decision;
 

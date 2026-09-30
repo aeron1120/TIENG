@@ -8,6 +8,7 @@ import { Animated, Clipboard, Platform, Share, StyleSheet, View } from 'react-na
 import { isOpenStatus, useIncident, useMe, useRespond } from '@/api/hooks';
 import { ErrorText, Header, Notice } from '@/components/forms';
 import { CheckIcon, CopyIcon, PhoneIcon } from '@/components/Icons';
+import { IncidentEvidence } from '@/components/IncidentEvidence';
 import { useToast } from '@/components/Toast';
 import {
   Badge,
@@ -26,6 +27,7 @@ import {
   useReducedMotion,
   type BadgeTone,
 } from '@/components/ui';
+import { exportIncidentRecord } from '@/features/recordExport';
 import { contactDisplayName, ESCALATION_STEP_S, escalationCountdown, useNow, type EscalationCountdown } from '@/features/sim';
 import { clock, elapsed, mss, stepText, timeHMS } from '@/lib/format';
 import { backOr, resetTo } from '@/lib/nav';
@@ -46,16 +48,27 @@ function headline(incident: IncidentDetailDto): Head {
   const contacts = findStep(incident, 'contacts')?.detail;
   const delivery = findStep(incident, 'emergency')?.detail.delivery;
   switch (incident.status) {
+    // '괜찮아요'는 본인 응답일 뿐 '실제 사고 아님' 확정이 아니다 — 오탐이라고 부르지 않는다
     case 'cancelled':
-      return { badge: '오탐', tone: 'white', live: false, title: '오탐으로 기록됐어요', lead: '괜찮다고 응답해서 아무에게도 연락하지 않았어요.' };
+      return {
+        badge: '본인 응답 종료',
+        tone: 'white',
+        live: false,
+        title: '괜찮다고 응답했어요',
+        lead: '비상연락을 시작하기 전에 끝났어요. 실제 사고 여부는 확인되지 않은 기록이에요.',
+      };
     case 'resolved':
       return {
         badge: '대응 종료',
         tone: 'white',
         live: false,
         title:
-          incident.resolution === 'false_alarm' ? '오탐으로 확인됐어요' : incident.resolution === 'rider_ok' ? '괜찮다고 알렸어요' : '사고 대응이 끝났어요',
-        lead: '사고 기록은 보험·산재 접수에 쓸 수 있도록 보관돼요.',
+          incident.resolution === 'false_alarm' || incident.resolution === 'rider_cancelled'
+            ? '괜찮다고 응답했어요'
+            : incident.resolution === 'rider_ok'
+              ? '괜찮다고 알렸어요'
+              : '사고 대응이 끝났어요',
+        lead: '감지 근거와 대응 과정이 앱에 저장돼 있어요.',
       };
     case 'countdown':
       // '응답이 없으면 비상연락처와 119에 알려요'는 아래 '지금 단계' 카드가 이름까지 넣어 말한다
@@ -70,6 +83,10 @@ function headline(incident: IncidentDetailDto): Head {
         };
       }
       if (contacts?.acknowledgedBy) return { ...base, title: `${contacts.acknowledgedBy}님이\n확인했어요`, lead: '비상연락처가 상황을 알고 있어요.' };
+      // 전송 어댑터가 모의(콘솔)면 실제로는 아무에게도 가지 않았다 — 보낸 것처럼 말하지 않는다
+      if (delivery === 'simulated' || contacts?.reason === 'simulated') {
+        return { ...base, title: '실제 전송이\n연결되지 않았어요', lead: '문자·119 전송은 모의 처리만 됐어요. 도움이 필요하면 직접 119나 가족에게 연락해 주세요.' };
+      }
       if (contacts?.reason === 'no_contacts') {
         return {
           ...base,
@@ -100,8 +117,8 @@ function contactQueue(d: ContactsDetail, contacts: ContactDto[] | undefined): Wh
 }
 
 /**
- * '지금 단계' 카드와 타임라인이 함께 쓰는 3분 단위 에스컬레이션(시뮬레이션 — 서버는 다음 순위까지 남은 시간을 주지 않는다).
- * 1순위에게 문자를 보낸 뒤 3분마다 다음 순위로 넘어간다. 누가 확인했거나 사고가 끝나면 멈춘다.
+ * '지금 단계' 카드와 타임라인이 함께 쓰는 순위별 에스컬레이션(서버 기본 60초 간격)(시뮬레이션 — 서버는 다음 순위까지 남은 시간을 주지 않는다).
+ * 1순위에게 문자를 보낸 뒤 간격마다 다음 순위로 넘어간다. 누가 확인했거나 사고가 끝나면 멈춘다.
  */
 type Relay = { queue: Who[]; startMs: number; cd: EscalationCountdown };
 
@@ -147,7 +164,7 @@ function spoken(seconds: number): string {
 const STEP_MIN = Math.round(ESCALATION_STEP_S / 60);
 
 /**
- * v3·8 '지금 단계'. 연락처 차례에는 디자인처럼 '1순위 [이름] 확인 대기' + 다음 순위까지 남은 시간(3분 시뮬레이션).
+ * v3·8 '지금 단계'. 연락처 차례에는 디자인처럼 '1순위 [이름] 확인 대기' + 다음 순위까지 남은 시간(서버 기본 간격으로 계산).
  * 119 실패·연락처 확인·연락처 없음처럼 디자인에 없는 상황은 같은 모양으로 사실을 말하고, 숫자는 감지 후 지난 시간이다.
  */
 function currentStage(incident: IncidentDetailDto, contacts: ContactDto[] | undefined, relay: Relay | null, now: number): Stage {
@@ -158,10 +175,10 @@ function currentStage(incident: IncidentDetailDto, contacts: ContactDto[] | unde
     const leftS = Math.max(0, Math.ceil((Date.parse(incident.deadlineAt) - now) / 1000));
     const first = contacts ? [...contacts].sort((a, b) => a.priority - b.priority)[0] : undefined;
     const next = !contacts
-      ? '응답이 없으면 비상연락처와 119에 자동으로 알려요.'
+      ? '응답이 없으면 비상연락 절차를 시작해요.'
       : first
-        ? `응답이 없으면 ${first.priority}순위 ${contactDisplayName(first.name, first.priority)}에게 문자를 보내고 119에 신고해요.`
-        : '응답이 없으면 119에 자동으로 신고해요.';
+        ? `응답이 없으면 ${first.priority}순위 ${contactDisplayName(first.name, first.priority)}부터 알리는 절차를 시작해요.`
+        : '응답이 없으면 119 신고 절차를 시작해요.';
     return {
       title: '괜찮은지 확인하는 중',
       desc: '확인 화면에서 괜찮은지 알려 주세요',
@@ -178,6 +195,17 @@ function currentStage(incident: IncidentDetailDto, contacts: ContactDto[] | unde
   const delivery = findStep(incident, 'emergency')?.detail.delivery;
   const d = findStep(incident, 'contacts')?.detail;
 
+  if (delivery === 'simulated' || d?.reason === 'simulated') {
+    return {
+      ...since,
+      title: '실제 전송 없음 (모의 처리)',
+      desc: '비상연락처와 119에 실제로 보내지 않았어요. 필요하면 직접 연락해 주세요',
+      next: null,
+      warn: true,
+      value: 1,
+      barLabel: '모의 처리됨',
+    };
+  }
   if (delivery === 'failed') {
     return { ...since, title: '119 자동 신고 실패', desc: '아래 119 전화 버튼으로 직접 신고해 주세요', next: null, warn: true, value: 1, barLabel: '119 자동 신고 실패' };
   }
@@ -270,10 +298,12 @@ function timelineRows(incident: IncidentDetailDto, relay: Relay | null): Row[] {
   const open = isOpenStatus(incident.status);
   const rows: Row[] = [];
   for (const s of incident.steps) {
-    if (s.state === 'skipped' && s.key !== 'contacts') continue;
+    const simulated119 = s.key === 'emergency' && s.detail.delivery === 'simulated';
+    if (s.state === 'skipped' && s.key !== 'contacts' && !simulated119) continue;
     const text = stepText(s, incident);
     const warn =
-      (s.key === 'emergency' && (s.detail.delivery === 'failed' || s.detail.delivery === 'retrying')) ||
+      (s.key === 'emergency' && (s.detail.delivery === 'failed' || s.detail.delivery === 'retrying' || s.detail.delivery === 'simulated')) ||
+      (s.key === 'contacts' && s.detail.reason === 'simulated') ||
       (s.key === 'contacts' && s.state === 'now' && s.detail.failed > 0);
     if (open && ((s.key === 'emergency' && !warn) || s.key === 'order')) continue;
     // 연락처가 없다는 건 경고보다 할 일 안내라 빨강 없이 보조 줄만 보인다
@@ -515,6 +545,13 @@ function IncidentView({ incident, dataUpdatedAt, stale, onClose, closeLabel }: V
       )}
 
       {!open && (
+        <FadeIn delay={motion.stagger * 4} style={styles.records}>
+          <IncidentEvidence incident={incident} />
+          <ExportCard incident={incident} />
+        </FadeIn>
+      )}
+
+      {!open && (
         <>
           <Spacer />
           <Button label={closeLabel} onPress={onClose} style={styles.closeCta} />
@@ -528,7 +565,7 @@ function IncidentView({ incident, dataUpdatedAt, stale, onClose, closeLabel }: V
           if (!respond.isPending) setConfirmingOk(false);
         }}
         title="이제 괜찮으신가요?"
-        description="사고 대응을 마치고, 이미 알린 비상연락처와 119에 괜찮다고 알려요."
+        description="사고 대응을 마치고, 알림이 전달된 곳이 있으면 괜찮다는 소식도 보내요."
       >
         <ErrorText error={respond.error} />
         <Button label="대응 마치기" loading={respond.isPending} onPress={finishOk} />
@@ -539,6 +576,40 @@ function IncidentView({ incident, dataUpdatedAt, stale, onClose, closeLabel }: V
 }
 
 // ── 조각 ───────────────────────────────────────────────────────
+
+/**
+ * 저장된 기록 파일(JSON) 내보내기. '사고기록 제공' 동의가 있어야 서버가 준다.
+ * 파일을 준다는 것일 뿐 보험사·공단 같은 외부 기관이 받아 주는지는 앱이 보장하지 않는다.
+ */
+function ExportCard({ incident }: { incident: IncidentDetailDto }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const allowed = incident.exportAvailable === true;
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    const { outcome, message } = await exportIncidentRecord(incident.id);
+    setBusy(false);
+    if (outcome === 'downloaded') toast.success('기록 파일을 저장했어요');
+    else if (outcome === 'consent_required') toast.error(message ?? '설정에서 사고기록 파일 제공에 먼저 동의해 주세요');
+    else if (outcome === 'failed') toast.error(message ?? '기록 파일을 만들지 못했어요');
+  };
+  return (
+    <Card style={styles.export}>
+      <Txt style={typography.heading}>기록 파일</Txt>
+      <Txt style={[typography.caption, styles.exportText]}>
+        {allowed
+          ? '감지 근거, 원시 센서 로그, 대응 과정을 JSON 파일로 받을 수 있어요. 외부 기관이 이 파일을 인정하는지는 기관마다 달라요.'
+          : '설정 › 동의 관리에서 ‘사고기록 파일 제공’에 동의하면 저장된 기록을 파일로 받을 수 있어요.'}
+      </Txt>
+      {allowed ? (
+        <Button label="기록 파일 받기" variant="white" size="md" loading={busy} onPress={() => void run()} style={styles.exportButton} />
+      ) : (
+        <Button label="동의 관리로" variant="soft" size="md" onPress={() => router.push('/settings')} style={styles.exportButton} />
+      )}
+    </Card>
+  );
+}
 
 function StageCard({ stage }: { stage: Stage }) {
   return (
@@ -755,6 +826,10 @@ const styles = StyleSheet.create({
   copyIcon: { marginRight: -3 },
 
   closeCta: { marginTop: 8 },
+  records: { gap: 12 },
+  export: { paddingVertical: 16, paddingHorizontal: 16 },
+  exportText: { marginTop: 4 },
+  exportButton: { marginTop: 12 },
 
   skelTitle: { gap: 9, paddingVertical: 4 },
   skelStage: { gap: 10 },

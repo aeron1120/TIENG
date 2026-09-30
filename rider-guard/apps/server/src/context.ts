@@ -41,6 +41,7 @@ export type DeviceRow = {
   riderId: string | null;
   battery: number | null;
   lastSeenAt: number | null;
+  lastSensorAt?: number | null;
   createdAt: number;
   pairedAt: number | null;
 };
@@ -94,7 +95,7 @@ export type IncidentRow = {
   respondedAt: number | null;
   escalationReason: 'no_response' | 'rider_requested' | null;
   escalatedAt: number | null;
-  resolution: 'false_alarm' | 'rider_ok' | 'handled' | null;
+  resolution: 'false_alarm' | 'rider_cancelled' | 'rider_ok' | 'handled' | null;
   resolvedAt: number | null;
   lat: number | null;
   lng: number | null;
@@ -132,7 +133,7 @@ export type NotificationRow = {
   recipient: string;
   body: string;
   dueAt: number;
-  status: 'pending' | 'sending' | 'sent' | 'failed' | 'cancelled';
+  status: 'pending' | 'sending' | 'sent' | 'simulated' | 'failed' | 'cancelled';
   attempts: number;
   sentAt: number | null;
   error: string | null;

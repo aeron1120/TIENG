@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useFonts } from 'expo-font';
-import { Stack, usePathname } from 'expo-router';
+import { Redirect, Stack, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
@@ -51,6 +51,7 @@ function AppShell({ fontsReady }: { fontsReady: boolean }) {
   }, [ready]);
 
   if (!ready) return null;
+  if (status !== 'signedIn' && !['/', '/signup', '/auth/callback', '/emergency'].includes(pathname)) return <Redirect href="/" />;
 
   return (
     <View style={{ flex: 1, backgroundColor: framed ? colors.webBackdrop : colors.bg }}>

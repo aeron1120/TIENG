@@ -26,7 +26,21 @@ export const indicatorReportSchema = z.object({
         t: z.number(),
       }),
     )
-    .max(100),
+    .max(100).default([]),
+  samples: z.array(z.object({
+    t: z.number().nonnegative(), receivedAt: z.iso.datetime({ offset: true }).optional(), seq: z.number().int().nonnegative().optional(),
+    accG: z.number().nonnegative().nullable(), gyroDps: z.number().nonnegative().nullable(), bankDeg: z.number().nullable().optional(),
+    dv150: z.number().nonnegative().nullable().optional(), dvValid: z.boolean().optional(), dvInvalidReason: z.string().max(100).nullable().optional(),
+    accelMps2: z.tuple([z.number(), z.number(), z.number()]).optional(),
+    orientation: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
+    rawAcc: z.tuple([z.number(), z.number(), z.number()]).optional(), rawGyro: z.tuple([z.number(), z.number(), z.number()]).optional(),
+  })).min(1).max(10000).optional(),
+  sensorMetadata: z.object({
+    dataSource: z.enum(['simulation', 'mock', 'measured']), sampleRateHz: z.number().positive().nullable().optional(),
+    accRangeG: z.number().positive().nullable().optional(), gyroRangeDps: z.number().positive().nullable().optional(),
+    filter: z.string().max(200).nullable().optional(), calibration: z.string().max(200).nullable().optional(),
+    mount: z.string().max(200).nullable().optional(), provenance: z.string().max(500).nullable().optional(),
+  }).optional(),
   mode: z.enum(['live', 'replay', 'simulated', 'unavailable']).optional(),
   detectedAt: z.iso.datetime({ offset: true }).optional(),
   reportId: z.string().min(1).max(200).optional(),

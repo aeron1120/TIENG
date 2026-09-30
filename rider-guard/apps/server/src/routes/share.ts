@@ -5,7 +5,7 @@ import type { AppContext } from '../context.ts';
 import { escapeHtml as h, seoulClock } from '../lib.ts';
 import { emergencyDelivery } from '../services/incidents.ts';
 import { displayName } from '../services/riders.ts';
-import { OPEN_STATUSES, acknowledgeShareLink, viewShareLink, type ShareView } from '../services/sharing.ts';
+import { OPEN_STATUSES, acknowledgeShareLink, respondToShareLink, viewShareLink, type ShareView } from '../services/sharing.ts';
 
 /** 비상연락처가 문자로 받은 링크를 여는 공개 페이지. 앱 없이 휴대폰 브라우저에서 열린다. */
 export function shareRoutes(ctx: AppContext) {
@@ -26,6 +26,13 @@ export function shareRoutes(ctx: AppContext) {
     await acknowledgeShareLink(ctx, token);
     return c.redirect(`/s/${encodeURIComponent(token)}`, 303);
   });
+  app.post('/:token/respond/:response', async (c) => {
+    const response = c.req.param('response');
+    if (response !== 'unreachable' && response !== 'reported_119') return c.text('잘못된 응답이에요.', 400);
+    const accepted = await respondToShareLink(ctx, c.req.param('token'), response);
+    if (!accepted) return c.text('만료됐거나 종료된 사건이에요.', 409);
+    return c.redirect(`/s/${encodeURIComponent(c.req.param('token'))}`, 303);
+  });
 
   return app;
 }
@@ -42,6 +49,7 @@ const EMERGENCY_LEAD: Record<EmergencyDelivery, string> = {
   sending: '119에 자동으로 신고하고 있어요.',
   retrying: '119 자동 신고가 늦어지고 있어요. 위급해 보이면 바로 119에 신고해 주세요.',
   sent: '119에 자동으로 신고했어요. 가까이 있다면 현장을 확인해 주세요.',
+  simulated: '전송 시연 기록이에요. 앱이 실제로 119에 신고하거나 문자를 보내지 않았어요.',
   failed: '119 자동 신고가 전송되지 않았어요. 아래 위치로 지금 119에 신고해 주세요.',
   cancelled: '위급해 보이면 바로 119에 신고해 주세요.',
 };
@@ -64,13 +72,13 @@ function renderSharePage(ctx: AppContext, view: ShareView, token: string, emerge
     lead =
       incident.resolution === 'rider_ok'
         ? `${name}님이 괜찮다고 응답했어요.`
-        : incident.resolution === 'false_alarm'
-          ? '오탐으로 종료됐어요.'
+        : incident.resolution === 'false_alarm' || incident.resolution === 'rider_cancelled'
+          ? '본인이 괜찮다고 응답해 알림을 종료했어요. 실제 사고 여부는 확인되지 않았어요.'
           : '대응 기간이 끝나 위치 공유를 멈췄어요.';
   } else if (incident && open) {
     badge = '<span class="badge">사고 대응 진행 중</span>';
-    title = incident.riderResponse === 'help' ? `${name}님이 도움을 요청했어요` : `${name}님에게 사고가 감지됐어요`;
-    lead = EMERGENCY_LEAD[emergency ?? 'cancelled'];
+    title = incident.riderResponse === 'help' ? `${name}님이 도움을 요청했어요` : `${name}님에게 강한 충격이 감지됐어요`;
+    lead = `${incident.escalationReason === 'no_response' ? '본인 응답을 확인하지 못했어요. ' : ''}${EMERGENCY_LEAD[emergency ?? 'cancelled']}`;
   } else if (!visible) {
     lead = LEVEL_HINT[contact.shareLevel];
   }
@@ -109,6 +117,7 @@ function renderSharePage(ctx: AppContext, view: ShareView, token: string, emerge
     ${calls}
     ${where}
     ${ack}
+    ${link.scope === 'incident' && incident && visible && open ? `<form method="post" action="/s/${h(encodeURIComponent(token))}/respond/unreachable"><button class="btn outline wide" type="submit">연락이 닿지 않아요</button></form><form method="post" action="/s/${h(encodeURIComponent(token))}/respond/reported_119"><button class="btn outline wide" type="submit">119에 신고했어요</button></form><p class="small muted">신고 완료 버튼은 수신자가 직접 신고했다는 응답만 기록해요.</p>` : ''}
     <p class="foot">${name}님이 정한 공개 범위 안에서만 보이는 링크예요. 열람 기록은 ${name}님에게 제공돼요.</p>`;
   return page('Rider Guard 위치 공유', body, open ? 30 : 0);
 }

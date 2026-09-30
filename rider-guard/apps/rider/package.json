@@ -44,6 +44,7 @@
     "web": "expo start --web",
     "build:web": "node scripts/build-web.mjs",
     "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\"",
     "lint": "expo lint",
     "start:go": "expo start --go",
     "build:android": "node scripts/eas-build.js",

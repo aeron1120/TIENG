@@ -39,7 +39,7 @@ test('지표 백엔드가 보낸 사고 지표로 사고가 열리고, 이후는
   const active = (await t.call('GET', '/me/incidents/active', { token })).json.incident;
   assert.equal(active.id, res.json.incidentId);
   assert.equal(active.status, 'countdown');
-  assert.equal(active.source, 'device');
+  assert.equal(active.source, 'test');
   assert.equal(active.kind, 'impact');
 
   await t.advance(30); // 무응답 → 비상연락 + 119 자동 신고
@@ -47,7 +47,7 @@ test('지표 백엔드가 보낸 사고 지표로 사고가 열리고, 이후는
   assert.equal(detail.evidence.decision, 'alarm');
   assert.equal(detail.evidence.producer, 'tag-v1');
   assert.equal(detail.evidence.traces.find((x: { rule: string }) => x.rule === 'impact').inputs.peak_g, 23.41);
-  assert.ok(t.sms.some((s) => s.to === '01011111111' && s.body.includes('응답이 없었어요')));
+  assert.deepEqual(t.sms, [], 'unknown provenance cannot contact real recipients');
 });
 
 test('같은 보고를 다시 보내도 사고는 한 번만 — 괜찮아요로 끝난 뒤에도 다시 열지 않는다', async () => {
@@ -146,7 +146,7 @@ test('휴대폰 중계 경로(태그 → BLE → 폰 → 서버)도 같은 판�
   const { token } = await pairedBackend(t);
   const res = (await t.call('POST', '/me/indicators', { token, body: { indicators: CRASH } })).json;
   assert.equal(res.action, 'incident_created');
-  assert.equal((await t.call('GET', `/me/incidents/${res.incidentId}`, { token })).json.source, 'tag');
+  assert.equal((await t.call('GET', `/me/incidents/${res.incidentId}`, { token })).json.source, 'test');
 });
 
 test('지표 형식이 틀리면 400 과 이유', async () => {

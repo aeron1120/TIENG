@@ -345,6 +345,13 @@ const MIGRATIONS: string[] = [
   -- 사고 당시 배달 중이던 주문 (보내는 쪽이 알려 준 경우). 없으면 에스컬레이션 때 라이더의 최근 배달 중 주문
   ALTER TABLE incidents ADD COLUMN orderId TEXT;
   `,
+  // v6 — Google OIDC authorization code binding: PKCE verifier and ID-token nonce.
+  `
+  ALTER TABLE oauthStates ADD COLUMN verifier TEXT;
+  ALTER TABLE oauthStates ADD COLUMN nonce TEXT;
+  `,
+  // v7 — heartbeat and actual measured sensor reception are independent.
+  `ALTER TABLE devices ADD COLUMN lastSensorAt INTEGER;`,
 ];
 
 export type Params = Record<string, InValue | undefined>;

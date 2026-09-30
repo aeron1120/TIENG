@@ -52,7 +52,7 @@ test('통신 음영 동안 쌓인 위치는 세션 기간 안이면 나중에 �
   assert.deepEqual(res.json, { accepted: 1, rejected: 0 });
 });
 
-test('괜찮아요 → 오탐으로 기록되고 아무에게도 연락하지 않는다', async () => {
+test('괜찮아요 → 본인 응답으로 종료하며 실제 사고 여부는 확정하지 않는다', async () => {
   const t = await setup();
   const { token } = await riding(t);
   const created = await t.call('POST', '/me/incidents', { token, body: { source: 'phone', kind: 'impact' } });
@@ -66,14 +66,14 @@ test('괜찮아요 → 오탐으로 기록되고 아무에게도 연락하지 �
   await t.advance(3);
   const ok = await t.call('POST', `/me/incidents/${inc.id}/respond`, { token, body: { response: 'ok' } });
   assert.equal(ok.json.status, 'cancelled');
-  assert.equal(ok.json.resolution, 'false_alarm');
+  assert.equal(ok.json.resolution, 'rider_cancelled');
 
   await t.advance(120);
   assert.equal(contactSms(t).length, 0);
   assert.equal(t.reports.length, 0);
   const list = await t.call('GET', '/me/incidents', { token });
   assert.equal(list.json.items[0].responseSeconds, 3);
-  assert.equal(list.json.items[0].resolution, 'false_alarm');
+  assert.equal(list.json.items[0].resolution, 'rider_cancelled');
 });
 
 test('30초 무응답 → 1순위에게 위치 링크 문자, 1분 뒤 2순위, 119 는 바로 자동 신고 (4.3)', async () => {
@@ -91,7 +91,7 @@ test('30초 무응답 → 1순위에게 위치 링크 문자, 1분 뒤 2순위, 
   assert.equal(escalated.escalationReason, 'no_response');
   assert.equal(contactSms(t).length, 1);
   assert.equal(contactSms(t)[0]!.to, '01011111111');
-  assert.match(contactSms(t)[0]!.body, /김라이더님에게 사고가 감지됐고 30초 동안 응답이 없었어요\. 현재 위치: https:\/\/rg\.test\/s\/[\w-]{43} 119에도 자동으로 신고해요\./);
+  assert.match(contactSms(t)[0]!.body, /강한 충격이 감지됐고 30초 동안 본인 응답을 확인하지 못했어요/);
 
   // 상담원 판단을 기다리지 않는다
   assert.equal(t.reports.length, 1);
@@ -101,11 +101,12 @@ test('30초 무응답 → 1순위에게 위치 링크 문자, 1분 뒤 2순위, 
   assert.match(t.reports[0]!, /라이더: 김라이더 010-1234-5678/);
 
   const contacts = step(escalated, 'contacts');
-  assert.equal(contacts.state, 'done');
-  assert.deepEqual(contacts.detail.notified, [{ priority: 1, name: '엄마' }]);
+  assert.equal(contacts.state, 'now');
+  assert.deepEqual(contacts.detail.notified, []);
+  assert.equal(contacts.detail.reason, 'simulated');
   assert.equal(contacts.detail.pending, 1);
-  assert.deepEqual(step(escalated, 'emergency').detail, { delivery: 'sent' });
-  assert.deepEqual(stepKeys(escalated), ['detected:done', 'response:done', 'contacts:done', 'emergency:done', 'record:todo']);
+  assert.deepEqual(step(escalated, 'emergency').detail, { delivery: 'simulated' });
+  assert.deepEqual(stepKeys(escalated), ['detected:done', 'response:done', 'contacts:now', 'emergency:skipped', 'record:todo']);
 
   await t.advance(60);
   assert.deepEqual(contactSms(t).map((s) => s.to), ['01011111111', '01022222222']);
@@ -116,8 +117,8 @@ test('30초 무응답 → 1순위에게 위치 링크 문자, 1분 뒤 2순위, 
   assert.equal(help.json.riderResponse, 'help');
   await t.call('POST', `/me/incidents/${inc.id}/respond`, { token, body: { response: 'help' } });
   await t.advance(1);
-  assert.equal(t.reports.length, 2);
-  assert.match(t.reports[1]!, /앞서 자동 신고한 김라이더 010-1234-5678 사고 건 — 라이더가 앱에서 직접 도움을 요청했어요/);
+  assert.equal(t.reports.length, 1);
+  // A simulated report never causes a follow-up to a real service.
 });
 
 test('1순위가 링크에서 확인을 누르면 2순위에게는 보내지 않는다', async () => {
@@ -129,8 +130,8 @@ test('1순위가 링크에서 확인을 누르면 2순위에게는 보내지 않
 
   const page = await t.call('GET', link);
   assert.equal(page.status, 200);
-  assert.match(page.text, /김라이더님에게 사고가 감지됐어요/);
-  assert.match(page.text, /119에 자동으로 신고했어요/);
+  assert.match(page.text, /김라이더님에게 강한 충격이 감지됐어요/);
+  assert.match(page.text, /전송 시연 기록이에요/);
   assert.doesNotMatch(page.text, /관제센터/);
   assert.match(page.text, /37\.566500, 126\.978000/);
 
@@ -171,19 +172,19 @@ test('도움 요청 → 즉시 에스컬레이션, 119 자동 신고, 주문 보
   assert.match(t.reports[0]!, /충격 감지 · 라이더가 도움 요청/);
 
   const status = (await t.call('GET', `/me/incidents/${inc.id}`, { token })).json;
-  assert.deepEqual(stepKeys(status), ['detected:done', 'response:done', 'contacts:done', 'emergency:done', 'order:done', 'record:todo']);
+  assert.deepEqual(stepKeys(status), ['detected:done', 'response:done', 'contacts:now', 'emergency:skipped', 'order:now', 'record:todo']);
   assert.equal(status.steps[1].detail.seconds, 14);
-  assert.equal(status.order.status, 'reassigned');
+  assert.equal(status.order.status, 'held');
 
   // 운영 모니터는 읽기만 한다 — 위치·전화번호·의료정보를 싣지 않고, 상담원이 누르던 동작은 없다
   const list = (await t.ops('GET', '/incidents')).json.items;
   assert.deepEqual(list.map((i: { id: string; status: string }) => [i.id, i.status]), [[inc.id, 'escalated']]);
   const detail = (await t.ops('GET', `/incidents/${inc.id}`)).json;
-  assert.equal(detail.emergency, 'sent');
+  assert.equal(detail.emergency, 'simulated');
   assert.equal(detail.location, undefined);
   assert.equal(detail.rider.phone, undefined);
   const events = detail.timeline.map((e: { type: string }) => e.type);
-  assert.ok(events.includes('emergency_reported') && events.includes('order_reassigned'));
+  assert.ok(events.includes('emergency_report_simulated') && events.includes('order_reassignment_simulated'));
   for (const action of ['claim', 'emergency', 'order-reassigned', 'resolve']) {
     assert.equal((await t.ops('POST', `/incidents/${inc.id}/${action}`, {})).status, 404);
   }
@@ -206,15 +207,15 @@ test('비상연락이 시작된 뒤 괜찮아요 → 사고를 닫고, 이미 �
   await t.advance(120);
   // 2순위 문자는 취소되고, 1순위에게 안심 문자
   const sent = contactSms(t);
-  assert.deepEqual(sent.map((s) => s.to), ['01011111111', '01011111111']);
-  assert.match(sent[1]!.body, /김라이더님이 괜찮다고 응답해서 사고 대응을 마쳤어요/);
-  assert.equal(t.reports.length, 2);
-  assert.match(t.reports[1]!, /라이더 본인이 앱에서 '괜찮다'고 응답했어요/);
+  assert.deepEqual(sent.map((s) => s.to), ['01011111111']);
+
+  assert.equal(t.reports.length, 1);
+
 
   const final = (await t.call('GET', `/me/incidents/${inc.id}`, { token })).json;
-  assert.deepEqual(stepKeys(final), ['detected:done', 'response:done', 'contacts:done', 'emergency:done', 'record:done']);
+  assert.deepEqual(stepKeys(final), ['detected:done', 'response:done', 'contacts:skipped', 'emergency:skipped', 'record:done']);
   assert.equal((await t.call('GET', '/me/incidents/active', { token })).json.incident, null);
-  assert.equal((await t.call('POST', `/me/incidents/${inc.id}/respond`, { token, body: { response: 'ok' } })).status, 409);
+  assert.equal((await t.call('POST', `/me/incidents/${inc.id}/respond`, { token, body: { response: 'ok' } })).status, 200);
 });
 
 test('119 신고가 나가기 전에 괜찮아요를 누르면 신고도 문자도 보내지 않는다', async () => {
@@ -273,7 +274,7 @@ test('119 자동 신고가 계속 실패하면 다시 시도하다가, 문자를
   const failed = (await t.call('GET', `/me/incidents/${inc.id}`, { token })).json;
   assert.equal(step(failed, 'emergency').detail.delivery, 'failed');
   assert.equal(failed.status, 'escalated');
-  assert.ok(contactSms(t).some((s) => s.to === '01011111111' && /119 자동 신고가 전송되지 않았어요/.test(s.body)));
+  assert.equal(contactSms(t).filter((s) => /119 자동 신고가 전송되지 않았어요/.test(s.body)).length, 0, 'capture-only contacts are not real recipients of follow-ups');
   assert.match((await t.call('GET', link)).text, /지금 119에 신고해 주세요/);
   assert.equal((await t.ops('GET', `/incidents/${inc.id}`)).json.emergency, 'failed');
 });
@@ -299,7 +300,7 @@ test('비상연락처가 없어도 119 신고는 간다', async () => {
   const contacts = step(detail, 'contacts');
   assert.equal(contacts.state, 'skipped');
   assert.equal(contacts.detail.reason, 'no_contacts');
-  assert.equal(step(detail, 'emergency').detail.delivery, 'sent');
+  assert.equal(step(detail, 'emergency').detail.delivery, 'simulated');
   assert.equal(t.reports.length, 1);
   assert.equal((await t.ops('GET', '/incidents')).json.items.length, 1);
 });

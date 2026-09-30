@@ -60,6 +60,7 @@ import { removePushToken, savePushToken } from '../services/push.ts';
 import { addLocations, endSession, startSession, toSessionDto } from '../services/sessions.ts';
 import { createShareLink, listLocationAccess } from '../services/sharing.ts';
 import { indicatorReportSchema } from './device.ts';
+import { parseJson } from '../db.ts';
 
 export type RiderEnv = { Variables: { riderId: string } };
 
@@ -328,6 +329,15 @@ export function meRoutes(ctx: AppContext) {
   });
 
   app.get('/incidents/:id', async (c) => c.json<IncidentDetailDto>(await toDetailDto(ctx, await riderIncident(ctx, c.var.riderId, c.req.param('id')))));
+
+  app.get('/incidents/:id/export', async (c) => {
+    const incident = await riderIncident(ctx, c.var.riderId, c.req.param('id'));
+    const consents = await consentsOf(ctx, c.var.riderId);
+    if (!consents.insuranceRecords) throw new ApiError(403, 'export_consent_required', '기록 파일 제공 동의를 먼저 확인해 주세요.');
+    c.header('Cache-Control', 'no-store');
+    c.header('Content-Disposition', `attachment; filename="rider-guard-${incident.id}.json"`);
+    return c.json({ schemaVersion: 'incident-export-v1', exportedAt: iso(ctx.clock.now()), incident: await toDetailDto(ctx, incident), sensorLog: parseJson<unknown>(incident.sensorLogJson), consents, notice: '저장된 기록입니다. 실제 사고·상해 정도 또는 외부 기관의 인정을 확인하는 자료가 아닙니다.' });
+  });
 
   app.post('/incidents/:id/respond', async (c) => {
     const { response } = await readBody(c, schemas.respond);

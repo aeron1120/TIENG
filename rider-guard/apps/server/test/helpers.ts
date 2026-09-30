@@ -18,7 +18,7 @@ export async function setup(env: Record<string, string> = {}) {
   const pushes: PushMessage[] = [];
   /** 가짜 SNS: 제공자가 code 로 돌려줄 프로필. 없는 code 는 교환 실패. */
   const socialProfiles = new Map<string, SocialProfile>();
-  const socialCalls: { provider: string; code: string; redirectUri: string; clientSecret: string }[] = [];
+  const socialCalls: { provider: string; code: string; redirectUri: string; clientSecret: string; verifier?: string | null; nonce?: string | null }[] = [];
   /** 가짜 카카오 연결 끊기: 부른 회원번호를 모은다. fails 면 실패, hangs 면 영영 응답하지 않는다. */
   const unlinked: { subject: string; adminKey: string }[] = [];
   const unlink = { fails: false, hangs: false };
@@ -33,7 +33,7 @@ export async function setup(env: Record<string, string> = {}) {
       authorizeUrl: (provider, creds, redirectUri, state) =>
         `https://${provider}.example/authorize?${new URLSearchParams({ client_id: creds.clientId, redirect_uri: redirectUri, state })}`,
       fetchProfile: async (provider, creds, input) => {
-        socialCalls.push({ provider, code: input.code, redirectUri: input.redirectUri, clientSecret: creds.clientSecret });
+        socialCalls.push({ provider, code: input.code, redirectUri: input.redirectUri, clientSecret: creds.clientSecret, ...(provider === 'google' ? { verifier: input.verifier, nonce: input.nonce } : {}) });
         const profile = socialProfiles.get(input.code);
         if (!profile || profile.provider !== provider) throw new SocialAuthError('invalid_grant');
         return profile;

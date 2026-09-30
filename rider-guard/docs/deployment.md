@@ -46,6 +46,34 @@ npx wrangler pages deploy dist --project-name tieng --branch main
 Rider Guard의 DB 드라이버는 `@libsql/client`입니다. Supabase 관련 코드는
 `legacy/touchfree_vitals/`에만 있으며, 현재 로그인은 Supabase Auth를 거치지 않습니다.
 
+## 카카오 지도 (웹)
+
+키가 있으면 웹의 지도 카드(홈·긴급 알림 웹)가 카카오 지도로 뜬다. 키가 없거나, 도메인이 등록되지 않았거나,
+12초 안에 타일이 오지 않으면 기존 지도(MapLibre + OpenFreeMap)로 자동으로 돌아간다. 안드로이드 앱은
+웹뷰가 `file://`로 열려 도메인을 등록할 수 없으므로 계속 기존 지도를 쓴다(`components/map/KakaoMapCanvas.tsx`).
+
+1. [카카오 개발자](https://developers.kakao.com) → 내 애플리케이션 → 앱 만들기(또는 기존 앱).
+2. 앱 설정 → 플랫폼 → **Web 사이트 도메인**에 등록:
+
+   ```text
+   https://tieng.pages.dev
+   https://rider-guard.expo.app
+   http://localhost:8081        (로컬 개발 때만)
+   ```
+
+3. 제품 설정에서 **카카오맵** 사용을 켠다(콘솔에 해당 메뉴가 있으면).
+4. 앱 키 중 **JavaScript 키**를 Cloudflare Pages `tieng` → Settings → Variables and Secrets(Production)에 넣는다:
+
+   ```text
+   EXPO_PUBLIC_KAKAO_MAP_KEY=<JavaScript 키>
+   ```
+
+   REST API 키·Admin 키가 아니다. JavaScript 키는 번들에 공개되는 값이고 등록 도메인으로 보호된다. Render에는 넣지 않는다.
+5. 빌드 때 번들에 들어가므로 변수를 넣은 뒤 Pages에서 **다시 배포**(Deployments → Retry)해야 반영된다.
+   로컬은 `apps/rider/.env`(Git 제외)에 같은 줄을 넣고 `npx expo start --web`.
+
+지도 오른쪽 아래의 카카오 로고·저작권 표시는 약관상 가리면 안 된다. 왼쪽 아래는 앱 알약 자리라 SDK 표시를 오른쪽으로 옮겼다.
+
 ## Google OAuth
 
 Google Cloud 콘솔에서 OAuth 클라이언트 유형은 **웹 애플리케이션**을 선택합니다.

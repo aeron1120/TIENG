@@ -3,9 +3,11 @@
  *
  *   아래층  불러오는 동안은 무늬 없는 블록색 + 옅은 스켈레톤 숨쉬기(실제 위치와 무관한 가짜 거리를 보이지 않게).
  *           오프라인·타일 실패·웹뷰 오류일 때만 MapIllustration(가상 거리 지도).
- *   가운데  MapCanvas('use dom') — MapLibre + OpenFreeMap. 웹은 DOM 그대로, 안드로이드는 react-native-webview 안.
+ *   가운데  웹 + EXPO_PUBLIC_KAKAO_MAP_KEY 가 있으면 KakaoMapCanvas(카카오 지도). 키가 없거나 실패하면
+ *           MapCanvas('use dom') — MapLibre + OpenFreeMap. 웹은 DOM 그대로, 안드로이드는 react-native-webview 안.
  *           준비되면 페이드인. 조작 없는 미리보기.
  *   위층    핀 · 정확도 원 · 말풍선(MapCenterMarker) · 알약(topLeft/bottomLeft/topRight · children) · '© OpenStreetMap'
+ *           (카카오 지도는 SDK 가 오른쪽 아래에 자기 로고·저작권을 그린다)
  *
  * 위치가 없으면 서울 기본 좌표(시뮬레이션)를 가운데에 둔다 — features/location 의 useRiderPosition() 을 넘기면 된다.
  */
@@ -19,6 +21,14 @@ import { SIM } from '@/features/sim';
 import { colors, font, motion, radius, shadow } from '@/theme';
 
 const MapCanvas = lazy(() => import('@/components/map/MapCanvas'));
+const KakaoMapCanvas = lazy(() => import('@/components/map/KakaoMapCanvas'));
+
+/**
+ * 카카오 지도 JavaScript 키 (공개값 — 카카오 개발자 콘솔에 등록한 도메인에서만 동작한다).
+ * 웹 빌드 때 번들에 들어간다. 안드로이드 웹뷰는 file:// 라 도메인을 등록할 수 없어 웹에서만 쓴다.
+ */
+const KAKAO_MAP_KEY = Platform.OS === 'web' ? process.env.EXPO_PUBLIC_KAKAO_MAP_KEY?.trim() || null : null;
+type Provider = 'kakao' | 'maplibre';
 
 /** 키 없는 무료 벡터 타일 스타일 (OpenStreetMap 데이터, ODbL — 출처 표시를 남긴다) */
 export const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/positron';
@@ -160,14 +170,21 @@ export function RiderMap({
   style,
 }: RiderMapProps) {
   const reduced = useReducedMotion();
-  const [status, setStatus] = useState<'loading' | MapCanvasStatus>(() => (canUseRealMap() ? 'loading' : 'error'));
+  const [provider, setProvider] = useState<Provider>(KAKAO_MAP_KEY ? 'kakao' : 'maplibre');
+  const [status, setStatus] = useState<'loading' | MapCanvasStatus>(() => (provider === 'kakao' || canUseRealMap() ? 'loading' : 'error'));
   const [fade] = useState(() => new Animated.Value(0));
   const lat = location && Number.isFinite(location.lat) ? location.lat : SIM.position.lat;
   const lng = location && Number.isFinite(location.lng) ? location.lng : SIM.position.lng;
   const pinTone: MapPinTone = dim ? 'muted' : tone;
 
   const onStatus = useCallback((next: MapCanvasStatus) => setStatus(next), []);
-  const onBoundaryError = useCallback(() => setStatus('error'), []);
+  // 카카오가 안 되면(키·도메인 등록·네트워크) 기존 지도로 한 번 더 — 그것도 안 되면 가상 지도
+  const fallBack = useCallback(() => {
+    setProvider('maplibre');
+    setStatus(canUseRealMap() ? 'loading' : 'error');
+  }, []);
+  const onKakaoStatus = useCallback((next: MapCanvasStatus) => (next === 'error' ? fallBack() : setStatus(next)), [fallBack]);
+  const onBoundaryError = useCallback(() => (provider === 'kakao' ? fallBack() : setStatus('error')), [provider, fallBack]);
 
   useEffect(() => {
     if (status !== 'ready') {
@@ -212,9 +229,13 @@ export function RiderMap({
       ) : null}
       {status !== 'error' ? (
         <Animated.View style={[StyleSheet.absoluteFill, styles.passThrough, { opacity: fade }]}>
-          <MapBoundary onError={onBoundaryError}>
+          <MapBoundary key={provider} onError={onBoundaryError}>
             <Suspense fallback={null}>
-              <MapCanvas lat={lat} lng={lng} zoom={zoom} styleUrl={MAP_STYLE_URL} palette={PALETTE} onStatus={onStatus} dom={dom} />
+              {provider === 'kakao' && KAKAO_MAP_KEY ? (
+                <KakaoMapCanvas lat={lat} lng={lng} zoom={zoom} appKey={KAKAO_MAP_KEY} onStatus={onKakaoStatus} />
+              ) : (
+                <MapCanvas lat={lat} lng={lng} zoom={zoom} styleUrl={MAP_STYLE_URL} palette={PALETTE} onStatus={onStatus} dom={dom} />
+              )}
             </Suspense>
           </MapBoundary>
         </Animated.View>
@@ -225,7 +246,7 @@ export function RiderMap({
       {topRight ? <View style={[styles.slot, styles.topRight]}>{topRight}</View> : null}
       {bottomLeft ? <View style={[styles.slot, styles.bottomLeft]}>{bottomLeft}</View> : null}
       {children}
-      {status === 'ready' ? (
+      {status === 'ready' && provider === 'maplibre' ? (
         <View style={styles.attribution}>
           <Txt style={styles.attributionText}>© OpenStreetMap</Txt>
         </View>

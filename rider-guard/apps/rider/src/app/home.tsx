@@ -17,6 +17,7 @@ import { Button, Card, Divider, FadeIn, FadeSwap, IconCircle, Screen, Sheet, Ske
 import { acceptanceSummaryText, useContactAcceptance } from '@/features/contactSim';
 import { helmetInfo, helmetStatusText, useHelmet } from '@/features/helmet';
 import { recentLocation, useDevicePosition, useLocationState } from '@/features/location';
+import { enablePhoneSensor, usePhoneSensorState, type PhoneSensorStatus } from '@/features/phoneSensor';
 import { riderDisplayName, useNow, useSimNotifications, wearTime, type SimNotification } from '@/features/sim';
 import { timeAgo, timeHM } from '@/lib/format';
 import { colors, font, radius, typography } from '@/theme';
@@ -72,6 +73,16 @@ function copyFor(kind: Exclude<Kind, 'loading'>, startedAt: string | null, addre
   }
 }
 
+/** 헬멧 기기 없이 휴대폰 센서를 쓸 때, 아직 보호 중이 아닌 이유 */
+const PHONE_NOTE: Partial<Record<PhoneSensorStatus, string>> = {
+  needs_permission: '헬멧 기기가 없어 휴대폰 센서로 충격을 감지해요. 아래 버튼을 눌러 동작 센서를 허용해 주세요.',
+  starting: '휴대폰 센서를 켜는 중이에요.',
+  running: '휴대폰 센서 신호를 받았어요. 곧 보호가 켜져요.',
+  no_sensor: '이 기기에서 동작 센서 신호가 오지 않아요. 데스크탑이라면 휴대폰 브라우저로 열어 주세요.',
+  denied: '동작 센서 권한이 거부됐어요. 브라우저 설정에서 동작 및 방향 접근을 허용해 주세요.',
+  unsupported: '이 앱 빌드에서는 휴대폰 센서를 아직 쓸 수 없어요. 휴대폰 브라우저에서 열어 주세요.',
+};
+
 export default function HomeScreen() {
   // 헬멧 연결·배터리 표시를 위해 홈에 있는 동안 15초마다 새로 받는다.
   const { data: me, error: meError, refetch } = useMe({ refetchInterval: 15_000 });
@@ -79,6 +90,7 @@ export default function HomeScreen() {
   const location = useLocationState();
   // 지도는 휴대폰·브라우저 자체 GPS 로 '지금 여기'를 띄운다 (헬멧 센서와 무관, 서버로 보내지 않음)
   const gps = useDevicePosition();
+  const phone = usePhoneSensorState();
   const test = useCreateIncident();
   const toast = useToast();
   const acceptance = useContactAcceptance(me?.contacts);
@@ -234,7 +246,17 @@ export default function HomeScreen() {
         </Card>
       </FadeIn>
 
-      {sessionActive && !active && !loading ? <Notice tone="info" message={me?.device?.lastSensorAt ? `최근 센서 측정 ${timeAgo(me.device.lastSensorAt, now)} · ${me.device.staleAfterSeconds ?? 60}초 기준 연결 확인 필요` : '측정된 센서 정보가 없어요. 운행 세션이 있어도 충격 감지를 확인할 수 없어요.'} style={styles.notice} /> : null}
+      {sessionActive && !active && !loading ? (
+        <Notice
+          tone="info"
+          message={PHONE_NOTE[phone.status] ?? (me?.device?.lastSensorAt ? `최근 센서 측정 ${timeAgo(me.device.lastSensorAt, now)} · ${me.device.staleAfterSeconds ?? 60}초 기준 연결 확인 필요` : '측정된 센서 정보가 없어요. 운행 세션이 있어도 충격 감지를 확인할 수 없어요.')}
+          style={styles.notice}
+        />
+      ) : null}
+      {sessionActive && phone.status === 'needs_permission' && !loading ? (
+        <Button label="휴대폰 센서 켜기" onPress={() => void enablePhoneSensor()} style={styles.notice} />
+      ) : null}
+      {active && me?.device?.kind === 'phone' ? <Notice tone="info" message="헬멧 대신 휴대폰 센서로 충격을 감지하고 있어요. 휴대폰이 몸에 붙어 있을 때(주머니·거치대) 가장 잘 맞아요." style={styles.notice} /> : null}
       {helmet.protectionError && !loading ? (
         <Notice message={`보호를 ${worn ? '켜지' : '끄지'} 못했어요. ${errorMessage(helmet.protectionError)}`} style={styles.notice} />
       ) : null}

@@ -143,7 +143,8 @@ export type CreateContactRequest = { name: string; relation: Relation; phone: st
 export type UpdateContactRequest = Partial<CreateContactRequest> & { priority?: number };
 export type ShareLinkResponse = { url: string; expiresAt: ISODate };
 
-export type DeviceKind = 'tag' | 'webcam';
+/** phone: 헬멧 없이 휴대폰 자체 가속도계·자이로를 감지 센서로 쓴다 (PUT /me/phone-sensor 가 만든다) */
+export type DeviceKind = 'tag' | 'webcam' | 'phone';
 export type DeviceDto = {
   id: string;
   name: string;
@@ -317,7 +318,9 @@ export type PushAction = 'ok' | 'help';
 
 // ── 감지 기기 API (태그 · 테스트용 웹캠 detector) ──────────────
 
-export type RegisterDeviceRequest = { name: string; kind: DeviceKind };
+export type RegisterDeviceRequest = { name: string; kind: Exclude<DeviceKind, 'phone'> };
+/** 휴대폰 센서 상태 보고 (15초마다). samples 는 직전 보고 이후 받은 표본 수 — 0 이면 센서가 멈춘 것 */
+export type PhoneSensorRequest = { samples: number; sampleRateHz?: number | null };
 export type RegisterDeviceResponse = { deviceId: string; deviceToken: string; pairingCode: string };
 export type DeviceHeartbeatRequest = { battery?: number };
 export type DeviceHeartbeatResponse = { paired: boolean; sessionActive: boolean };

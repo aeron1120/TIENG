@@ -148,7 +148,7 @@ export function helmetInfo(device: DeviceDto | null | undefined, _worn: boolean)
   if (!device) return VIRTUAL_HELMET;
   return {
     name: HELMET_NAME,
-    detail: device.kind === 'webcam' ? '개발용 웹캠 detector' : '헬멧 태그',
+    detail: device.kind === 'webcam' ? '개발용 웹캠 detector' : device.kind === 'phone' ? '휴대폰 자체 센서' : '헬멧 태그',
     connected: device.connected,
     battery: device.battery,
     simulated: false,
@@ -162,7 +162,8 @@ export const helmetTitle = (info: HelmetInfo) => `${info.name} ${info.connected 
 export const helmetLine = (info: HelmetInfo) => `${info.detail}, 배터리 ${batteryText(info.battery)}`;
 
 /** v3·5 홈 '헬멧' 칸 — '연결됨 78%' / '끊김' */
-export const helmetStatusText = (info: HelmetInfo) => (info.simulated ? '모의 기기' : info.connected ? `연결됨 ${batteryText(info.battery)}` : '연결 끊김');
+export const helmetStatusText = (info: HelmetInfo) =>
+  info.simulated ? '모의 기기' : info.detail === '휴대폰 자체 센서' ? (info.connected ? '휴대폰 센서' : '휴대폰 끊김') : info.connected ? `연결됨 ${batteryText(info.battery)}` : '연결 끊김';
 
 // ── 보호 상태 (화면용) ────────────────────────────────────────
 

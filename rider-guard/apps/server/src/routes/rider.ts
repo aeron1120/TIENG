@@ -51,6 +51,7 @@ import {
   toContactDto,
   toDeviceDto,
   toRiderDto,
+  phoneSensorBeat,
   unpairDevice,
   updateContact,
   updateRider,
@@ -100,6 +101,7 @@ const schemas = {
     shareLevel: shareLevel.optional(),
     priority: z.number().int().min(1).optional(),
   }),
+  phoneSensor: z.object({ samples: z.number().int().min(0).max(100_000), sampleRateHz: z.number().positive().max(1000).nullable().optional() }),
   pair: z.object({
     pairingCode: z
       .string()
@@ -277,6 +279,12 @@ export function meRoutes(ctx: AppContext) {
     return c.json<DeviceDto>(toDeviceDto(ctx, await pairDevice(ctx, c.var.riderId, pairingCode)));
   });
 
+  // 헬멧 기기 없이 휴대폰 자체 가속도계·자이로를 감지 센서로 — 15초마다 상태 보고, 충격 후보 구간은 /me/indicators 로
+  app.put('/phone-sensor', async (c) => {
+    const body = await readBody(c, schemas.phoneSensor);
+    return c.json<DeviceDto>(toDeviceDto(ctx, await phoneSensorBeat(ctx, c.var.riderId, body)));
+  });
+
   app.delete('/device', async (c) => {
     await unpairDevice(ctx, c.var.riderId);
     return c.body(null, 204);
@@ -318,7 +326,7 @@ export function meRoutes(ctx: AppContext) {
   app.post('/indicators', async (c) => {
     const report = await readBody(c, indicatorReportSchema);
     const device = await riderDevice(ctx, c.var.riderId);
-    return c.json<IndicatorReportResponse>(await receiveIndicators(ctx, { riderId: c.var.riderId, deviceId: device?.id ?? null, via: 'phone' }, report));
+    return c.json<IndicatorReportResponse>(await receiveIndicators(ctx, { riderId: c.var.riderId, deviceId: device?.id ?? null, via: 'phone', phoneImu: device?.kind === 'phone' }, report));
   });
 
   app.get('/incidents', async (c) => c.json<IncidentListResponse>({ items: await listIncidentSummaries(ctx, c.var.riderId) }));

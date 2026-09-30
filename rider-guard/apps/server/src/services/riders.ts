@@ -18,8 +18,8 @@ import type {
 
 import type { AppContext, ContactRow, DeviceRow, RiderRow, SessionRow } from '../context.ts';
 import { parseJson } from '../db.ts';
-import { ApiError, iso, newId, notFound, seoulDayStart } from '../lib.ts';
-import { ACTIVE_SESSION_SQL, driveSecondsToday, latestLocation, TODAY_SESSIONS_SQL, toSessionDto, type TodaySessionRow } from './sessions.ts';
+import { ApiError, iso, newId, newToken, notFound, seoulDayStart, sha256, sixDigits } from '../lib.ts';
+import { ACTIVE_SESSION_SQL, activeSession, driveSecondsToday, latestLocation, TODAY_SESSIONS_SQL, toSessionDto, type TodaySessionRow } from './sessions.ts';
 
 export const CONSENT_VERSION = '2026-09';
 export const CONSENT_KEYS: ConsentKey[] = ['locationSensor', 'shareOnIncident', 'insuranceRecords', 'medicalInfo'];
@@ -244,6 +244,48 @@ export async function pairDevice(ctx: AppContext, riderId: string, pairingCode: 
     await ctx.db.run('UPDATE devices SET riderId = :riderId, pairedAt = :pairedAt WHERE id = :id', { riderId, pairedAt, id: device.id });
     return { ...device, riderId, pairedAt };
   });
+}
+
+export async function uniquePairingCode(ctx: AppContext): Promise<string> {
+  for (;;) {
+    const code = sixDigits();
+    if (!(await ctx.db.get('SELECT 1 FROM devices WHERE pairingCode = :code', { code }))) return code;
+  }
+}
+
+/**
+ * 휴대폰 자체 센서(가속도계·자이로) 상태 보고. 헬멧 기기가 없으면 휴대폰을 이 라이더의 감지 기기로 만든다.
+ * 운행 중이고 표본이 들어오고 있을 때만 '센서 수신'(lastSensorAt)으로 친다 — 앱이 켜져 있다는 것만으로 보호 중이라 하지 않는다.
+ * 헬멧 태그·웹캠이 이미 연결돼 있으면 그 기기를 덮어쓰지 않는다(409).
+ */
+export async function phoneSensorBeat(ctx: AppContext, riderId: string, body: { samples: number }): Promise<DeviceRow> {
+  if (!(await consentsOf(ctx, riderId)).locationSensor) throw new ApiError(403, 'consent_required', '위치·센서 수집 동의가 필요해요.');
+  const now = ctx.clock.now();
+  let device = await riderDevice(ctx, riderId);
+  if (device && device.kind !== 'phone') throw new ApiError(409, 'device_paired', '헬멧 기기가 연결돼 있어 휴대폰 센서를 쓰지 않아요.');
+  if (!device) {
+    device = {
+      id: newId('dev'),
+      // 휴대폰은 라이더 로그인 토큰으로 보내므로 기기 토큰을 쓰지 않는다 — 버리는 값의 해시만 둔다
+      tokenHash: sha256(newToken()),
+      kind: 'phone',
+      name: '휴대폰 센서',
+      pairingCode: await uniquePairingCode(ctx),
+      riderId,
+      battery: null,
+      lastSeenAt: now,
+      createdAt: now,
+      pairedAt: now,
+    };
+    await ctx.db.run(
+      `INSERT INTO devices (id, tokenHash, kind, name, pairingCode, riderId, battery, lastSeenAt, createdAt, pairedAt)
+       VALUES (:id, :tokenHash, :kind, :name, :pairingCode, :riderId, :battery, :lastSeenAt, :createdAt, :pairedAt)`,
+      device,
+    );
+  }
+  const sensing = body.samples > 0 && !!(await activeSession(ctx, riderId));
+  await ctx.db.run(`UPDATE devices SET lastSeenAt = :now${sensing ? ', lastSensorAt = :now' : ''} WHERE id = :id`, { id: device.id, now });
+  return { ...device, lastSeenAt: now, lastSensorAt: sensing ? now : device.lastSensorAt };
 }
 
 export async function unpairDevice(ctx: AppContext, riderId: string) {

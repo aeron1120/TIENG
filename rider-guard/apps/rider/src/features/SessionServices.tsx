@@ -8,6 +8,7 @@ import { api } from '@/api/client';
 import { applyIncident, isOpenStatus, useActiveIncident, useMe } from '@/api/hooks';
 import { useAutoProtection } from '@/features/helmet';
 import { useLocationTracking } from '@/features/location';
+import { usePhoneSensor } from '@/features/phoneSensor';
 import { pushSupported, registerPush } from '@/features/push';
 import { resetTo } from '@/lib/nav';
 
@@ -23,6 +24,7 @@ function presentAlert(id: string, pathname: string) {
  * 로그인 상태에서 항상 떠 있는 백그라운드 역할:
  * - 헬멧 착용(시뮬레이션)에 맞춰 보호(운행 세션)를 자동으로 켜고 끈다 — features/helmet
  * - 보호 중 위치 수집 (앱을 닫아도 — 개발 빌드)
+ * - 헬멧 기기가 없으면 휴대폰 자체 센서로 충격 감지 — features/phoneSensor
  * - 푸시 토큰 등록, 알림을 눌러 들어온 경우 처리
  * - 사고가 감지되면(휴대폰·태그·지표 판정 어느 쪽이든) 어느 화면에 있든 사고 확인 화면을 띄운다
  */
@@ -30,6 +32,8 @@ export function SessionServices() {
   const { data: me } = useMe();
   const sessionId = me?.session?.id ?? null;
   useLocationTracking(sessionId);
+  // 헬멧 기기가 없으면 휴대폰 가속도계·자이로를 감지 센서로
+  usePhoneSensor(sessionId, me?.device);
 
   useEffect(() => {
     void registerPush();

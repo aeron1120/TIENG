@@ -35,7 +35,7 @@ export type ContactRow = {
 export type DeviceRow = {
   id: string;
   tokenHash: string;
-  kind: 'tag' | 'webcam';
+  kind: 'tag' | 'webcam' | 'phone';
   name: string;
   pairingCode: string;
   riderId: string | null;

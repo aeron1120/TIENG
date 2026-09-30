@@ -20,7 +20,7 @@ import { consentsOf } from './riders.ts';
  */
 export async function receiveIndicators(
   ctx: AppContext,
-  from: { riderId: string | null; deviceId: string | null; via: 'device' | 'phone' },
+  from: { riderId: string | null; deviceId: string | null; via: 'device' | 'phone'; /** 휴대폰 자체 센서가 보낸 구간 */ phoneImu?: boolean },
   report: IndicatorReport,
 ): Promise<IndicatorReportResponse> {
   const analysis = report.samples ? analyzeImu(report.samples, report.sensorMetadata ?? { dataSource: 'mock' }) : null;
@@ -52,7 +52,7 @@ export async function receiveIndicators(
         const res = await createIncident(ctx, {
           riderId: from.riderId,
           // 합성 지표로 연 사고는 개발 서버에서만 생기고, 기록에서 테스트로 구분한다.
-          source: mode !== 'live' || dataSource !== 'measured' ? 'test' : from.via === 'device' ? 'device' : 'tag',
+          source: mode !== 'live' || dataSource !== 'measured' ? 'test' : from.via === 'device' ? 'device' : from.phoneImu ? 'phone' : 'tag',
           kind: kindOf(traces),
           detectedAt: report.detectedAt ? Date.parse(report.detectedAt) : undefined,
           metrics: Object.fromEntries(

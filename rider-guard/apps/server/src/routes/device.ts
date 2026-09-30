@@ -3,9 +3,10 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 
 import type { AppContext, DeviceRow } from '../context.ts';
-import { ApiError, newId, newToken, readBody, sha256, sixDigits } from '../lib.ts';
+import { ApiError, newId, newToken, readBody, sha256 } from '../lib.ts';
 import { createIncident } from '../services/incidents.ts';
 import { receiveIndicators } from '../services/judgments.ts';
+import { uniquePairingCode } from '../services/riders.ts';
 import { activeSession } from '../services/sessions.ts';
 
 type DeviceEnv = { Variables: { device: DeviceRow } };
@@ -137,9 +138,3 @@ export function deviceRoutes(ctx: AppContext) {
   return app;
 }
 
-async function uniquePairingCode(ctx: AppContext): Promise<string> {
-  for (;;) {
-    const code = sixDigits();
-    if (!(await ctx.db.get('SELECT 1 FROM devices WHERE pairingCode = :code', { code }))) return code;
-  }
-}

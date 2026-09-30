@@ -10,7 +10,7 @@ import { AfterSignIn, Loading } from '@/auth/AfterSignIn';
 import { useAuth } from '@/auth/AuthProvider';
 import { Field, Notice, SocialButton } from '@/components/forms';
 import { LogoIcon } from '@/components/Icons';
-import { Button, FadeIn, Screen, Spacer, Txt, usePressScale } from '@/components/ui';
+import { Button, FadeIn, Screen, Txt, usePressScale } from '@/components/ui';
 import { loginWithSocial } from '@/features/socialLogin';
 import { colors, font, typography } from '@/theme';
 
@@ -132,8 +132,6 @@ function LoginForm() {
         <Notice error={error} />
       </FadeIn>
 
-      <Spacer />
-
       <FadeIn delay={120} style={styles.actions}>
         <Button label="로그인" loading={login.isPending || authBusy} disabled={social.isPending} onPress={() => void submit()} />
         <SignupLink onPress={() => router.push('/signup')} disabled={busy} />
@@ -197,11 +195,12 @@ const styles = StyleSheet.create({
   brandName: { ...font.sans(700), fontSize: 16, lineHeight: 22, letterSpacing: -0.2, color: colors.text },
   intro: { marginTop: 28, gap: 10 },
   form: { marginTop: 28, gap: 20 },
-  actions: { marginTop: 24, gap: 4 },
+  // 입력칸 바로 아래에 붙인다 — 화면 바닥으로 밀면 긴 화면(웹)에서 가운데가 텅 빈다
+  actions: { marginTop: 32, gap: 4 },
   link: { minHeight: 44, alignItems: 'center', justifyContent: 'center', alignSelf: 'center', paddingHorizontal: 12 },
   linkText: { fontSize: 14, lineHeight: 20, color: colors.textMuted },
   linkStrong: { ...font.sans(700), color: colors.text, textDecorationLine: 'underline' },
-  social: { marginTop: 8, gap: 10 },
+  social: { marginTop: 16, gap: 10 },
   divider: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingBottom: 2 },
   rule: { flex: 1, height: 1, backgroundColor: colors.divider },
   dividerText: { ...typography.meta },

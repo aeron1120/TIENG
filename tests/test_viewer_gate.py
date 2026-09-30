@@ -11,8 +11,11 @@ import asyncio
 import pytest
 
 from api import ws as ws_module
-from api.ws import Hub
+from api.ws import Hub, Viewer
 from core.adapters.camera import CameraAdapter
+
+# 누가 보든 장치를 잡는 규칙은 같다. 어느 세션인지는 여기서 관심 밖이다.
+_VIEWER = Viewer(key="session", source="server")
 
 
 class _FakeSocket:
@@ -51,7 +54,7 @@ async def test_first_viewer_acquires() -> None:
     watcher = _Watcher()
     hub = Hub(on_watched=watcher)
 
-    await hub.connect(_FakeSocket())  # type: ignore[arg-type]
+    await hub.connect(_FakeSocket(), _VIEWER)  # type: ignore[arg-type]
 
     assert watcher.calls == [True]
 
@@ -61,8 +64,8 @@ async def test_second_viewer_does_not_acquire_again() -> None:
     watcher = _Watcher()
     hub = Hub(on_watched=watcher)
 
-    await hub.connect(_FakeSocket())  # type: ignore[arg-type]
-    await hub.connect(_FakeSocket())  # type: ignore[arg-type]
+    await hub.connect(_FakeSocket(), _VIEWER)  # type: ignore[arg-type]
+    await hub.connect(_FakeSocket(), _VIEWER)  # type: ignore[arg-type]
 
     assert watcher.calls == [True]
 
@@ -72,7 +75,7 @@ async def test_last_viewer_leaving_releases() -> None:
     hub = Hub(on_watched=watcher)
     socket = _FakeSocket()
 
-    await hub.connect(socket)  # type: ignore[arg-type]
+    await hub.connect(socket, _VIEWER)  # type: ignore[arg-type]
     hub.disconnect(socket)  # type: ignore[arg-type]
     await _settle()
 
@@ -84,8 +87,8 @@ async def test_one_viewer_leaving_keeps_it_open() -> None:
     hub = Hub(on_watched=watcher)
     first, second = _FakeSocket(), _FakeSocket()
 
-    await hub.connect(first)  # type: ignore[arg-type]
-    await hub.connect(second)  # type: ignore[arg-type]
+    await hub.connect(first, _VIEWER)  # type: ignore[arg-type]
+    await hub.connect(second, _VIEWER)  # type: ignore[arg-type]
     hub.disconnect(first)  # type: ignore[arg-type]
     await _settle()
 
@@ -98,9 +101,9 @@ async def test_refresh_does_not_cycle_the_camera() -> None:
     hub = Hub(on_watched=watcher)
     socket = _FakeSocket()
 
-    await hub.connect(socket)  # type: ignore[arg-type]
+    await hub.connect(socket, _VIEWER)  # type: ignore[arg-type]
     hub.disconnect(socket)  # type: ignore[arg-type]
-    await hub.connect(_FakeSocket())  # type: ignore[arg-type]
+    await hub.connect(_FakeSocket(), _VIEWER)  # type: ignore[arg-type]
     await _settle()
 
     assert watcher.calls == [True]
@@ -115,7 +118,7 @@ async def test_a_failing_device_does_not_break_the_connection() -> None:
     hub = Hub(on_watched=explode)
     socket = _FakeSocket()
 
-    await hub.connect(socket)  # type: ignore[arg-type]
+    await hub.connect(socket, _VIEWER)  # type: ignore[arg-type]
 
     assert socket.accepted is True
 
@@ -126,7 +129,7 @@ async def test_close_cancels_a_pending_release() -> None:
     hub = Hub(on_watched=watcher)
     socket = _FakeSocket()
 
-    await hub.connect(socket)  # type: ignore[arg-type]
+    await hub.connect(socket, _VIEWER)  # type: ignore[arg-type]
     hub.disconnect(socket)  # type: ignore[arg-type]
     await hub.close()
     await _settle()

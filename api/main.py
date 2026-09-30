@@ -8,6 +8,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 from fastapi import Depends, FastAPI, HTTPException
@@ -15,6 +16,7 @@ from fastapi.responses import FileResponse
 
 from api import auth
 from api.auth import Users, require
+from api.feeds import Feeds
 from api.routes.auth import admin as auth_admin_router
 from api.routes.auth import router as auth_router
 from api.routes.camera import router as camera_router
@@ -23,15 +25,20 @@ from api.routes.export import router as export_router
 from api.routes.interventions import router as interventions_router
 from api.routes.layout import router as layout_router
 from api.routes.mode import router as mode_router
+from api.routes.rppg import router as rppg_router
 from api.routes.snapshot import router as snapshot_router
 from api.routes.system import router as system_router
 from api.schemas import Snapshot, server_now
 from api.ws import Hub
 from api.ws import router as ws_router
 from core import mode as run_mode
+from core import overrides, thresholds
 from core.csv_logs import InterventionCsvLogger, MetricCsvLogger
 from core.policy.runner import PolicyRunner
 from core.registry import Registry
+
+if TYPE_CHECKING:  # psycopg 가 없는 기기에서도 이 모듈은 떠야 한다
+    from api.auth_pg import PgUsers
 
 log = structlog.get_logger(__name__)
 
@@ -47,9 +54,47 @@ def _mode_path() -> Path:
     return Path(os.environ.get("TFV_MODE_PATH") or run_mode.DEFAULT_PATH)
 
 
-def _users_path() -> Path:
-    # 기기 설정(config)이 아니라 사용 흔적이라 state/ 에 둔다 — layout.json 과 같은 자리.
-    return Path(os.environ.get("TFV_USERS_DB") or auth.DEFAULT_PATH)
+def _users_store() -> Users | PgUsers:
+    """계정 저장소. DATABASE_URL 이 있으면 Postgres, 없으면 파일이다.
+
+    파이는 이 값을 두지 않는다. LAN 안에서 인터넷 없이 돌아야 하므로 (README §1)
+    계정이 밖에 있으면 인터넷이 끊긴 방에서 로그인이 막힌다.
+
+    클라우드는 반대다. 컨테이너가 재배포마다 새로 떠서 state/users.db 가 같이
+    날아간다 — 쓸 때마다 다시 가입해야 한다 (docs/deploy.md).
+
+    psycopg 는 cloud extras 라 파이에는 없다. import 를 여기까지 미루는 이유가
+    그것이다 — 모듈 맨 위에서 부르면 파이에서 앱이 통째로 안 뜬다.
+    """
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        # 기기 설정(config)이 아니라 사용 흔적이라 state/ 에 둔다 — layout.json 과 같은 자리.
+        return Users(Path(os.environ.get("TFV_USERS_DB") or auth.DEFAULT_PATH))
+
+    from api.auth_pg import PgUsers
+
+    return PgUsers(dsn)
+
+
+def _ensure_admin(users: Users | PgUsers) -> None:
+    """TFV_ADMIN_USER/PASSWORD 가 있으면 그 계정을 관리자로 세운다.
+
+    둘 중 하나라도 없으면 아무것도 하지 않는다. 그때는 첫 가입자가 관리자가 되는
+    기존 동작이 그대로 남는다 — 파이는 환경변수 없이 켜는 일이 잦고, 관리자를
+    아무도 만들 수 없으면 기기가 통째로 잠긴다.
+    """
+    name = os.environ.get("TFV_ADMIN_USER")
+    password = os.environ.get("TFV_ADMIN_PASSWORD")
+    if not name or not password:
+        log.info("admin.env_absent")  # 첫 가입자가 관리자가 된다
+        return
+
+    try:
+        users.ensure_admin(name, password)
+    except auth.AuthError as exc:
+        # 서버를 못 뜨게 하지는 않는다. 환경변수 오타 하나로 앱이 멎으면 침실 앞
+        # 화면이 검게 남는다 — 관리자가 없는 것보다 나쁘다.
+        log.error("admin.rejected", detail=exc.detail)
 
 
 async def _sample_loop(app: FastAPI) -> None:
@@ -78,7 +123,11 @@ async def _sample_loop(app: FastAPI) -> None:
             app.state.latest = snapshot
             if csv_log is not None:
                 csv_log.write_snapshot(snapshot)
-            await hub.broadcast(snapshot)
+            # 세션별 지표는 스냅샷에 섞지 않는다. CSV 도 화면 밖 기록도 이 방의
+            # 것이어야 하고, 누구 것인지 나누는 일은 보내는 자리에서만 한다.
+            feeds: Feeds = app.state.personal
+            feeds.prune()  # 카메라를 끈 세션의 마지막 값이 남지 않게 한다
+            await hub.broadcast(snapshot, feeds)
         except Exception as exc:
             # 루프가 죽으면 대시보드가 통째로 멎는다. 한 틱을 버리고 계속 돈다.
             log.error("sample_loop.tick_failed", error=str(exc))
@@ -92,7 +141,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     path = _config_path()
     log.info("startup", config=str(path))
 
-    registry = Registry.from_yaml(path)
+    # 화면에서 바꾼 값이 재시작 후에도 남아야 한다. device.yaml 은 손으로 적는
+    # 기본값이고, 그 위에 덮는다 (core/overrides.py).
+    registry = Registry.from_yaml(path, overrides.load())
     # 저장된 모드를 먼저 얹고 시작한다. start() 안에서 적용되므로, 졸음 모드로
     # 꺼 둔 기기가 재부팅 뒤 잠깐이라도 심박을 다시 켜는 일이 없다.
     mode_path = _mode_path()
@@ -103,8 +154,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.mode_path = mode_path
     log.info("mode.restored", mode=registry.mode, subject=registry.subject or "(공용)")
 
-    users = Users(_users_path())
+    users = _users_store()
     users.init()
+    _ensure_admin(users)
     app.state.users = users
 
     metrics_csv = _open_log(MetricCsvLogger, registry.config.metrics_csv, "metrics_csv")
@@ -119,6 +171,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 그 기기는 무엇을 하고 있는지 모르는 기기가 된다.
     app.state.hub = Hub(on_watched=registry.set_watched)
     app.state.latest = None
+    # 세션 토큰 -> 그 세션이 자기 기기 카메라로 만든 지표. 여기 있는 값은 그
+    # 세션에게만 나간다 (api/ws.py). 채우는 쪽은 api/routes/rppg.py 다.
+    #
+    # 게이트는 코드가 아니라 thresholds.yaml 이 정한다 (README §10). 카메라 어댑터와
+    # 같은 값을 써야 웹에서 잰 값과 파이에서 잰 값이 같은 기준으로 보류된다.
+    gate = thresholds.load(Path(registry.config.thresholds)).confidence_min
+    app.state.personal = Feeds(gate=gate)
+    # 비회원의 화면 배치. 계정이 있는 사람 것은 저장소에 들어간다 (api/routes/layout.py).
+    app.state.layouts = {}
     app.state.metrics_csv = metrics_csv
 
     # 기동 때 열어 장치 유무를 확인했으니 첫 구독자가 붙을 때까지 놓아 둔다.
@@ -164,6 +225,9 @@ app.include_router(auth_router)
 app.include_router(auth_admin_router)
 app.include_router(snapshot_router, dependencies=guest)
 app.include_router(camera_router, dependencies=guest)
+# 자기 기기 카메라로 재는 경로. 비회원에게도 연다 — 실시간 화면이 원래 비회원 몫이고,
+# 여기서 나온 값은 그 세션에게만 돌아간다 (api/ws.py).
+app.include_router(rppg_router, dependencies=guest)
 app.include_router(layout_router, dependencies=guest)
 app.include_router(mode_router, dependencies=member)
 app.include_router(interventions_router, dependencies=member)

@@ -1,0 +1,28 @@
+{
+  "data_kind": "real_data",
+  "classification_basis": "User explicitly confirmed real experimental data on 2026-09-30.",
+  "filename_history": "User reports filenames and descriptions were copied from an earlier synthetic dataset.",
+  "renamed_on": "2026-09-30",
+  "conditions": 29,
+  "summary_records": 145,
+  "repeats_per_condition": 5,
+  "raw_waveform_repeats_available": [
+    1
+  ],
+  "physical_test_count_independently_verified": null,
+  "physical_test_date": null,
+  "board_id": null,
+  "firmware_version": null,
+  "numeric_data_modified": false,
+  "model_reference_fields": [
+    "latent_*",
+    "dv_true",
+    "roll_true",
+    "dv_oracle",
+    "pose_error",
+    "*_amag"
+  ],
+  "reference_channel_provenance": "These fields are present in the inherited model. Independent reference instrument and synchronization records have not been identified.",
+  "prior_numeric_check": "In the preceding analysis, A1/A4/D5 repeat 1 raw codes, sequence, timestamps, receiver timestamps and estimated delta-v exactly reproduced from the bundled generator. The user source clarification and this numerical observation are retained separately; the relationship remains unresolved.",
+  "legacy_settings": "legacy/legacy_model_assumptions.json; historical model settings, not verified board readback."
+}

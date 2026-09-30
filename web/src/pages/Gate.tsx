@@ -4,11 +4,19 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
+  Clock,
   Eye,
   LogIn,
+  ShieldCheck,
   UserPlus,
 } from 'lucide-react'
-import { useEffect, useState, type FormEvent } from 'react'
+import {
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type RefObject,
+} from 'react'
 import { useAuth } from '../authContext'
 
 // 앱을 처음 열면 나오는 관문. 여기를 지나기 전에는 WebSocket 도 열지 않는다 —
@@ -18,12 +26,18 @@ import { useAuth } from '../authContext'
 // (비회원), 기록과 설정까지 보는 사람은 따로 있다. 매번 로그인을 요구하면 앞의
 // 경우가 불편해지고, 아무나 다 보게 두면 뒤의 경우가 위험해진다.
 
-type Mode = 'choose' | 'login' | 'register'
+type Mode = 'choose' | 'login' | 'register' | 'admin'
 
 /** GET /api/auth/available 의 답. 못 쓰는 아이디면 detail 에 이유가 있다. */
 interface Availability {
   available: boolean
   detail: string
+}
+
+/** 중복확인 결과. 어떤 아이디를 확인한 것인지 같이 들고 있어야 한다 — 확인한 뒤에
+ *  아이디를 고치면 그 결과는 더 이상 이 아이디의 것이 아니다. */
+interface Checked extends Availability {
+  username: string
 }
 
 const CHOICES = [
@@ -37,12 +51,33 @@ const CHOICES = [
     mode: 'register' as const,
     icon: UserPlus,
     label: '회원가입',
-    desc: '가입하면 바로 사용할 수 있습니다',
+    desc: '관리자 승인 뒤에 사용할 수 있습니다',
+  },
+  {
+    mode: 'admin' as const,
+    icon: ShieldCheck,
+    label: '관리자 로그인',
+    desc: '가입 승인과 계정 차단을 합니다',
   },
 ]
 
 const FIELD =
   'kr w-full rounded-md border-[0.5px] border-gold/20 bg-panel-dim px-3 py-2.5 text-[14px] text-fg placeholder:text-faint focus:border-gold/60 focus:outline-none'
+
+// Enter 로 다음 칸에 넘어간다. 태블릿 앞에서 칸마다 손을 뻗지 않아도 되고, 마지막
+// 칸에서는 손대지 않으므로 브라우저가 그대로 폼을 제출한다.
+//
+// 여기서 가로채지 않으면 중간 칸의 Enter 는 아무 일도 하지 않는다. 제출 버튼이
+// 아직 disabled 라서 브라우저가 암묵적 제출을 건너뛰기 때문이다.
+//
+// 조합 중인 Enter 는 흘려보낸다. 한글을 치는 동안 IME 가 글자를 확정하려고 누르는
+// Enter 라서, 잡아 버리면 아이디를 다 치기도 전에 칸이 바뀐다.
+const advance =
+  (next: RefObject<HTMLInputElement | null>) => (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+    event.preventDefault()
+    next.current?.focus()
+  }
 
 export function Gate() {
   const { enterAsGuest, logIn, register } = useAuth()
@@ -52,36 +87,52 @@ export function Gate() {
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [taken, setTaken] = useState<Availability | null>(null)
+  const [checked, setChecked] = useState<Checked | null>(null)
+  const [checking, setChecking] = useState(false)
+  // 기본은 안 남기는 쪽이다. 태블릿을 여러 사람이 지나가며 쓰는 자리에서 켜 두면
+  // 다음 사람이 앞사람 세션을 물려받는다.
+  const [remember, setRemember] = useState(false)
+  // 가입은 됐는데 아직 못 들어온 상태. 관문에 그대로 두면 방금 가입한 사람이
+  // 비밀번호를 잘못 쳤다고 생각하고 계속 다시 시도한다.
+  const [waiting, setWaiting] = useState<string | null>(null)
+  const passwordRef = useRef<HTMLInputElement>(null)
+  const confirmRef = useRef<HTMLInputElement>(null)
 
-  // 아이디가 겹치는지는 치는 동안 물어본다. 비밀번호 확인란과 같은 이유다 — 가입을
-  // 누른 뒤에 "이미 있는 아이디"를 알려 주면 비밀번호까지 다 채운 뒤다.
-  useEffect(() => {
+  // 중복확인을 거친 아이디만 가입으로 넘어간다. 확인한 뒤에 아이디를 한 글자라도
+  // 고치면 그 결과는 더 이상 이 아이디의 것이 아니므로 다시 확인해야 한다.
+  const verified = checked !== null && checked.username === username.trim() && checked.available
+  // "이 아이디는 못 쓴다"와 "확인한 뒤에 아이디를 고쳤다"는 다른 일이다. 앞은 아이디를
+  // 바꿔야 하고 뒤는 버튼을 다시 누르면 된다 — 같은 빨간 줄로 뭉개면 안 된다.
+  const rejected = checked !== null && checked.username === username.trim() && !checked.available
+
+  const check = async () => {
     const name = username.trim()
-    setTaken(null)
-    if (mode !== 'register' || !name) return
+    if (!name || checking) return
 
-    // 한 글자마다 보내면 아이디 하나 치는 데 열 번을 묻는다. 손이 멎은 뒤에 한 번만.
-    let alive = true
-    const timer = setTimeout(() => {
-      fetch(`/api/auth/available?username=${encodeURIComponent(name)}`)
-        .then((res) => (res.ok ? (res.json() as Promise<Availability>) : null))
-        .then((body) => alive && setTaken(body))
-        // 못 물어봤으면 아무 말도 하지 않는다. 최종 판정은 어차피 가입할 때 서버가 한다.
-        .catch(() => {})
-    }, 400)
-
-    return () => {
-      alive = false
-      clearTimeout(timer)
+    setChecking(true)
+    setChecked(null)
+    setError(null)
+    try {
+      const res = await fetch(`/api/auth/available?username=${encodeURIComponent(name)}`)
+      if (!res.ok) throw new Error('아이디를 확인하지 못했습니다')
+      const body = (await res.json()) as Availability
+      setChecked({ ...body, username: name })
+      // 쓸 수 있으면 그대로 다음 칸으로 넘긴다. 눌러서 확인했는데 다시 손으로
+      // 칸을 짚어야 하면 버튼을 둔 만큼 손이 더 간다.
+      if (body.available) passwordRef.current?.focus()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setChecking(false)
     }
-  }, [mode, username])
+  }
 
   const go = (next: Mode) => {
     setMode(next)
     setError(null)
     setPassword('')
     setConfirm('')
+    setChecked(null)
   }
 
   // 비밀번호를 되찾을 방법이 없는 기기다. 오타로 잠기면 되돌릴 수 없으므로 확인란이
@@ -90,15 +141,26 @@ export function Gate() {
   // 확인란이 비어 있을 때는 아무 말도 하지 않는다. 첫 글자를 치기도 전에 "다르다"가
   // 뜨면 그건 알림이 아니라 잡음이다.
   const mismatch = mode === 'register' && confirm.length > 0 && password !== confirm
-  const incomplete = !username || !password || (mode === 'register' && !confirm)
+  // 가입은 중복확인을 통과해야 열린다. 서버도 같은 판정을 하지만(409), 거기까지
+  // 가면 비밀번호를 두 번 다 채운 뒤다.
+  const incomplete =
+    !username || !password || (mode === 'register' && (!confirm || !verified))
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setBusy(true)
     setError(null)
     try {
-      if (mode === 'login') await logIn(username, password)
-      else await register(username, password)
+      if (mode !== 'register') {
+        // 관리자도 같은 경로로 들어온다. 계정에 붙은 등급이 무엇을 열지 정하므로
+        // (api/auth.py) 입구를 나눈다고 인증까지 나눌 이유는 없다.
+        await logIn(username, password, remember)
+      } else {
+        const { pending } = await register(username, password)
+        // pending 이면 AuthProvider 가 principal 을 안 세운다. 관문이 그대로 남으므로
+        // 여기서 무슨 일이 벌어졌는지 말해 줘야 한다.
+        if (pending) setWaiting(username.trim())
+      }
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -133,7 +195,36 @@ export function Gate() {
             </p>
           </div>
 
-          {mode === 'choose' ? (
+          {waiting ? (
+            <div className="flex flex-col gap-3">
+              <div className="rounded-lg border-[0.5px] border-gold/25 bg-panel px-4 py-4">
+                <p className="kr flex items-center gap-2 text-[14px] font-medium text-gold">
+                  <Clock className="h-4 w-4 shrink-0" />
+                  승인을 기다리는 중입니다
+                </p>
+                <p className="kr mt-2 text-[12px] leading-relaxed text-faint">
+                  <span className="text-muted">{waiting}</span> 계정이 만들어졌습니다. 관리자가
+                  승인하면 로그인할 수 있습니다. 방의 생체지표와 기록을 보는 화면이라 가입만으로
+                  열어 두지 않습니다.
+                </p>
+                <p className="kr mt-2 text-[12px] leading-relaxed text-faint">
+                  기다리는 동안 <span className="text-muted">비회원 접속</span>으로 실시간 화면은
+                  볼 수 있습니다.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setWaiting(null)
+                  go('choose')
+                }}
+                className={LINK}
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                처음으로
+              </button>
+            </div>
+          ) : mode === 'choose' ? (
             <div className="flex flex-col gap-2.5">
               <button onClick={guest} disabled={busy} className={CARD}>
                 <Eye className="h-4 w-4 shrink-0 text-gold" />
@@ -160,46 +251,76 @@ export function Gate() {
           ) : (
             <form onSubmit={submit} className="flex flex-col gap-2.5">
               <div>
-                <input
-                  className={`${FIELD} ${
-                    taken?.available === false ? 'border-alert/60 focus:border-alert' : ''
-                  }`}
-                  placeholder="아이디"
-                  autoComplete="username"
-                  autoFocus
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  aria-invalid={taken?.available === false}
-                  aria-describedby={taken ? 'username-check' : undefined}
-                />
-                {taken && (
+                <div className="flex gap-2">
+                  <input
+                    className={`${FIELD} ${
+                      rejected ? 'border-alert/60 focus:border-alert' : ''
+                    }`}
+                    placeholder="아이디"
+                    autoComplete="username"
+                    autoFocus
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+                      event.preventDefault()
+                      // 가입은 여기서 확인부터 한다. 확인 없이 다음 칸으로 보내면
+                      // 비밀번호를 다 채우고 나서야 막힌 이유를 알게 된다.
+                      if (mode === 'register') void check()
+                      else passwordRef.current?.focus()
+                    }}
+                    aria-invalid={rejected}
+                    aria-describedby={mode === 'register' ? 'username-check' : undefined}
+                  />
+                  {mode === 'register' && (
+                    <button
+                      type="button"
+                      onClick={() => void check()}
+                      disabled={!username.trim() || checking || verified}
+                      className="kr shrink-0 rounded-md border-[0.5px] border-gold/30 px-3 text-[13px] whitespace-nowrap text-gold transition-colors hover:bg-gold/10 disabled:opacity-40"
+                    >
+                      {checking ? '확인 중…' : verified ? '확인됨' : '중복확인'}
+                    </button>
+                  )}
+                </div>
+                {mode === 'register' && (
                   <p
                     id="username-check"
                     aria-live="polite"
                     className={`kr mt-1.5 flex items-center gap-1.5 text-[12px] ${
-                      taken.available ? 'text-gold-soft' : 'text-alert'
+                      verified ? 'text-gold-soft' : rejected ? 'text-alert' : 'text-faint'
                     }`}
                   >
-                    {taken.available ? (
+                    {verified ? (
                       <Check className="h-3.5 w-3.5 shrink-0" />
                     ) : (
                       <AlertCircle className="h-3.5 w-3.5 shrink-0" />
                     )}
-                    {taken.available ? '쓸 수 있는 아이디입니다' : taken.detail}
+                    {verified
+                      ? '쓸 수 있는 아이디입니다'
+                      : checked && checked.username !== username.trim()
+                        ? '아이디가 바뀌었습니다 — 다시 확인해 주세요'
+                        : checked
+                          ? checked.detail
+                          : '중복확인을 눌러 주세요'}
                   </p>
                 )}
               </div>
               <input
+                ref={passwordRef}
                 className={FIELD}
                 type="password"
                 placeholder="비밀번호"
-                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                // 로그인은 여기가 마지막 칸이라 손대지 않는다 — Enter 가 그대로 제출한다.
+                onKeyDown={mode === 'register' ? advance(confirmRef) : undefined}
               />
               {mode === 'register' && (
                 <div>
                   <input
+                    ref={confirmRef}
                     className={`${FIELD} ${mismatch ? 'border-alert/60 focus:border-alert' : ''}`}
                     type="password"
                     placeholder="비밀번호 확인"
@@ -224,12 +345,29 @@ export function Gate() {
                 </div>
               )}
 
+              {/* 가입 화면에는 두지 않는다. 승인을 기다리는 사람에게는 세션이
+                  아예 안 생기므로 (api/routes/auth.py) 물어볼 것이 없다. */}
+              {mode !== 'register' && (
+                <label className="kr mt-1 flex cursor-pointer items-center gap-2 text-[13px] text-faint select-none">
+                  <input
+                    type="checkbox"
+                    checked={remember}
+                    onChange={(e) => setRemember(e.target.checked)}
+                    className="h-3.5 w-3.5 accent-gold"
+                  />
+                  로그인 유지
+                  <span className="text-[12px] text-faint/70">
+                    · 끄면 창을 닫을 때 풀립니다
+                  </span>
+                </label>
+              )}
+
               <button
                 type="submit"
-                disabled={busy || incomplete || mismatch || taken?.available === false}
+                disabled={busy || incomplete || mismatch}
                 className="kr mt-1 rounded-md bg-gold px-3.5 py-2.5 text-[14px] font-medium text-ink transition-colors hover:bg-gold-soft disabled:opacity-40"
               >
-                {busy ? '확인 중…' : mode === 'login' ? '로그인' : '가입하고 시작'}
+                {busy ? '확인 중…' : mode === 'register' ? '가입 신청' : '로그인'}
               </button>
 
               <button type="button" onClick={() => go('choose')} className={`${LINK} mt-1`}>

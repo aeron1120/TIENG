@@ -15,6 +15,7 @@ import {
   STATE_LABEL,
   displayValue,
   effectiveState,
+  isDetached,
   isWarmingUp,
 } from '../metrics'
 import { useFeed } from '../snapshotContext'
@@ -29,6 +30,9 @@ import type { Metric } from '../types'
 //
 // 폭에 상한(max-w-shell)을 두는 이유: 상한이 없으면 초광폭 모니터에서 주지표가
 // 좌상단에 홀로 남고 화면 가운데가 통째로 비어 버린다.
+
+/** 주지표 자리에 카메라를 세울 때 쓰는 키. 지표 키와 겹치지 않는다. */
+const CAMERA = 'camera'
 
 export function Kiosk() {
   const { snapshot, history, stale } = useFeed()
@@ -46,10 +50,14 @@ export function Kiosk() {
     )
   }
 
-  const hero = snapshot.metrics.find((m) => m.key === layout.hero) ?? snapshot.metrics[0]
   // 졸음 지표는 전용 패널이 통째로 맡으므로 카드에서는 뺀다 (metrics.ts DROWSINESS_KEYS).
   const cards = snapshot.metrics.filter((m) => !DROWSINESS_KEYS.includes(m.key))
-  const blocks = sortBlocks(cards, draft ?? layout.order, hero?.key)
+  // 카메라도 주지표 자리에 설 수 있다. 얼굴을 상자에 맞추는 일은 사이드바 크기에서
+  // 하기 어려워서, 지표와 같은 방식으로 크게 볼 수 있어야 한다. layout.hero 는 서버가
+  // 화이트리스트로 막지 않으므로 (core/layout.py) 이 값을 그대로 저장할 수 있다.
+  const cameraHero = layout.hero === CAMERA
+  const hero = cameraHero ? undefined : pickHero(cards, layout.hero, layout.order, stale)
+  const blocks = sortBlocks(cards, draft ?? layout.order, hero?.key, stale)
   const keys = blocks.map((m) => m.key)
 
   const heroState = hero ? effectiveState(hero, stale) : 'no_adapter'
@@ -58,11 +66,25 @@ export function Kiosk() {
   const HeroIcon = hero ? (ICON[hero.key] ?? Activity) : Activity
   const confidence = !stale && hero ? hero.confidence : null
 
+  /** 카메라를 큰 자리로 보내거나, 거기 있으면 원래 보던 지표로 되돌린다.
+   *
+   * 되돌릴 지표는 order 맨 앞이다. 카메라를 올릴 때 내려온 주지표를 그 자리에
+   * 넣어 두므로 (promote), 누른 사람이 직전에 보던 것으로 돌아간다. */
+  const toggleCamera = () => {
+    if (!cameraHero) {
+      promote(CAMERA)
+      return
+    }
+    const back = layout.order.find((key) => snapshot.metrics.some((m) => m.key === key))
+    if (back) promote(back)
+  }
+
   const promote = (key: string) => {
-    if (!hero || key === hero.key) return
+    if (key === layout.hero) return
     // 내려온 주지표는 블록 맨 위로 보낸다. 방금까지 보던 지표가 목록 어딘가로
-    // 사라지면 다시 찾아야 한다.
-    save({ hero: key, order: [hero.key, ...keys.filter((k) => k !== key)] })
+    // 사라지면 다시 찾아야 한다. 카메라는 목록에 넣지 않는다 — 자리가 정해져 있다.
+    const demoted = hero ? [hero.key] : []
+    save({ hero: key, order: [...demoted, ...keys.filter((k) => k !== key)] })
   }
 
   const finishDrag = () => {
@@ -85,6 +107,13 @@ export function Kiosk() {
         {/* 주지표는 위, 추세는 남는 높이를 전부 먹는다. 그래야 오른쪽 사이드바와
             윗줄이 맞고 왼쪽 열에 빈 구멍이 생기지 않는다. */}
         <section className="hero-glow relative flex min-w-0 flex-col gap-8 lg:self-stretch">
+          {cameraHero ? (
+            /* 카메라가 주지표 자리에 섰다. 지표로 돌아가려면 오른쪽 블록을 누르면 된다. */
+            <div className="relative z-10 min-h-[clamp(320px,50vh,700px)] lg:flex-1">
+              <CameraPanel variant="hero" onToggle={toggleCamera} />
+            </div>
+          ) : (
+          <>
           <div className="relative z-10">
               <div className="mb-5 flex flex-wrap items-center gap-3">
                 <span className="kr flex items-center gap-2 text-[18px] font-medium text-gold">
@@ -159,6 +188,8 @@ export function Kiosk() {
           <div className="relative z-10 h-[clamp(220px,36vh,460px)] lg:h-auto lg:min-h-56 lg:flex-1">
             <TrendChart history={history} metricKey={hero?.key ?? layout.hero} stale={stale} />
           </div>
+          </>
+          )}
         </section>
 
         {/* 오른쪽: 나머지 지표. 세로선이 왼쪽 열 전체 높이를 따라가도록 늘리고,
@@ -200,9 +231,11 @@ export function Kiosk() {
                 }}
               />
             ))}
-            <div className="2xl:col-span-2">
-              <CameraPanel />
-            </div>
+            {!cameraHero && (
+              <div className="2xl:col-span-2">
+                <CameraPanel onToggle={toggleCamera} />
+              </div>
+            )}
           </div>
 
           <div className="mt-1">
@@ -226,17 +259,54 @@ export function Kiosk() {
 }
 
 /**
- * 저장된 순서대로 블록을 세운다.
+ * 크게 세울 지표.
+ *
+ * 저장된 선택이 먼저다. 다만 그 지표의 어댑터가 안 붙어 있으면 화면 한가운데가
+ * 커다란 "—" 하나로 남는다 — 센서 없이 브라우저 카메라만 켠 경우가 그렇다.
+ * 그때는 값이 나오는 지표로 임시 승격한다.
+ *
+ * 저장하지는 않는다. 센서가 돌아오면 원래 고른 지표로 그대로 되돌아가야 한다.
+ */
+function pickHero(
+  metrics: Metric[],
+  saved: string,
+  order: string[],
+  stale: boolean,
+): Metric | undefined {
+  const chosen = metrics.find((m) => m.key === saved)
+  if (chosen && !isDetached(chosen, stale)) return chosen
+
+  const rank = new Map(order.map((key, i) => [key, i]))
+  const alive = metrics
+    .filter((m) => !isDetached(m, stale))
+    .sort((a, b) => (rank.get(a.key) ?? order.length) - (rank.get(b.key) ?? order.length))
+  return alive[0] ?? chosen ?? metrics[0]
+}
+
+/**
+ * 블록 순서. 값이 나오는 카드를 위로 올리고, 그 안에서는 저장된 순서를 지킨다.
+ *
+ * 안 붙은 카드를 지우지 않는 이유: 이 기기가 무엇을 볼 수 있는 물건인지가 카드
+ * 목록으로 드러난다. 센서를 꽂으면 그 자리가 그대로 채워진다.
  *
  * order 에 없는 지표는 뒤에 붙이고 (센서를 새로 꽂아도 기존 배치가 안 흔들린다),
  * order 에 있지만 지금 안 오는 지표는 저절로 빠진다.
  */
-function sortBlocks(metrics: Metric[], order: string[], heroKey: string | undefined): Metric[] {
+function sortBlocks(
+  metrics: Metric[],
+  order: string[],
+  heroKey: string | undefined,
+  stale: boolean,
+): Metric[] {
   const rank = new Map(order.map((key, i) => [key, i]))
   return metrics
     .filter((m) => m.key !== heroKey)
-    .map((m, i) => ({ m, rank: rank.get(m.key) ?? order.length + i }))
-    .sort((a, b) => a.rank - b.rank)
+    .map((m, i) => ({
+      m,
+      detached: isDetached(m, stale) ? 1 : 0,
+      rank: rank.get(m.key) ?? order.length + i,
+    }))
+    .sort((a, b) => a.detached - b.detached || a.rank - b.rank)
     .map((entry) => entry.m)
 }
 

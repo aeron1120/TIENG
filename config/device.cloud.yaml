@@ -1,0 +1,59 @@
+# 공개 배포용. 하드웨어가 하나도 없는 곳에서 뜬다 (Render — docs/deploy.md).
+#
+# device.mock.yaml 과 다른 점: 값을 지어내지 않는다. mock 쪽은 개발 PC 에서 L1 개입
+# 전 구간을 하드웨어 없이 보려고 합성 신호를 만드는 도구다. 여기는 아무나 들어오는
+# 화면이라, 없는 센서가 그럴듯한 숫자를 내면 그게 곧 거짓말이 된다 (README §0-4).
+#
+# 어댑터를 지우지 않고 mode: unavailable 로 두는 이유는 카드 자리를 남기기 위해서다.
+# registry 는 이 모드에서 클래스의 provides 만 읽고 인스턴스를 만들지 않으므로
+# (core/registry.py), 카드가 "미연결"로 뜨고 값은 비어 있다. 나중에 센서가 붙거나
+# 브라우저 카메라가 연결되면 그 카드가 그대로 채워진다.
+#
+# 목록과 id 는 config/device.yaml(실기)과 같게 맞춘다. 두 배포의 카드 구성이 갈리면
+# 화면에서 본 것을 실기에서 못 찾는다.
+device_id: tfv-web-01
+sample_rate_hz: 1
+thresholds: config/thresholds.yaml
+# 지표 로그는 끈다. 이 컨테이너는 재배포마다 새로 떠서 파일이 남지 않고, 옥시미터
+# 검증은 실기(device.yaml)에서 한다.
+metrics_csv: null
+interventions_csv: null
+
+adapters:
+  # 브라우저 카메라가 붙을 자리. 지금은 이 서버에 카메라가 없다.
+  - id: rppg
+    module: core.adapters.rppg
+    mode: unavailable
+  - id: bme680
+    module: core.adapters.env_bme680
+    mode: unavailable
+  - id: bh1750
+    module: core.adapters.env_bh1750
+    mode: unavailable
+  - id: pir
+    module: core.adapters.pir
+    mode: unavailable
+  - id: rr_estimator
+    module: core.adapters.thermal_mlx90640
+    mode: unavailable
+  - id: posture
+    module: core.adapters.posture_mock
+    mode: unavailable
+
+# 액추에이터도 자리만 남긴다. 개입 정책은 그대로 걸려 있어야 화면(시스템 탭)에서
+# "무엇이 언제 발화하는가"를 읽을 수 있고, 나중에 기기를 물리면 그때 mode 만 바꾼다.
+actuators:
+  - id: room_light
+    module: actuators.tuya_plug
+    mode: unavailable
+  - id: guardian_email
+    module: actuators.notify_email
+    mode: unavailable
+
+policies:
+  - module: core.policy.l1_light
+    enabled: true
+    params: { switch_id: room_light }
+  - module: core.policy.l4_guardian
+    enabled: true
+    params: { notifier_id: guardian_email }

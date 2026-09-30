@@ -109,12 +109,8 @@ def test_camera_says_so_when_there_is_none(client: TestClient) -> None:
         assert client.get("/api/camera/stream").status_code == 404
 
 
-def test_layout_survives_a_reload(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_layout_survives_a_reload(client: TestClient) -> None:
     """브라우저 저장소를 안 쓰므로 (README §10) 서버가 배치를 기억해야 한다."""
-    monkeypatch.setattr("core.layout.DEFAULT_PATH", tmp_path / "layout.json")
-
     with client:
         assert client.get("/api/layout").json() == {"hero": "hr", "order": []}
 
@@ -123,28 +119,123 @@ def test_layout_survives_a_reload(
         assert client.get("/api/layout").json() == saved
 
 
-def test_layout_falls_back_when_the_file_is_broken(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """배치 파일 하나 때문에 화면이 안 뜨면 안 된다."""
-    broken = tmp_path / "layout.json"
-    broken.write_text("{ 이건 JSON 이 아니다", encoding="utf-8")
-    monkeypatch.setattr("core.layout.DEFAULT_PATH", broken)
+def test_a_layout_belongs_to_the_account(client: TestClient, account_db: Users) -> None:
+    """한 사람이 배치를 바꿨다고 다른 사람 화면이 같이 바뀌면 안 된다.
+
+    기기별 파일 하나에 두던 것을 계정별로 옮긴 이유가 이것이다 (core/layout.py).
+    화면이 공개 주소로 열리면서 방 하나에 태블릿 하나라는 전제가 깨졌다.
+    """
+    with client:
+        client.put("/api/layout", json={"hero": "camera", "order": ["hr"]})
+
+        # 두 번째 계정을 만들고 승인한 뒤 그쪽으로 갈아탄다.
+        client.post("/api/auth/register", json={"username": "nurse", "password": "battery staple"})
+        nurse = next(a for a in client.get("/api/auth/users").json() if a["username"] == "nurse")
+        client.put(f"/api/auth/users/{nurse['id']}/approved", json={"approved": True})
+        client.post("/api/auth/login", json={"username": "nurse", "password": "battery staple"})
+
+        assert client.get("/api/layout").json() == {"hero": "hr", "order": []}
+        client.put("/api/layout", json={"hero": "lux", "order": []})
+
+        # 돌아오면 내 배치가 그대로 있어야 한다.
+        client.post("/api/auth/login", json={"username": "tester", "password": "correct horse"})
+        assert client.get("/api/layout").json() == {"hero": "camera", "order": ["hr"]}
+
+
+def test_a_broken_layout_falls_back(client: TestClient, account_db: Users) -> None:
+    """배치 한 줄 때문에 화면이 안 뜨면 곤란하다."""
+    with client:
+        client.put("/api/layout", json={"hero": "temp", "order": ["lux"]})
+
+    with account_db._connect() as conn:  # noqa: SLF001 - 깨진 값을 만들 다른 길이 없다
+        conn.execute("UPDATE layouts SET ordering = '{ 이건 JSON 이 아니다'")
 
     with client:
-        assert client.get("/api/layout").json()["hero"] == "hr"
+        assert client.get("/api/layout").json() == {"hero": "hr", "order": []}
 
 
-def test_layout_caps_how_much_it_will_store(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """클라이언트가 준 값을 그대로 디스크에 쓰는 유일한 경로다."""
-    monkeypatch.setattr("core.layout.DEFAULT_PATH", tmp_path / "layout.json")
-
+def test_layout_caps_how_much_it_will_store(client: TestClient) -> None:
+    """클라이언트가 준 값을 그대로 저장소에 쓰는 경로다."""
     with client:
         res = client.put("/api/layout", json={"hero": "hr", "order": [f"k{i}" for i in range(64)]})
         assert res.status_code == 422
         assert client.put("/api/layout", json={"hero": "x" * 200, "order": []}).status_code == 422
+
+
+# --- 카메라 backend 선택 ------------------------------------------------------ #
+# 파이에 ssh 로 붙어 device.yaml 을 고치고 서비스를 재시작하는 대신 화면에서 바꾼다.
+# 진짜 rppg 대신 가짜 어댑터를 쓰는 이유는 tests/fixture_camera.py 에 적어 뒀다.
+
+CAMERA_YAML = """
+device_id: tfv-cam-01
+adapters:
+  - id: rppg
+    module: tests.fixture_camera
+    mode: live
+    params: { backend: picamera2 }
+"""
+
+
+@pytest.fixture
+def camera_client(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, account_db: Users
+) -> TestClient:
+    config = tmp_path / "device.yaml"
+    config.write_text(CAMERA_YAML, encoding="utf-8")
+    monkeypatch.setenv("DEVICE_CONFIG", str(config))
+    monkeypatch.setattr("core.registry.CAMERA_MODULE", "tests.fixture_camera")
+    # 실기의 state/overrides.json 에 쓰지 않는다.
+    monkeypatch.setattr("core.overrides.DEFAULT_PATH", tmp_path / "overrides.json")
+    from api.main import app
+
+    return sign_in(TestClient(app), account_db)
+
+
+def test_switching_backend_reopens_only_that_adapter(camera_client: TestClient) -> None:
+    """CSI 가 안 열릴 때 화면에서 opencv 로 바꾸면 카드가 바로 살아난다."""
+    with camera_client as client:
+        before = client.get("/api/system").json()
+        assert before["camera_backend"] == "picamera2"
+        assert before["camera_adapter"] == "rppg"
+        assert before["adapters"][0]["state"] == "failed"
+
+        body = client.put("/api/system/camera-backend", json={"backend": "opencv"}).json()
+
+    assert body["camera_backend"] == "opencv"
+    assert body["adapters"][0]["state"] == "running"
+
+
+def test_the_chosen_backend_survives_a_restart(
+    camera_client: TestClient, tmp_path: Path
+) -> None:
+    """device.yaml 은 그대로 두고 state/ 에 남긴다 (core/overrides.py)."""
+    with camera_client as client:
+        client.put("/api/system/camera-backend", json={"backend": "opencv"})
+
+    config = tmp_path / "device.yaml"
+    assert "backend: picamera2" in config.read_text(encoding="utf-8")  # 파일은 안 건드린다
+
+    with camera_client as client:  # lifespan 을 다시 태운다 = 서버 재시작
+        body = client.get("/api/system").json()
+
+    assert body["camera_backend"] == "opencv"
+    assert body["adapters"][0]["state"] == "running"
+
+
+def test_unknown_backend_never_reaches_the_adapter(camera_client: TestClient) -> None:
+    """오타가 조용히 엉뚱한 카메라를 열면 안 된다."""
+    with camera_client as client:
+        res = client.put("/api/system/camera-backend", json={"backend": "picamera"})
+        assert res.status_code == 422
+        assert client.get("/api/system").json()["camera_backend"] == "picamera2"
+
+
+def test_no_camera_adapter_means_nothing_to_switch(client: TestClient) -> None:
+    """mock 구성에는 rppg 카메라가 없다. 화면은 선택칸을 감춘다."""
+    with client:
+        assert client.get("/api/system").json()["camera_backend"] is None
+        res = client.put("/api/system/camera-backend", json={"backend": "opencv"})
+        assert res.status_code == 404
 
 
 def test_cancel_rejects_unknown_intervention(client: TestClient) -> None:

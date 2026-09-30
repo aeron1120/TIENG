@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from api.schemas import InterventionEvent, Metric, Snapshot
+from api.schemas import InterventionEvent, Metric, Snapshot, State
 from core.policy.l4_guardian import L4Guardian
 from core.policy.runner import PolicyRunner
 from core.thresholds import HrBand, NightMode, Thresholds
@@ -35,7 +35,7 @@ def _thresholds(**policy: object) -> Thresholds:
     )
 
 
-def _snapshot(*, hr: float | None, occupied: float = 1.0, state: str = "ok") -> Snapshot:
+def _snapshot(*, hr: float | None, occupied: float = 1.0, state: State = "ok") -> Snapshot:
     ts = datetime.now(UTC)
     metrics = [
         Metric(key="occupancy", value=occupied, unit=None, source="pir", mode="simulated",

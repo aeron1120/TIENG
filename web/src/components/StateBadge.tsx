@@ -15,6 +15,9 @@ const MODE_TONE: Record<Mode, string> = {
 const STATE_TONE: Record<State, string> = {
   ok: '',
   low_quality: 'bg-gold/10 text-gold border-gold/40',
+  // 품질 미달과 같은 색이다. 보는 사람에게는 둘 다 "지금 값이 없다"이고, 색을 나누면
+  // 고장으로 읽힌다. 무엇이 다른지는 라벨이 말한다.
+  rejected: 'bg-gold/10 text-gold border-gold/40',
   stale: 'bg-transparent text-faint border-faint/25',
   error: 'bg-alert/10 text-alert border-alert/40',
   no_adapter: 'bg-transparent text-faint border-faint/20',

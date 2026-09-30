@@ -3,6 +3,9 @@ REM TouchFree Vitals - development launcher.
 REM
 REM   scripts\dev.bat         live mode (uses the webcam)
 REM   scripts\dev.bat mock    no webcam, synthetic sensors
+REM   scripts\dev.bat cloud   no sensors at all - same as the public deployment.
+REM                           Cards stay but read "unavailable"; the browser
+REM                           camera is the only thing that can fill one in.
 REM
 REM Opens two windows (backend + web). Close both to stop.
 REM
@@ -18,7 +21,13 @@ pushd "%~dp0.."
 set "ROOT=%CD%"
 popd
 
-if /I "%~1"=="mock" (set "CFG=config\device.mock.yaml") else (set "CFG=config\device.yaml")
+if /I "%~1"=="mock" (
+  set "CFG=config\device.mock.yaml"
+) else if /I "%~1"=="cloud" (
+  set "CFG=config\device.cloud.yaml"
+) else (
+  set "CFG=config\device.yaml"
+)
 
 if not exist "%ROOT%\.venv\Scripts\uvicorn.exe" goto :no_venv
 if not exist "%ROOT%\web\node_modules" goto :no_node
@@ -27,7 +36,14 @@ REM Child processes inherit this, so nothing has to be chained inside start.
 REM Chaining with && inside a quoted cmd /k argument is fragile.
 set "DEVICE_CONFIG=%CFG%"
 
-start "TFV backend" /d "%ROOT%" cmd /k .venv\Scripts\uvicorn.exe api.main:app --port 8000
+REM --reload watches our packages only. Plain --reload walks the whole tree,
+REM so .venv and web\node_modules get watched too and a pip/npm install would
+REM restart the server. Config files are not watched either way (uvicorn only
+REM looks at .py), so a device.yaml edit still needs a manual restart.
+REM
+REM In live mode each reload re-opens the camera, which costs a few seconds on
+REM picamera2 -- it settles auto-exposure before locking it (core/adapters/rppg.py).
+start "TFV backend" /d "%ROOT%" cmd /k .venv\Scripts\uvicorn.exe api.main:app --port 8000 --reload --reload-dir api --reload-dir core --reload-dir actuators
 start "TFV web" /d "%ROOT%\web" cmd /k npm run dev
 
 echo.
@@ -35,8 +51,9 @@ echo   config      %CFG%
 echo   dashboard   http://localhost:5173/
 echo   api docs    http://127.0.0.1:8000/docs
 echo.
-if /I not "%~1"=="mock" echo   Live mode holds the webcam. Close both windows to stop.
 if /I "%~1"=="mock" echo   Wait ~50s to watch the L1 light intervention fire.
+if /I "%~1"=="cloud" echo   No server sensors. Pick "this device" in the camera panel.
+if /I not "%~1"=="mock" if /I not "%~1"=="cloud" echo   Live mode holds the webcam. Close both windows to stop.
 echo.
 goto :eof
 

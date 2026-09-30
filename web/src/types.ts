@@ -1,7 +1,11 @@
 // api/schemas.py 의 거울. 한쪽만 고치면 계약이 깨진다 (README §0-1).
 
 export type Mode = 'live' | 'simulated' | 'unavailable'
-export type State = 'ok' | 'low_quality' | 'stale' | 'error' | 'no_adapter'
+/**
+ * rejected 는 low_quality 와 다르다. 신호는 기준을 넘었는데 값이 생리학적으로
+ * 불가능해서 버린 것이다. 묶어 두면 "품질 미달" 옆에 높은 신뢰도가 같이 뜬다.
+ */
+export type State = 'ok' | 'low_quality' | 'rejected' | 'stale' | 'error' | 'no_adapter'
 
 export interface Metric {
   key: string

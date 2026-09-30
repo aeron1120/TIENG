@@ -1,0 +1,13 @@
+{
+  "checks_passed": [
+    "145 trials / 29 conditions",
+    "per-axis int16 and composite bounds",
+    "sample-loss accounting",
+    "monotonic ESP timestamps",
+    "undefined first 150 ms preserved"
+  ],
+  "data_kind": "real_data",
+  "classification_basis": "user_confirmation_2026-09-30",
+  "reference_channel_provenance": "unresolved",
+  "reference_raw_not_available": true
+}

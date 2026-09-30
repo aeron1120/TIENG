@@ -20,7 +20,9 @@ import validate_vs_oximeter as v  # noqa: E402
 DATA = REPO_ROOT / "legacy" / "tieng_rppg" / "validation"
 
 
-def _pairs(demo: str, ref: str, *, ref_warmup: float, demo_warmup: float, tol: float):
+def _pairs(
+    demo: str, ref: str, *, ref_warmup: float, demo_warmup: float, tol: float
+) -> tuple[np.ndarray, ...]:
     est = v._drop_warmup(v.load_estimate(DATA / demo), demo_warmup)
     reference = v._drop_warmup(v.load_reference(DATA / ref, None, None), ref_warmup)
     offset, _ = v.find_lag(est, reference, max_lag=5.0, step=0.5)

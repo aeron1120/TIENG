@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -27,6 +27,9 @@ from api.auth import (
     require,
 )
 
+if TYPE_CHECKING:  # psycopg 가 없는 기기에서도 이 모듈은 떠야 한다 (api/main.py)
+    from api.auth_pg import PgUsers
+
 # 로그인한 본인. 라우터 단위로 걸면 누가 요청했는지를 핸들러가 받지 못해서,
 # 프로필처럼 "내 것"을 다루는 경로는 인자로 받는다.
 Member = Annotated[Principal, Depends(require("member"))]
@@ -37,10 +40,28 @@ router = APIRouter(prefix="/api/auth")
 class Credentials(BaseModel):
     username: str = Field(min_length=1, max_length=32)
     password: str = Field(min_length=1, max_length=128)
+    # 안 고르면 창을 닫는 순간 풀린다. 태블릿을 여러 사람이 지나가며 쓰는 자리에서
+    # 기본으로 남겨 두면 다음 사람이 앞사람 세션을 물려받는다.
+    remember: bool = False
 
 
 class Block(BaseModel):
     active: bool
+
+
+class Approval(BaseModel):
+    approved: bool
+
+
+class Registration(BaseModel):
+    """가입 결과.
+
+    승인이 필요하면 세션이 없으므로 principal 도 없다. 화면은 pending 을 보고
+    "기다리라"고 말한다 — Principal 하나로 돌려주면 그 구분을 못 한다.
+    """
+
+    pending: bool
+    principal: Principal | None = None
 
 
 class Availability(BaseModel):
@@ -48,15 +69,18 @@ class Availability(BaseModel):
     detail: str  # 왜 못 쓰는지. 쓸 수 있으면 빈 문자열
 
 
-def _store(request: Request) -> Users:
+def _store(request: Request) -> Users | PgUsers:
+    """계정 저장소. 배포에 따라 파일이거나 Postgres 다 (api/main.py)."""
     return request.app.state.users  # type: ignore[no-any-return]
 
 
-def _set_cookie(response: Response, token: str) -> None:
+def _set_cookie(response: Response, token: str, remember: bool = False) -> None:
     response.set_cookie(
         COOKIE,
         token,
-        max_age=int(SESSION_TTL.total_seconds()),
+        # max_age 를 주면 브라우저가 쿠키를 디스크에 적어 두고, 껐다 켜도 남는다.
+        # 안 주면 창이 닫히는 순간 사라진다 — "로그인 유지 안 함"이 그 뜻이다.
+        max_age=int(SESSION_TTL.total_seconds()) if remember else None,
         httponly=True,  # 스크립트가 못 읽어야 토큰이 화면 코드로 새지 않는다
         samesite="lax",
         # secure 는 켜지 않는다. 이 기기는 LAN 안에서 http 로 열리므로 (README §1)
@@ -100,36 +124,42 @@ async def available(request: Request, username: str) -> Availability:
     return Availability(available=True, detail="")
 
 
-@router.post("/register", response_model=Principal)
-async def register(request: Request, response: Response, body: Credentials) -> Principal:
-    """가입하면 그 자리에서 들어온다. 승인을 기다리지 않는다.
+@router.post("/register", response_model=Registration)
+async def register(request: Request, response: Response, body: Credentials) -> Registration:
+    """첫 가입자는 그 자리에서 들어오고, 그 뒤로는 승인을 기다린다.
 
-    가입 직후에 로그인 화면으로 한 번 더 보내지 않는 이유: 방금 정한 비밀번호를
-    바로 다시 치게 만들 뿐이고, 그 사이에 얻는 것이 없다.
+    첫 사람을 대기시키면 승인해 줄 사람이 없어 기기가 잠긴다 (api/auth.py).
+
+    승인이 필요한 경우에는 세션을 만들지 않는다. 쿠키를 내주고 화면만 가리면 서버는
+    이미 들어온 것으로 아는 셈이라, 대기 중에도 API 가 열려 있게 된다.
     """
     store = _store(request)
     try:
         account = await asyncio.to_thread(store.register, body.username, body.password)
-        token = await asyncio.to_thread(store.login, body.username, body.password)
+        if not account.approved:
+            return Registration(pending=True)
+        token = await asyncio.to_thread(store.login, body.username, body.password, body.remember)
     except AuthError as exc:
         raise HTTPException(exc.status, exc.detail) from None
 
-    _set_cookie(response, token)
-    return Principal(username=account.username, role=account.role)
+    _set_cookie(response, token, body.remember)
+    return Registration(
+        pending=False, principal=Principal(username=account.username, role=account.role)
+    )
 
 
 @router.post("/login", response_model=Principal)
 async def login(request: Request, response: Response, body: Credentials) -> Principal:
     store = _store(request)
     try:
-        token = await asyncio.to_thread(store.login, body.username, body.password)
+        token = await asyncio.to_thread(store.login, body.username, body.password, body.remember)
     except AuthError as exc:
         raise HTTPException(exc.status, exc.detail) from None
 
     who = await asyncio.to_thread(store.principal, token)
     if who is None:  # pragma: no cover - 방금 만든 세션이라 여기 오지 않는다
         raise HTTPException(500, "세션을 만들지 못했다")
-    _set_cookie(response, token)
+    _set_cookie(response, token, body.remember)
     return who
 
 
@@ -163,6 +193,17 @@ admin = APIRouter(prefix="/api/auth", dependencies=[Depends(require("admin"))])
 @admin.get("/users", response_model=list[Account])
 async def list_users(request: Request) -> list[Account]:
     return await asyncio.to_thread(_store(request).accounts)
+
+
+@admin.put("/users/{user_id}/approved", response_model=list[Account])
+async def set_approved(user_id: int, body: Approval, request: Request) -> list[Account]:
+    """가입을 승인하거나 거두고, 갱신된 목록을 돌려준다."""
+    store = _store(request)
+    try:
+        await asyncio.to_thread(store.set_approved, user_id, body.approved)
+    except AuthError as exc:
+        raise HTTPException(exc.status, exc.detail) from None
+    return await asyncio.to_thread(store.accounts)
 
 
 @admin.put("/users/{user_id}/active", response_model=list[Account])

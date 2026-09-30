@@ -54,7 +54,8 @@ HINTS = {
     ],
     "core.adapters.rppg": [
         "CSI 리본 카메라면 backend 를 picamera2 로 (opencv 로는 안 열린다)",
-        "rpicam-hello --list-cameras 에 카메라가 보이는지",
+        "rpicam-hello --list-cameras 에 카메라가 보이는지 — 리본 케이블부터 확인",
+        "venv 를 --system-site-packages 로 만들어야 picamera2 가 보인다",
         "USB 웹캠이면 backend 는 opencv, v4l2-ctl --list-devices 로 인덱스 확인",
     ],
     "core.adapters.thermal_mlx90640": [

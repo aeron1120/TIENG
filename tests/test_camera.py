@@ -5,8 +5,11 @@ rPPG 에 있던 검사를 옮겨왔다. 카메라 소유가 rppg 에서 camera �
 넘어왔기 때문이다.
 """
 
+import cv2
 import numpy as np
+import pytest
 
+from core.adapters import camera as camera_module
 from core.adapters.camera import CameraAdapter
 
 
@@ -112,3 +115,56 @@ def test_camera_reports_no_metrics() -> None:
     adapter = CameraAdapter(id="cam", mode="live")
     assert adapter.provides == []
     assert asyncio.run(adapter.read()) == []
+
+
+# --- 카메라 백엔드 ---------------------------------------------------------- #
+# 파이의 CSI 카메라는 libcamera 전용이라 cv2 로 열리지 않는다. 어느 쪽을 물릴지는
+# config 가 정한다 — 자동 감지하지 않는다. 화면에서 바꾸는 것도 이 값이다
+# (core/registry.py 의 set_camera_backend).
+
+
+def test_unknown_backend_fails_at_construction() -> None:
+    """오타가 조용히 opencv 로 떨어지면 엉뚱한 카메라가 열린다. 생성 시점에 막는다."""
+    with pytest.raises(ValueError, match="picamera2"):
+        CameraAdapter(id="cam", mode="live", backend="picamera")
+
+
+def test_picamera2_backend_surfaces_the_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """열지 못한 사유가 그대로 올라와야 한다.
+
+    Registry 가 이 문자열을 카드에 그대로 싣는다 (core/registry.py 의 _failures).
+    '카메라를 열 수 없다'로 뭉개면 배선을 고칠 단서가 사라진다.
+    """
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("libcamera 가 잡은 카메라는 0대인데 camera_index=0 를 찾는다")
+
+    monkeypatch.setattr(camera_module, "_open_picamera2", boom)
+    adapter = CameraAdapter(id="cam", mode="live", backend="picamera2")
+
+    with pytest.raises(RuntimeError, match="camera_index=0"):
+        adapter._open()
+
+
+def test_opencv_backend_does_not_touch_picamera2(monkeypatch: pytest.MonkeyPatch) -> None:
+    """웹캠을 쓰겠다고 못 박았으면 CSI 를 건드리지 않는다."""
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("backend=opencv 인데 picamera2 를 열려고 했다")
+
+    monkeypatch.setattr(camera_module, "_open_picamera2", fail)
+    monkeypatch.setattr(cv2, "VideoCapture", _ClosedCapture)
+    adapter = CameraAdapter(id="cam", mode="live", backend="opencv")
+
+    assert adapter._open() is None  # 웹캠도 없으면 None — picamera2 로 넘어가지 않는다
+
+
+class _ClosedCapture:
+    """아무 장치도 못 여는 cv2.VideoCapture."""
+
+    def __init__(self, *_args: object) -> None: ...
+
+    def isOpened(self) -> bool:  # noqa: N802 — cv2 의 이름을 따른다
+        return False
+
+    def release(self) -> None: ...

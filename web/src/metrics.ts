@@ -79,6 +79,7 @@ export const MODE_LABEL: Record<Mode, string> = {
 export const STATE_LABEL: Record<State, string> = {
   ok: '정상',
   low_quality: '품질 미달',
+  rejected: '급변 보류',
   stale: '수신 끊김',
   error: '오류',
   no_adapter: '어댑터 없음',
@@ -170,6 +171,20 @@ export function verdict(measured: number, stale: boolean): Verdict {
 /** 수신이 끊기면 서버가 뭐라 했든 프론트가 stale 로 덮는다 (README §2). */
 export function effectiveState(metric: Metric, stale: boolean): State {
   return stale ? 'stale' : metric.state
+}
+
+/**
+ * 볼 것이 없는 카드인가. 어댑터가 아예 안 붙었거나 죽은 경우다.
+ *
+ * low_quality·rejected 는 여기 넣지 않는다. 그쪽은 센서가 붙어 있는데 값만 보류한
+ * 것이라 "왜 안 나오는지"가 볼 만한 정보다. 여기는 그것도 없다.
+ *
+ * stale 도 넣지 않는다. 수신이 끊기면 모든 카드가 stale 이라, 이걸로 순서를 바꾸면
+ * 화면이 통째로 뒤집혔다가 돌아온다.
+ */
+export function isDetached(metric: Metric, stale: boolean): boolean {
+  const state = effectiveState(metric, stale)
+  return state === 'no_adapter' || state === 'error'
 }
 
 /**

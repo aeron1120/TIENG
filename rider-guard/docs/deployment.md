@@ -62,7 +62,7 @@ Rider Guard의 DB 드라이버는 `@libsql/client`입니다. Supabase 관련 코
    ```
 
 3. 제품 설정에서 **카카오맵** 사용을 켠다(콘솔에 해당 메뉴가 있으면).
-4. 앱 키 중 **JavaScript 키**는 `apps/rider/scripts/build-web.mjs`의 기본값으로 들어 있다(공개값, 등록 도메인에서만 동작). Pages 대시보드 변수는 이 프로젝트(wrangler.jsonc 사용)에서 빌드에 들어오지 않는 것으로 확인됐다. 키를 바꿀 때는 스크립트 기본값을 고치거나 빌드 환경에 다음을 준다:
+4. 앱 키 중 **JavaScript 키**는 `apps/rider/scripts/build-web.mjs`의 기본값으로 들어 있다(공개값, 등록 도메인에서만 동작). (Pages 대시보드 변수를 넣었는데도 번들에 빈 값이 남았던 원인은 빌드 캐시로 보여 `build:web`이 매번 `--clear`로 캐시를 비운다.) 키를 바꿀 때는 스크립트 기본값을 고치거나 빌드 환경에 다음을 준다:
 
    ```text
    EXPO_PUBLIC_KAKAO_MAP_KEY=<JavaScript 키>

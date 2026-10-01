@@ -1,4 +1,6 @@
 import type {
+  AdminOverviewDto,
+  SetRoleRequest,
   ActiveIncidentResponse,
   AuthProvidersResponse,
   AuthResponse,
@@ -123,5 +125,27 @@ export function useRespond(id: string) {
   return useMutation({
     mutationFn: (response: RespondRequest['response']) => api<IncidentDetailDto>('POST', `/me/incidents/${id}/respond`, { response }),
     onSuccess: (incident) => applyIncident(qc, incident),
+  });
+}
+
+// ── 역할 ───────────────────────────────────────────────────────
+
+/** 배달기사·관제사 고르기 (나중에 바꿀 수 있다). 바뀐 /me 를 바로 반영한다 */
+export function useSetRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (role: SetRoleRequest['role']) => api<MeDto>('PUT', '/me/role', { role } satisfies SetRoleRequest),
+    onSuccess: (me) => qc.setQueryData(keys.me, me),
+  });
+}
+
+/** 관리자 운영 현황 (실제 서버 데이터) */
+export function useAdminOverview(enabled: boolean) {
+  const signedIn = useSignedIn();
+  return useQuery({
+    queryKey: ['admin', 'overview'],
+    queryFn: () => api<AdminOverviewDto>('GET', '/me/admin/overview'),
+    enabled: enabled && signedIn,
+    refetchInterval: 15_000,
   });
 }

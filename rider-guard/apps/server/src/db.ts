@@ -352,6 +352,8 @@ const MIGRATIONS: string[] = [
   `,
   // v7 — heartbeat and actual measured sensor reception are independent.
   `ALTER TABLE devices ADD COLUMN lastSensorAt INTEGER;`,
+  // v8 — 첫 로그인 때 고르는 역할 (rider·dispatcher). 관리자는 저장하지 않고 ADMIN_EMAILS 로 정한다.
+  `ALTER TABLE riders ADD COLUMN role TEXT;`,
 ];
 
 export type Params = Record<string, InValue | undefined>;

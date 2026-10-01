@@ -9,11 +9,11 @@ import { useEffect, useRef, useState } from 'react';
 import { Linking, Platform, StyleSheet, View } from 'react-native';
 
 import { errorMessage } from '@/api/client';
-import { useDeleteAccount, useIncidents, useMe } from '@/api/hooks';
+import { useDeleteAccount, useIncidents, useMe, useSetRole } from '@/api/hooks';
 import { useAuth } from '@/auth/AuthProvider';
 import { BottomNav } from '@/components/BottomNav';
 import { Notice, TextButton, Toggle } from '@/components/forms';
-import { BellIcon, CheckIcon, ChevronRightIcon, LockIcon, LogOutIcon, MailIcon, PhoneIcon, WarningTriangleIcon } from '@/components/Icons';
+import { BellIcon, CheckIcon, ChevronRightIcon, LockIcon, LogOutIcon, MailIcon, PhoneIcon, UsersIcon, WarningTriangleIcon } from '@/components/Icons';
 import { useToast } from '@/components/Toast';
 import { Badge, Button, FadeIn, IconCircle, ListGroup, PressableScale, Screen, Sheet, SimBadge, Skeleton, Txt, type BadgeTone } from '@/components/ui';
 import { acceptanceSummaryText, useContactAcceptance } from '@/features/contactSim';
@@ -58,6 +58,7 @@ export default function SettingsScreen() {
   const protection = useProtection();
   const [deleting, setDeleting] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const setRole = useSetRole();
 
   const loaded = !!me;
   // 보호 중(서버 운행 세션이 있음)이거나 켜는 중이면 바로 로그아웃하지 않는다 — 헬멧을 벗겨 보호를 끈 뒤에(시트)
@@ -140,6 +141,21 @@ export default function SettingsScreen() {
 
       <Section title="계정" delay={showDevTools ? 240 : 200}>
         <ListGroup>
+          {me?.role === 'admin' || me?.role === 'rider' ? (
+            <Row
+              leading={
+                <IconCircle>
+                  <UsersIcon size={20} color={colors.text} />
+                </IconCircle>
+              }
+              title={<Txt style={styles.rowTitle}>{me.role === 'admin' ? '관리자 화면' : '관제사로 바꾸기'}</Txt>}
+              sub={me.role === 'admin' ? '관제 · 실험 데이터 · 운영 현황' : protecting ? '보호를 끈 뒤 바꿀 수 있어요' : '배달대행사 관제 화면을 써요'}
+              chevron
+              disabled={me.role === 'rider' && (protecting || setRole.isPending)}
+              onPress={() => (me.role === 'admin' ? router.push('/admin') : setRole.mutate('dispatcher', { onSuccess: () => router.replace('/control') }))}
+              accessibilityLabel={me.role === 'admin' ? '관리자 화면' : '관제사로 바꾸기'}
+            />
+          ) : null}
           <Row
             leading={
               <IconCircle>

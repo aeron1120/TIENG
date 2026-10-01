@@ -13,6 +13,7 @@ import type {
   ShareLevel,
   SocialProvider,
   UpdateContactRequest,
+  UserRole,
   Vehicle,
 } from '@rider-guard/contract';
 
@@ -69,7 +70,7 @@ export async function onboard(ctx: AppContext, riderId: string, input: Onboardin
   });
 }
 
-const IDENTITIES_SQL = 'SELECT provider FROM riderIdentities WHERE riderId = :riderId ORDER BY createdAt';
+const IDENTITIES_SQL = 'SELECT provider, email FROM riderIdentities WHERE riderId = :riderId ORDER BY createdAt';
 
 export async function accountOf(ctx: AppContext, rider: RiderRow): Promise<AccountDto> {
   return accountWith(rider, await ctx.db.all<{ provider: SocialProvider }>(IDENTITIES_SQL, { riderId: rider.id }));
@@ -292,6 +293,25 @@ export async function unpairDevice(ctx: AppContext, riderId: string) {
   await ctx.db.run('UPDATE devices SET riderId = NULL, pairedAt = NULL WHERE riderId = :riderId', { riderId });
 }
 
+// ── 역할 ──────────────────────────────────────────────────────
+
+/** 관리자: SNS 제공자가 인증한 이메일이 ADMIN_EMAILS 에 있다. 아니면 첫 로그인 때 고른 역할 */
+export function roleOf(ctx: AppContext, rider: Pick<RiderRow, 'role'>, identities: { email: string | null }[]): UserRole | null {
+  if (identities.some((i) => i.email && ctx.config.adminEmails.has(i.email.toLowerCase()))) return 'admin';
+  return rider.role ?? null;
+}
+
+export async function isAdmin(ctx: AppContext, riderId: string): Promise<boolean> {
+  if (!ctx.config.adminEmails.size) return false;
+  const rows = await ctx.db.all<{ email: string | null }>('SELECT email FROM riderIdentities WHERE riderId = :riderId', { riderId });
+  return roleOf(ctx, {}, rows) === 'admin';
+}
+
+/** 역할은 본인이 고르고 바꿀 수 있다 — 관제사 역할로 다른 라이더의 실제 데이터가 열리지 않으므로 권한 상승이 아니다 */
+export async function setRole(ctx: AppContext, riderId: string, role: 'rider' | 'dispatcher') {
+  await ctx.db.run('UPDATE riders SET role = :role WHERE id = :riderId', { riderId, role });
+}
+
 // ── 홈/설정 화면용 집계 ────────────────────────────────────────
 
 /** 앱이 가장 자주 부르는 조회라(홈은 15초마다) 쿼리를 한 번에 보낸다 — 원격 DB 왕복 한 번 */
@@ -305,7 +325,7 @@ export async function buildMe(ctx: AppContext, riderId: string): Promise<MeDto> 
     { sql: CONSENTS_SQL, params: { riderId } },
     { sql: 'SELECT * FROM contacts WHERE riderId = :riderId ORDER BY priority', params: { riderId } },
     { sql: TODAY_SESSIONS_SQL, params: { riderId, dayStart: seoulDayStart(now) } },
-  ])) as [RiderRow[], SessionRow[], DeviceRow[], { provider: SocialProvider }[], { key: ConsentKey; granted: number }[], ContactRow[], TodaySessionRow[]];
+  ])) as [RiderRow[], SessionRow[], DeviceRow[], { provider: SocialProvider; email: string | null }[], { key: ConsentKey; granted: number }[], ContactRow[], TodaySessionRow[]];
   const rider = riders[0];
   if (!rider) throw notFound('라이더');
   const session = sessions[0];
@@ -313,6 +333,7 @@ export async function buildMe(ctx: AppContext, riderId: string): Promise<MeDto> 
   const consents = consentsFrom(consentRows);
   const last = await latestLocation(ctx, riderId, 0);
   return {
+    role: roleOf(ctx, rider, identities),
     rider: toRiderDto(rider),
     account: accountWith(rider, identities),
     onboarded: onboardedWith(rider, consents),

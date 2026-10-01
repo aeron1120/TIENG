@@ -1,12 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useFonts } from 'expo-font';
-import { Redirect, Stack, usePathname } from 'expo-router';
+import { Redirect, Stack, usePathname, type Href } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { Platform, useWindowDimensions, View } from 'react-native';
 
 import { ApiError } from '@/api/client';
+import { useMe } from '@/api/hooks';
+import { homeFor } from '@/auth/AfterSignIn';
 import { AuthProvider, useAuth } from '@/auth/AuthProvider';
 import { ToastProvider } from '@/components/Toast';
 import { SessionServices } from '@/features/SessionServices';
@@ -41,12 +43,14 @@ function AppShell({ fontsReady }: { fontsReady: boolean }) {
   const pathname = usePathname();
   // 통합 시연(/demo…)은 로그인 없이, 넓은 화면 그대로 — 로그인 복원을 기다리지 않는다
   const demo = pathname === '/demo' || pathname.startsWith('/demo/');
+  // 관제·관리자 화면도 넓은 데스크톱 화면 그대로 (폰 폭 프레임 없음)
+  const wide = demo || pathname === '/control' || pathname === '/admin';
   const ready = fontsReady && (demo || status !== 'loading');
   // 상태바 글자색 — 어두운 화면(사고 확인·잠금화면 미리보기)만 밝게, 나머지는 밝은 바탕이라 어둡게
   const lightStatusBar = pathname === '/alert' || pathname === '/lockscreen';
   // 넓은 웹 화면에서는 가운데 폰 폭(430) 프레임으로 보여 준다. 390 폭 캡처에서는 켜지지 않는다.
   const { width } = useWindowDimensions();
-  const framed = Platform.OS === 'web' && width > 520 && !demo;
+  const framed = Platform.OS === 'web' && width > 520 && !wide;
 
   useEffect(() => {
     if (ready) SplashScreen.hideAsync();
@@ -61,7 +65,7 @@ function AppShell({ fontsReady }: { fontsReady: boolean }) {
         style={{
           flex: 1,
           width: '100%',
-          maxWidth: Platform.OS === 'web' && !demo ? 430 : undefined,
+          maxWidth: Platform.OS === 'web' && !wide ? 430 : undefined,
           alignSelf: 'center',
           backgroundColor: colors.bg,
           overflow: 'hidden',
@@ -99,6 +103,9 @@ function AppShell({ fontsReady }: { fontsReady: boolean }) {
             />
             <Stack.Screen name="status" options={{ animation: 'fade', gestureEnabled: false }} />
             {/* 통합 시연 — 로그인 없음, 넓은 화면 */}
+            <Stack.Screen name="role" options={{ animation: 'none' }} />
+            <Stack.Screen name="control" options={{ animation: 'none' }} />
+            <Stack.Screen name="admin" options={{ animation: 'none' }} />
             <Stack.Screen name="demo/index" options={{ animation: 'none' }} />
             <Stack.Screen name="demo/control" options={{ animation: 'none' }} />
             <Stack.Screen name="demo/rider" options={{ animation: 'none' }} />
@@ -119,9 +126,34 @@ function AppShell({ fontsReady }: { fontsReady: boolean }) {
               options={{ presentation: 'fullScreenModal', animation: 'fade', contentStyle: { backgroundColor: colors.lockBottom } }}
             />
           </Stack>
-          {status === 'signedIn' && <SessionServices />}
+          {status === 'signedIn' && !demo ? <RoleGate pathname={pathname} /> : null}
         </ToastProvider>
       </View>
     </View>
+  );
+}
+
+/** 로그인 뒤 어디서 시작하든 역할 밖 화면은 그 역할의 첫 화면으로. 공개 화면(/, 가입, 긴급 미리보기, 시연)은 건드리지 않는다 */
+const OPEN_PATHS = ['/', '/signup', '/auth/callback', '/emergency', '/role'];
+
+function RoleGate({ pathname }: { pathname: string }) {
+  const { data: me } = useMe();
+  if (!me) return null;
+  const role = me.role;
+  const admin = role === 'admin';
+  let to: string | null = null;
+  if (!OPEN_PATHS.includes(pathname)) {
+    if (!role) to = '/role';
+    else if (pathname === '/admin' && !admin) to = homeFor(me);
+    else if (pathname === '/control' && role === 'rider') to = homeFor(me);
+    // 관제사는 배달기사 화면(보호·기록·설정·사고 확인…)을 쓰지 않는다
+    else if (role === 'dispatcher' && pathname !== '/control') to = '/control';
+  }
+  return (
+    <>
+      {to ? <Redirect href={to as Href} /> : null}
+      {/* 보호 세션·위치·휴대폰 센서·사고 확인 — 배달기사(와 관리자)만 */}
+      {role === 'rider' || admin ? <SessionServices /> : null}
+    </>
   );
 }

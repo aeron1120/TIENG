@@ -183,7 +183,20 @@ export type LocationPoint = {
 export type UploadLocationsRequest = { points: LocationPoint[] };
 export type UploadLocationsResponse = { accepted: number; rejected: number };
 
+/** rider 배달기사 · dispatcher 대행사 관제사 · admin 관리자(모든 화면). null = 첫 로그인, 아직 고르지 않음 */
+export type UserRole = 'rider' | 'dispatcher' | 'admin';
+export type SetRoleRequest = { role: Exclude<UserRole, 'admin'> };
+/** 관리자 운영 현황 — 실제 서버 데이터, 읽기 전용 */
+export type AdminOverviewDto = {
+  riders: { total: number; onSession: number; dispatchers: number };
+  incidents: { id: string; status: IncidentStatus; source: IncidentSource; riderName: string | null; detectedAt: ISODate; resolution: Resolution | null; dataSource: string | null }[];
+  judgments: OpsJudgmentDto[];
+  ruleCheck: { ruleVersion: string; matched: number; total: number };
+};
+
 export type MeDto = {
+  /** 관리자는 ADMIN_EMAILS 에 있는 인증된 SNS 이메일로 정해진다 */
+  role: UserRole | null;
   rider: RiderDto;
   account: AccountDto;
   /** 가입 정보(이름·휴대폰·필수 동의)를 마쳤는가. false 면 운행을 시작할 수 없다. */

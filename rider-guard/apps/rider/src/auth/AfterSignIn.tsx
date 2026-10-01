@@ -1,3 +1,4 @@
+import type { MeDto } from '@rider-guard/contract';
 import { Redirect } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
@@ -9,14 +10,23 @@ import { Button, FadeIn, Txt } from '@/components/ui';
 import { colors, font, motion } from '@/theme';
 
 /**
- * 로그인된 뒤 첫 화면을 고른다 — 가입 정보(이름·휴대폰·동의)를 마쳤으면 홈, 아니면 시작·동의(v3·1).
+ * 로그인된 뒤 첫 화면을 고른다 — 역할을 아직 안 골랐으면 역할 고르기, 관리자는 관리자 화면, 관제사는 관제 화면,
+ * 배달기사는 가입 정보(이름·휴대폰·동의)를 마쳤으면 홈, 아니면 시작·동의(v3·1).
  * 로그인 화면(/)이 이걸 그리므로, 어디서 로그인하든 '/' 로 돌아오기만 하면 된다.
  */
 export function AfterSignIn() {
   const { data: me, error, refetch } = useMe();
-  if (me) return <Redirect href={me.onboarded ? '/home' : '/onboarding'} />;
+  if (me) return <Redirect href={homeFor(me)} />;
   if (error) return <View style={styles.root}><Notice error={error} onRetry={() => void refetch()} /><Button label="다시 시도" onPress={() => void refetch()} /></View>;
   return <Loading />;
+}
+
+/** 역할별 첫 화면 */
+export function homeFor(me: Pick<MeDto, 'role' | 'onboarded'>): '/role' | '/admin' | '/control' | '/home' | '/onboarding' {
+  if (!me.role) return '/role';
+  if (me.role === 'admin') return '/admin';
+  if (me.role === 'dispatcher') return '/control';
+  return me.onboarded ? '/home' : '/onboarding';
 }
 
 /** 스피너를 늦게 켜는 시간 — 금방 끝나는 로딩에서 스피너가 깜빡이지 않게 */

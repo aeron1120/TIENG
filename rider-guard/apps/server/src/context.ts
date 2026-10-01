@@ -19,6 +19,8 @@ export type RiderRow = {
   vehicleJson: string | null;
   medicalJson: string | null;
   createdAt: number;
+  /** 첫 로그인 때 고른 역할. 아직 안 골랐으면 null */
+  role?: 'rider' | 'dispatcher' | null;
 };
 
 export type ContactRow = {

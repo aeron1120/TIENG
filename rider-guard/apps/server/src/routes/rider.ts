@@ -5,6 +5,7 @@ import type {
   OAuthStartResponse,
   ContactDto,
   CreateIncidentResponse,
+  AdminOverviewDto,
   DeviceDto,
   IncidentDetailDto,
   IncidentListResponse,
@@ -25,6 +26,7 @@ import { z } from 'zod';
 import type { AppContext, OrderRow } from '../context.ts';
 import { ApiError, escapeHtml, iso, mobileSchema, newId, readBody } from '../lib.ts';
 import { deleteAccount } from '../services/account.ts';
+import { adminOverview } from '../services/admin.ts';
 import { loginWithEmail, revokeToken, riderIdForToken, signupWithEmail } from '../services/auth.ts';
 import { completeOAuth, enabledProviders, exchangeLoginCode, startOAuth } from '../services/oauth.ts';
 import {
@@ -51,7 +53,9 @@ import {
   toContactDto,
   toDeviceDto,
   toRiderDto,
+  isAdmin,
   phoneSensorBeat,
+  setRole,
   unpairDevice,
   updateContact,
   updateRider,
@@ -101,6 +105,7 @@ const schemas = {
     shareLevel: shareLevel.optional(),
     priority: z.number().int().min(1).optional(),
   }),
+  role: z.object({ role: z.enum(['rider', 'dispatcher']) }),
   phoneSensor: z.object({ samples: z.number().int().min(0).max(100_000), sampleRateHz: z.number().positive().max(1000).nullable().optional() }),
   pair: z.object({
     pairingCode: z
@@ -207,6 +212,20 @@ export function meRoutes(ctx: AppContext) {
 
   // 프로필 · 동의
   app.get('/', async (c) => c.json<MeDto>(await buildMe(ctx, c.var.riderId)));
+
+  // 첫 로그인 때 배달기사·관제사 중 고른다 (나중에 바꿀 수 있다). 관리자는 ADMIN_EMAILS 로 정해져 여기서 고를 수 없다
+  app.put('/role', async (c) => {
+    const { role } = await readBody(c, schemas.role);
+    await setRole(ctx, c.var.riderId, role);
+    return c.json<MeDto>(await buildMe(ctx, c.var.riderId));
+  });
+
+  // 관리자 운영 현황 — 실제 사고·판정 기록 (읽기 전용)
+  app.get('/admin/overview', async (c) => {
+    if (!(await isAdmin(ctx, c.var.riderId))) throw new ApiError(403, 'admin_only', '관리자만 볼 수 있어요.');
+    c.header('Cache-Control', 'no-store');
+    return c.json<AdminOverviewDto>(await adminOverview(ctx));
+  });
 
   /** 가입 정보(이름·휴대폰·동의). 가입 직후 한 번, 이후 수정할 때도 쓴다. */
   app.post('/onboarding', async (c) => {

@@ -35,6 +35,11 @@ export type Config = {
   /** 데모 라이더로 앱에 로그인할 비밀번호 (DEMO_MODE 에서만). 없으면 로그인할 수 없는 계정으로 시드한다 */
   demoRiderPassword: string | undefined;
   /**
+   * 관리자 이메일 (ADMIN_EMAILS, 쉼표로 여러 개). SNS 제공자가 인증한 이메일(riderIdentities.email)이 맞을 때만 관리자다 —
+   * 이메일 가입은 메일 인증이 없어 남이 같은 주소로 먼저 가입할 수 있다.
+   */
+  adminEmails: Set<string>;
+  /**
    * 지표 판정으로 사고를 여는가. 꺼져 있으면 판정만 기록한다 — 로드맵 Phase 1(데이터 수집, 경보 없음).
    * 개발 서버는 켜고, 운영은 DETECTION_ENABLED=true 로 명시해야 켜진다.
    */
@@ -76,6 +81,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ingestToken: env.INGEST_TOKEN || (mode === 'production' ? undefined : DEV_INGEST_TOKEN),
     demoMode: env.DEMO_MODE === 'true',
     demoRiderPassword: env.DEMO_RIDER_PASSWORD || undefined,
+    adminEmails: new Set((env.ADMIN_EMAILS ?? '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean)),
     detectionEnabled: env.DETECTION_ENABLED ? env.DETECTION_ENABLED === 'true' : mode !== 'production',
     thresholds: {
       impactGMin: num(env.IMPACT_G_MIN, DEFAULT_THRESHOLDS.impactGMin),

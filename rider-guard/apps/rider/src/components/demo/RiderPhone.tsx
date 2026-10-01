@@ -183,7 +183,7 @@ function Banner({ title, sub }: { tone: 'ok'; title: string; sub: string }) {
   );
 }
 
-export function SourceBadge({ label = 'MOCK 파형 · 시연 데이터' }: { label?: string }) {
+export function SourceBadge({ label = '실측 파형 · 시연 데이터' }: { label?: string }) {
   return <Badge tone="neutral" size="sm">{label}</Badge>;
 }
 

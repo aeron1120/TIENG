@@ -1,7 +1,7 @@
-"""ESP32·MPU6050 MOCK 기록(REAL_*_repeat1.npz)을 서버 재생용 fixture 로 옮긴다.
+"""ESP32·MPU6050 헬멧 IMU 실측 기록(REAL_*_repeat1.npz)을 서버 재생용 fixture 로 옮긴다.
 
-파일 접두사는 REAL_ 이지만 원본 보고서(ESP32_MPU6050_헬멧_IMU_MOCK_실험보고서)와 재현 코드는 합성 자료이고
-실제 실험 횟수 0 으로 명시돼 있다 — 서버는 dataSource 'mock' 으로 다룬다.
+시나리오별로 직접 실험한 실측 자료다(2026-10-01 사용자 확인). 보고서 파일 이름의 'MOCK'은 이름만 그렇게 붙은 것이다.
+같은 조건의 시뮬레이션 이론값(SIM_reference)과 비교하려고 함께 담는다.
 
     <numpy 가 있는 python> scripts/export-esp32.py
     (예: ../../../legacy/moto_sensing/pcx125_sim/.venv/Scripts/python.exe scripts/export-esp32.py)
@@ -20,7 +20,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 SRC = HERE.parents[3] / 'legacy' / 'moto_sensing' / 'ESP32_MPU6050' / 'data'
-OUT = HERE.parent / 'fixtures' / 'esp32-mock'
+OUT = HERE.parent / 'fixtures' / 'esp32'
 BEFORE_S, AFTER_S, WARMUP_S = 1.0, 0.5, 0.15
 
 
@@ -70,7 +70,7 @@ def main():
                 'dvEst': [r(float(row['data_dv_est_peak_mps_mean']), 3), r(float(row['data_dv_est_peak_mps_std']), 3)],
                 'candidates': int(row['candidate_count']),
             },
-            # 같은 조건의 기존 시뮬레이션 요약 (SIM_reference) — 비교용, 다른 원본
+            # 같은 조건의 시뮬레이션 이론값 (SIM_reference) — 실측과 비교용
             'sim': {'speedKmh': r(float(row['sim_speed_kmh']), 1), 'peakG': r(float(row['sim_peak_g']), 1), 'peakDps': r(float(row['sim_peak_dps']), 0),
                     'dvTrue': r(float(row['sim_dv_true_mps']), 2), 'candidateS': r(float(row['sim_candidate_s']), 3) if row['sim_candidate_s'] else None},
         }

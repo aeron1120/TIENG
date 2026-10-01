@@ -21,8 +21,21 @@ const KEY: Record<string, string> = { peak_g: '가속도', peak_gyro: '각속도
 const pm = (v: [number, number], d: number) => `${v[0].toFixed(d)} ± ${v[1].toFixed(d)}`;
 const ruleText = (r: DemoRuleDto) => `가속도 ≥ ${r.g}g 이면서 (각속도 ≥ ${r.gyro}°/s 또는 ΔV ≥ ${r.dv} m/s 또는 |뱅크각| ≥ ${r.bank}°) · 판정창 ${r.windowS}초`;
 
-const COLS = [1.9, 0.7, 1.2, 1.1, 1, 0.7, 1, 1.3, 1.3, 0.6, 0.8];
-const HEAD = ['조건', '분류', '가속도 피크 g\n5회 평균±SD', '각속도 °/s\n5회', 'ΔV 추정 m/s\n5회', '후보\n5회', '기록 첫 후보\n1회차', '운영 규칙\n1회차 판정', '발표자료 기준\n1회차 판정', '누락', 'ΔV 유효'];
+const COLS = [1.9, 0.7, 1.15, 1, 0.95, 1.15, 0.6, 0.95, 1.2, 1.25, 0.5, 0.7];
+const HEAD = [
+  '조건',
+  '분류',
+  '실측 가속도 g\n5회 평균±SD',
+  '실측 각속도 °/s\n5회',
+  '실측 ΔV m/s\n5회',
+  '이론값\ng · °/s · ΔV',
+  '후보\n5회',
+  '기록 첫 후보\n1회차',
+  '운영 규칙\n1회차 판정',
+  '발표자료 기준\n1회차 판정',
+  '누락',
+  'ΔV 유효',
+];
 
 export default function DemoResultsScreen() {
   const results = useDemoResults();
@@ -41,9 +54,9 @@ export default function DemoResultsScreen() {
         <>
           <View style={styles.source}>
             <Badge tone="neutral">{`출처: ${r.source.label}`}</Badge>
-            <Txt style={styles.sourceText}>{r.source.note}. 파일 이름의 “REAL_”과 달리 실측이 아니에요. 화면의 모든 수치는 이 MOCK 자료에서만 나왔어요.</Txt>
+            <Txt style={styles.sourceText}>{r.source.note}. 시나리오대로 직접 실험한 기록이에요(보고서 파일 이름의 “MOCK”은 이름만 그래요). 판정·편차 수치는 모두 이 실측 자료에서 나왔어요.</Txt>
             <Txt style={styles.sourceText}>
-              “SIM 요약” 값은 기존 PCX125 시뮬레이션 보고서의 조건별 요약(다른 원본)이에요. 시뮬레이션 원본 시계열(pcx125_sim.zip)은 저장소에 없어 파형을 싣지 않았어요. 발표자료의 다른 집계(311회·337회)는 원본과 규칙 버전을 확인하지 못해 싣지 않았어요.
+              “이론값”은 같은 시나리오를 PCX125 시뮬레이션으로 계산한 조건별 요약이에요. 실측과 나란히 비교해요. 시뮬레이션 원본 시계열(pcx125_sim.zip)은 저장소에 없어 파형은 싣지 않았어요. 발표자료의 다른 집계(311회·337회)는 원본과 규칙 버전을 확인하지 못해 싣지 않았어요.
             </Txt>
           </View>
 
@@ -71,7 +84,7 @@ export default function DemoResultsScreen() {
             {r.items.map((i) => (
               <Row key={i.id} i={i} selected={selected === i.id} onPress={() => setSelected(i.id)} />
             ))}
-            <Txt style={styles.foot}>* 판정창 안에 순번 누락이 있어 “판정 정보 부족”으로 남은 후보 없음. 5회 요약은 원본 자료 값(표본 SD), 1회차 판정은 서버가 1회차 원본 파형을 다시 판정한 값이에요. 1회차 29건 대조는 검출률·오경보율이 아니에요.</Txt>
+            <Txt style={styles.foot}>* 판정창 안에 순번 누락이 있어 “판정 정보 부족”으로 남은 후보 없음. 실측 5회 요약은 원본 자료 값(표본 SD), 이론값은 같은 시나리오의 시뮬레이션 피크 가속도·각속도·실제 ΔV(실측은 ±16g 축 범위·장착 위치의 영향을 받아 값이 다를 수 있음), 1회차 판정은 서버가 1회차 원본 파형을 다시 판정한 값이에요. 1회차 29건 대조는 검출률·오경보율이 아니에요.</Txt>
           </View>
 
           <Detail id={selected} summary={r.items.find((i) => i.id === selected)!} />
@@ -120,12 +133,13 @@ function Row({ i, selected, onPress }: { i: DemoCaseSummaryDto; selected: boolea
       <Txt style={[styles.td, styles.mono, { flex: COLS[2] }]}>{pm(i.repeats.peakG, 2)}</Txt>
       <Txt style={[styles.td, styles.mono, { flex: COLS[3] }]}>{pm(i.repeats.peakDps, 0)}</Txt>
       <Txt style={[styles.td, styles.mono, { flex: COLS[4] }]}>{pm(i.repeats.dvEst, 2)}</Txt>
-      <Txt style={[styles.td, styles.mono, { flex: COLS[5] }]}>{`${i.repeats.candidates}/${i.repeats.n}`}</Txt>
-      <Txt style={[styles.td, styles.mono, { flex: COLS[6] }]}>{i.latchAt === null ? '—' : `${i.latchAt.toFixed(3)}초`}</Txt>
-      <Txt style={[styles.td, { flex: COLS[7] }, i.v1.decision === 'candidate' && styles.hit]}>{`${DECISION[i.v1.decision]}${i.v1.match ? ' ✓' : ' ✗'}`}</Txt>
-      <Txt style={[styles.td, { flex: COLS[8] }]}>{`${DECISION[i.ppt.decision]}${pptDelta !== null ? ` (${pptDelta >= 0 ? '+' : ''}${pptDelta.toFixed(0)}ms)` : ''}`}</Txt>
-      <Txt style={[styles.td, styles.mono, { flex: COLS[9] }]}>{String(i.quality.missingPackets)}</Txt>
-      <Txt style={[styles.td, styles.mono, { flex: COLS[10] }]}>{i.quality.dvValidRatio === null ? '—' : `${Math.round(i.quality.dvValidRatio * 100)}%`}</Txt>
+      <Txt style={[styles.td, styles.mono, styles.theory, { flex: COLS[5] }]}>{`${i.sim.peakG ?? '—'} · ${i.sim.peakDps ?? '—'} · ${i.sim.dvTrue ?? '—'}`}</Txt>
+      <Txt style={[styles.td, styles.mono, { flex: COLS[6] }]}>{`${i.repeats.candidates}/${i.repeats.n}`}</Txt>
+      <Txt style={[styles.td, styles.mono, { flex: COLS[7] }]}>{i.latchAt === null ? '—' : `${i.latchAt.toFixed(3)}초`}</Txt>
+      <Txt style={[styles.td, { flex: COLS[8] }, i.v1.decision === 'candidate' && styles.hit]}>{`${DECISION[i.v1.decision]}${i.v1.match ? ' ✓' : ' ✗'}`}</Txt>
+      <Txt style={[styles.td, { flex: COLS[9] }]}>{`${DECISION[i.ppt.decision]}${pptDelta !== null ? ` (${pptDelta >= 0 ? '+' : ''}${pptDelta.toFixed(0)}ms)` : ''}`}</Txt>
+      <Txt style={[styles.td, styles.mono, { flex: COLS[10] }]}>{String(i.quality.missingPackets)}</Txt>
+      <Txt style={[styles.td, styles.mono, { flex: COLS[11] }]}>{i.quality.dvValidRatio === null ? '—' : `${Math.round(i.quality.dvValidRatio * 100)}%`}</Txt>
     </Pressable>
   );
 }
@@ -143,7 +157,7 @@ function Detail({ id, summary }: { id: string; summary: DemoCaseSummaryDto }) {
             {`운영 규칙 통과 지표: ${summary.v1.passed.map((k) => KEY[k]).join(' + ') || '없음'} · 발표자료 기준 통과 지표: ${summary.ppt.passed.map((k) => KEY[k]).join(' + ') || '없음'} · 축 포화 ${summary.quality.saturated}건`}
           </Txt>
           <Txt style={styles.caption}>
-            {`SIM 요약(다른 원본): 속도 ${summary.sim.speedKmh ?? '—'} km/h · 피크 ${summary.sim.peakG ?? '—'} g · ${summary.sim.peakDps ?? '—'} °/s · 실제 ΔV ${summary.sim.dvTrue ?? '—'} m/s · 후보 ${summary.sim.candidateS === null ? '없음' : `${summary.sim.candidateS}초`}`}
+            {`이론값(시뮬레이션): 속도 ${summary.sim.speedKmh ?? '—'} km/h · 피크 ${summary.sim.peakG ?? '—'} g · ${summary.sim.peakDps ?? '—'} °/s · 실제 ΔV ${summary.sim.dvTrue ?? '—'} m/s · 후보 ${summary.sim.candidateS === null ? '없음' : `${summary.sim.candidateS}초`}`}
           </Txt>
           <View style={styles.charts}>
             {(['peak_g', 'peak_gyro', 'delta_v150', 'bank_deg'] as const).map((k) => (
@@ -189,6 +203,7 @@ const styles = StyleSheet.create({
   td: { ...font.sans(500), fontSize: 12.5, lineHeight: 17, color: colors.text },
   mono: { ...font.mono(600), fontSize: 12 },
   hit: { ...font.sans(700), color: colors.redInk },
+  theory: { color: colors.textMuted },
   foot: { ...typography.meta, marginTop: 8 },
   detail: { backgroundColor: colors.surface, borderRadius: radius.card, padding: 16, gap: 6 },
   charts: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },

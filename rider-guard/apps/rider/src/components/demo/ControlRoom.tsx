@@ -201,7 +201,7 @@ function IncidentPanel({ s, analysis }: { s: DemoState; analysis: SensorAnalysis
             {passed.map((e) => (
               <Txt key={e.key} style={styles.meta}>{`${METRIC_LABEL[e.key]} ${e.value?.toFixed(e.unit === 'g' || e.unit === 'm/s' ? 2 : 0)}${UNIT[e.unit] ?? e.unit} ≥ ${e.threshold}${UNIT[e.unit] ?? e.unit} · ${e.passedAt?.toFixed(3)}초`}</Txt>
             ))}
-            <Txt style={styles.meta}>{`규칙 ${analysis.ruleVersion} · 판정창 ${analysis.windowS}초 · 파형 ${i.caseId} (MOCK)`}</Txt>
+            <Txt style={styles.meta}>{`규칙 ${analysis.ruleVersion} · 판정창 ${analysis.windowS}초 · 파형 ${i.caseId} (실측)`}</Txt>
           </>
         ) : (
           <Txt style={styles.meta}>판정 근거를 불러오는 중</Txt>

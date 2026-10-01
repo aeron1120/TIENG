@@ -29,7 +29,7 @@ export default function DemoScreen() {
           <Txt style={styles.title}>Rider Guard 통합 시연</Txt>
           <Txt style={styles.sub}>헬멧 센서 파형 → 서버 판정 → 라이더 확인 → 배달대행사 관제 → 주문 처리 → 사건 보고서</Txt>
         </View>
-        <Badge tone="neutral">{data.ready ? data.event.source.label : 'ESP32·MPU6050 MOCK'}</Badge>
+        <Badge tone="neutral">{data.ready ? data.event.source.label : 'ESP32·MPU6050 실측'}</Badge>
         <Badge tone="neutral">라이더·주문·위치: 시연 데이터</Badge>
       </View>
 

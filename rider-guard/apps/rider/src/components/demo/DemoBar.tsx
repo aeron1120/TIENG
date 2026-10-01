@@ -12,7 +12,7 @@ const open = (path: string) => {
 };
 
 export function DemoBar({ s, clip, loading, error, links = true }: { s: DemoState; clip: EventClip | null; loading: boolean; error: unknown; links?: boolean }) {
-  const phase = !clip ? null : s.t < LEAD_IN_S ? '정상 주행 (D7 MOCK 반복)' : inClip(s.t, clip) ? `사건 구간 · ${SCENARIOS[s.scenario].short} MOCK 원본${s.slowmo ? ' · 느린 재생' : ''}` : '사건 이후';
+  const phase = !clip ? null : s.t < LEAD_IN_S ? '정상 주행 (D7 실측 반복)' : inClip(s.t, clip) ? `사건 구간 · ${SCENARIOS[s.scenario].short} 실측 원본${s.slowmo ? ' · 느린 재생' : ''}` : '사건 이후';
   return (
     <View style={styles.bar}>
       <View style={styles.row}>
@@ -49,7 +49,7 @@ export function DemoBar({ s, clip, loading, error, links = true }: { s: DemoStat
       </View>
       {!clip ? (
         <Txt style={[styles.note, !!error && styles.err]}>
-          {error ? '시연 데이터를 받지 못했어요 — 잠시 뒤 새로고침해 주세요' : '서버에서 MOCK 파형과 판정을 받는 중이에요 (서버가 잠들어 있으면 최대 1분)'}
+          {error ? '시연 데이터를 받지 못했어요 — 잠시 뒤 새로고침해 주세요' : '서버에서 실측 파형과 판정을 받는 중이에요 (서버가 잠들어 있으면 최대 1분)'}
         </Txt>
       ) : null}
       {links ? (

@@ -581,7 +581,7 @@ export type DemoCaseSummaryDto = {
   latchAt: number | null;
   /** 같은 조건 5회 요약 [평균, 표본 SD] */
   repeats: { n: number; peakG: [number, number]; peakDps: [number, number]; dvEst: [number, number]; candidates: number };
-  /** 같은 조건의 기존 시뮬레이션 요약 — 다른 원본, 비교용 */
+  /** 같은 조건의 시뮬레이션 이론값 — 실측과 비교용 */
   sim: { speedKmh: number | null; peakG: number | null; peakDps: number | null; dvTrue: number | null; candidateS: number | null };
   v1: { decision: SensorAnalysis['decision']; candidateAt: number | null; passed: SensorMetricEvidence['key'][]; match: boolean };
   ppt: { decision: SensorAnalysis['decision']; candidateAt: number | null; passed: SensorMetricEvidence['key'][] };
@@ -598,7 +598,7 @@ export type DemoResultsDto = {
 };
 export type DemoCaseDto = { source: DemoSourceDto; summary: DemoCaseSummaryDto; analysis: SensorAnalysis };
 
-/** 운영 모니터: 지금 서버 규칙을 ESP32·MPU6050 MOCK 기록(29조건 1회차)에 다시 돌린 결과 */
+/** 운영 모니터: 지금 서버 규칙을 ESP32·MPU6050 실측 기록(29조건 1회차)에 다시 돌린 결과 */
 export type OpsRuleCheckDto = {
   ruleVersion: string;
   dataSource: DataSource;

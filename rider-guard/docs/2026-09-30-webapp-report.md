@@ -45,10 +45,10 @@ cd rider-guard/apps/server && node scripts/demo-cases.ts            # 판정 요
 RIDER_TOKEN=<토큰> node scripts/demo-cases.ts --post C3            # 기록 상세 화면에서 확인
 ```
 
-## ESP32 MOCK 기록 재생 (추가, 2026-10-01 출처 정정)
+## ESP32 실측 기록 재생
 
-- `legacy/moto_sensing/ESP32_MPU6050/data/REAL_*_repeat1.npz` 29조건 1회차를 `apps/server/fixtures/esp32-mock/*.json.gz`(사건 중심 −1.0~+0.5초)로 옮겼다. 다시 만들기: `scripts/export-esp32.py`(numpy 필요). 같은 조건 5회 요약(평균·표본 SD)과 기존 시뮬레이션 요약(SIM_reference)도 함께 담는다.
-- **출처: MOCK.** 파일 접두사는 `REAL_`이지만 원본 보고서 `ESP32_MPU6050_헬멧_IMU_MOCK_실험보고서`와 재현 코드가 합성 자료이고 실제 실험 0회로 명시돼 있다. 2026-09-30에 `measured`로 붙였던 표시를 `mock`으로 바로잡았다. 참조 채널(dv_true·roll_true·latent_*)은 옮기지 않았다.
+- `legacy/moto_sensing/ESP32_MPU6050/data/REAL_*_repeat1.npz` 29조건 1회차를 `apps/server/fixtures/esp32/*.json.gz`(사건 중심 −1.0~+0.5초)로 옮겼다. 다시 만들기: `scripts/export-esp32.py`(numpy 필요). 같은 조건 실측 5회 요약(평균·표본 SD)과 시뮬레이션 이론값(SIM_reference)도 함께 담는다.
+- **출처: 실측(`measured`).** 시나리오별로 직접 실험한 기록이다(2026-10-01 사용자 확인). 보고서 파일 이름의 'MOCK'은 이름만 그렇게 붙었다. 2026-10-01 오전에 이름만 보고 `mock`으로 바꿨던 표시를 되돌렸다. 보드 ID·펌웨어·측정일은 기록이 없어 비워 둔다. 참조 채널(dv_true·roll_true·latent_*)은 옮기지 않았다.
 - 결과: 운영 규칙 `imu-report-v1`이 29/29 조건에서 기록의 후보 여부와 첫 후보 시각(같은 표본)을 재현한다. 1회차 29건 대조일 뿐이며 검출률·오경보율로 일반화하지 않는다.
 - 발표자료 초안 기준(4g·600°/s·75°)은 `PPT_DRAFT_RULE`로 따로 돌려 비교만 한다(사고를 열지 않음). 29조건 분류는 같고, 후보를 1~29ms 먼저 건다.
 - 발견: 정상 주행 10건 중 8건은 판정창에 1~3개 순번 누락이 있어 `no_candidate`가 아니라 `insufficient`(판정 정보 부족)로 나온다. 바꾸려면 새 규칙 버전으로 검증할 일이라 그대로 두었다.

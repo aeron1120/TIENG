@@ -1,5 +1,5 @@
 /**
- * 시연 데이터 — 서버 /demo-api (로그인 없음)에서 MOCK 파형과 서버 판정을 받아 시연 시계에 맞춘다.
+ * 시연 데이터 — 서버 /demo-api (로그인 없음)에서 실측 파형과 서버 판정을 받아 시연 시계에 맞춘다.
  * 무료 서버가 잠들어 있으면 첫 응답까지 30초쯤 걸린다.
  */
 import type { DemoCaseDto, DemoResultsDto, SensorAnalysis } from '@rider-guard/contract';

@@ -30,7 +30,7 @@ function buildJson(s: DemoState, a: SensorAnalysis | null) {
   const i = s.incident!;
   return {
     schemaVersion: 'demo-incident-report-v1',
-    notice: '시연 데이터로 만든 사건 보고서입니다. 센서 파형은 ESP32·MPU6050 MOCK 재현 자료이고, 라이더·주문·관제·연락은 시연 데이터이며 실제로 아무에게도 발송하지 않았습니다. 사고 확정·상해 정도·보험 판단 자료가 아닙니다.',
+    notice: '시연 데이터로 만든 사건 보고서입니다. 센서 파형은 ESP32·MPU6050 헬멧 IMU 실측 기록(시나리오 재현 실험)이고, 라이더·주문·관제·연락은 시연 데이터이며 실제로 아무에게도 발송하지 않았습니다. 사고 확정·상해 정도·보험 판단 자료가 아닙니다.',
     generatedAt: new Date().toISOString(),
     incident: { ...i, detectedAt: clockAt(s, i.detectedT), scenario: SCENARIOS[s.scenario].title },
     rider: s.riders.find((r) => r.id === MAIN_RIDER),
@@ -85,7 +85,7 @@ export default function DemoReportScreen() {
       </View>
       <View style={styles.notice}>
         <Txt style={styles.noticeText}>
-          시연 데이터로 만든 보고서예요. 센서 파형은 ESP32·MPU6050 MOCK 재현 자료(실제 실험 0회)이고, 라이더·주문·관제·연락은 시연 데이터라 실제로 아무에게도 발송하지 않았어요. 감지 근거일 뿐 사고 확정·상해 정도·보험 판단이 아니에요.
+          시연 데이터로 만든 보고서예요. 센서 파형은 ESP32·MPU6050 헬멧 IMU 실측 기록(시나리오 재현 실험)이고, 라이더·주문·관제·연락은 시연 데이터라 실제로 아무에게도 발송하지 않았어요. 감지 근거일 뿐 사고 확정·상해 정도·보험 판단이 아니에요.
         </Txt>
       </View>
       <View style={styles.buttons}>

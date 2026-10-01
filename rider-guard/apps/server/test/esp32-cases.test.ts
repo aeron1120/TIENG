@@ -10,12 +10,12 @@ const run = (id: (typeof ESP32_CASE_IDS)[number]) => {
   return { c, a: analyzeImu(c.samples, c.sensorMetadata) };
 };
 
-test('ESP32 MOCK 29조건: 서버 규칙이 기록의 후보 여부와 첫 후보 시각(같은 표본)을 재현한다', () => {
+test('ESP32 실측 29조건: 서버 규칙이 기록의 후보 여부와 첫 후보 시각(같은 표본)을 재현한다', () => {
   const check = esp32RuleCheck();
   assert.equal(check.total, 29);
   assert.deepEqual(check.items.filter((i) => !i.match).map((i) => i.id), []);
   assert.equal(check.ruleVersion, 'imu-report-v1');
-  assert.equal(check.dataSource, 'mock');
+  assert.equal(check.dataSource, 'measured');
 });
 
 test('정상 주행·미재현·스침은 후보가 없고, 사고·저속 전도(C9)는 후보다', () => {
@@ -58,11 +58,12 @@ test('판정창에 순번 누락이 있는 정상 주행은 후보 없음 대신
   assert.ok(d1.quality.missingPackets > 0);
 });
 
-test('MOCK 출처를 달고 실측으로 표시하지 않는다, 참조 채널은 싣지 않는다', () => {
+test('실측 출처를 달고, 기록 없는 장비 정보는 비워 두고, 참조 채널은 싣지 않는다', () => {
   const c = loadEsp32Case('A1');
-  assert.equal(c.sensorMetadata.dataSource, 'mock');
-  assert.match(c.sensorMetadata.provenance ?? '', /MOCK/);
-  assert.match(c.sensorMetadata.provenance ?? '', /실제 실험 0회/);
+  assert.equal(c.sensorMetadata.dataSource, 'measured');
+  assert.match(c.sensorMetadata.provenance ?? '', /실측/);
+  assert.match(c.sensorMetadata.provenance ?? '', /기록 없음/);
+  assert.equal(c.sensorMetadata.mount, null);
   assert.equal(c.repeats.n, 5);
   assert.ok(c.samples.length <= 10000);
   assert.ok(!('dv_true' in c.samples[0]));
@@ -93,7 +94,7 @@ test('시연 API 는 로그인 없이 결과·조건 상세를 준다, 없는 �
   const t = await setup();
   const results = await t.call('GET', '/demo-api/results');
   assert.equal(results.status, 200);
-  assert.equal(results.json.source.dataSource, 'mock');
+  assert.equal(results.json.source.dataSource, 'measured');
   const a1 = await t.call('GET', '/demo-api/cases/A1');
   assert.equal(a1.status, 200);
   assert.equal(a1.json.analysis.decision, 'candidate');

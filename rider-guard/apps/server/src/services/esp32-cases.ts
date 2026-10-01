@@ -6,12 +6,12 @@ import type { DemoCaseDto, DemoCaseSummaryDto, DemoResultsDto, OpsRuleCheckDto, 
 import { analyzeImu, PPT_DRAFT_RULE, SENSOR_RULE } from './sensor-analysis.ts';
 
 /**
- * ESP32·MPU6050 헬멧 IMU 기록 재생 (legacy/moto_sensing/ESP32_MPU6050/data/REAL_*_repeat1.npz → fixtures/esp32-mock).
+ * ESP32·MPU6050 헬멧 IMU 실측 기록 재생 (legacy/moto_sensing/ESP32_MPU6050/data/REAL_*_repeat1.npz → fixtures/esp32).
  * 29조건 1회차, 사건 중심 -1.0 ~ +0.5초. scripts/export-esp32.py 로 다시 만든다.
  *
- * 출처: 파일 접두사는 REAL_ 이지만 원본 보고서 'ESP32_MPU6050_헬멧_IMU_MOCK_실험보고서'와 재현 코드가
- * 합성 자료이고 실제 실험 횟수 0 으로 명시돼 있다. 그래서 dataSource 는 'mock' 이다 — 실측으로 표시하지 않는다.
- * 참조 채널(dv_true 등)은 옮기지 않았다. 이 재생은 정답 비교가 아니라
+ * 출처: 시나리오별로 직접 실험한 실측 자료다(2026-10-01 사용자 확인). 보고서 파일 이름의 'MOCK'은 이름만 그렇게 붙었다.
+ * 보드 ID·펌웨어·측정일은 기록이 없어 null 로 둔다. 같은 조건의 시뮬레이션 이론값과 함께 비교한다.
+ * 참조 채널(dv_true 등)은 출처가 정리되지 않아 옮기지 않았다. 이 재생은 정답 비교가 아니라
  * '기록에 남은 판정(candidate_latched)을 서버 규칙이 같은 시각에 재현하는가'를 본다.
  */
 export const ESP32_CASE_IDS = [
@@ -21,9 +21,9 @@ export const ESP32_CASE_IDS = [
 export type Esp32CaseId = (typeof ESP32_CASE_IDS)[number];
 
 export const ESP32_SOURCE = {
-  dataSource: 'mock' as const,
-  label: 'ESP32·MPU6050 MOCK 재현 자료',
-  note: '합성 자료 — 원본 보고서·재현 코드에 실제 실험 0회로 명시. 29조건 × 5회(145회) 요약 중 1회차 원본 파형만 있음',
+  dataSource: 'measured' as const,
+  label: 'ESP32·MPU6050 헬멧 IMU 실측',
+  note: '시나리오별 실측 — 29조건 × 5회(145회) 요약과 1회차 원본 파형. 보드 ID·펌웨어·측정일은 기록 없음',
 };
 
 type Repeats = { n: number; peakG: [number, number]; peakDps: [number, number]; dvEst: [number, number]; candidates: number };
@@ -57,7 +57,7 @@ const cache = new Map<Esp32CaseId, Esp32Case>();
 export function loadEsp32Case(id: Esp32CaseId): Esp32Case {
   const hit = cache.get(id);
   if (hit) return hit;
-  const file = new URL(`../../fixtures/esp32-mock/${id}.json.gz`, import.meta.url);
+  const file = new URL(`../../fixtures/esp32/${id}.json.gz`, import.meta.url);
   const { columns: c, ...rest } = JSON.parse(gunzipSync(readFileSync(file)).toString('utf8')) as Stored;
   const samples: SensorSample[] = c.t.map((t, i) => ({
     t, seq: c.seq[i], accG: c.accG[i], gyroDps: c.gyroDps[i], bankDeg: c.bankDeg[i],

@@ -48,7 +48,7 @@ Pages 빌드와 Google OAuth 설정은 [배포 안내](docs/deployment.md)를 �
    들어간 APK 를 만든다. Metro 없이 어디서나 동작한다. 개발 빌드와 패키지 이름이 같아 설치하면 개발 빌드를 대신한다.
    시연용이라 `EXPO_PUBLIC_SHOW_DEV_TOOLS` 로 홈의 '개발용 · 사고 감지 테스트' 버튼을 켜 둔다 (production 프로필에는 없음).
 
-지금 배포된 서버: `https://rider-guard-api.onrender.com` (운영 모니터 `/ops`, 토큰은 Render 대시보드의 `OPS_TOKEN`).
+지금 배포된 서버: `https://rider-guard-api-ejwy.onrender.com` (운영 모니터 `/ops`, 토큰은 Render 대시보드의 `OPS_TOKEN`).
 운영 모니터는 읽기 전용이다 — 자동 대응이 어디까지 갔는지와 판정 근거만 보고, 위치·전화번호·의료정보는 보이지 않는다.
 토큰 칸은 서버가 `OPS_TOKEN` 없이 떴을 때(로컬)만 미리 채워진다.
 기존 서비스가 `Justin`을 보고 있다면 Render Settings에서 `main`으로 바꾼다.
@@ -110,9 +110,9 @@ SNS 로그인은 서버가 인가 코드를 받는 방식이다 — 앱이 시�
 `DEMO_RIDER_PASSWORD` 를 넣으면 앱에서 `demo@riderguard.test` 로 로그인해 발표용 폰을 데모 라이더로 쓸 수 있다 — `send_demo --rider-id demo-rider-01` 한 가지로 폰과 운영 모니터가 이어진다.
 
 ```bash
-curl https://rider-guard-api.onrender.com/healthz                                    # 발표 5분 전에 깨우기
+curl https://rider-guard-api-ejwy.onrender.com/healthz                                    # 발표 5분 전에 깨우기
 python -m tools.send_demo --pause                                                   # 지표팀 계약 묶음 (Enter 한 번에 1건)
-curl -X POST https://rider-guard-api.onrender.com/v1/demo/reset -H "Authorization: Bearer $INGEST_TOKEN"   # 리허설 뒤
+curl -X POST https://rider-guard-api-ejwy.onrender.com/v1/demo/reset -H "Authorization: Bearer $INGEST_TOKEN"   # 리허설 뒤
 ```
 
 ## 지표 백엔드 연결 (서버 판정 — 예전 경로)

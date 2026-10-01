@@ -3,7 +3,7 @@
 현재 앱과 API는 [`rider-guard/`](rider-guard/README.md)에서 개발합니다.
 
 - 웹 앱: https://tieng.pages.dev/ — Cloudflare Pages, Expo / React Native Web
-- API: https://rider-guard-api.onrender.com — Render, Node.js 24 / Hono
+- API: https://rider-guard-api-ejwy.onrender.com — Render, Node.js 24 / Hono
 - DB: libSQL / Turso 구성. 로컬에서는 SQLite 파일을 사용합니다.
 - 로그인: API 서버가 Google·카카오·네이버 OAuth를 직접 처리합니다. Rider Guard는 Supabase Auth를 사용하지 않습니다.
 

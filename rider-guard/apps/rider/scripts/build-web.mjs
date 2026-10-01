@@ -8,7 +8,7 @@ const result = spawnSync(process.execPath, ['node_modules/expo/bin/cli', 'export
   cwd: fileURLToPath(new URL('..', import.meta.url)),
   env: {
     ...process.env,
-    EXPO_PUBLIC_API_URL: process.env.EXPO_PUBLIC_API_URL || 'https://rider-guard-api.onrender.com',
+    EXPO_PUBLIC_API_URL: process.env.EXPO_PUBLIC_API_URL || 'https://rider-guard-api-ejwy.onrender.com',
     // 카카오 지도 JavaScript 키 — 원래 번들에 공개되는 값이고 카카오 콘솔에 등록한 도메인에서만 동작한다.
     // 빌드 환경변수가 있으면 그것이 우선.
     EXPO_PUBLIC_KAKAO_MAP_KEY: process.env.EXPO_PUBLIC_KAKAO_MAP_KEY || '75516dadc5fc637c6fbfbfe4e7c519f2',

@@ -16,7 +16,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://rider-guard-api.onrender.com",
+        "EXPO_PUBLIC_API_URL": "https://rider-guard-api-ejwy.onrender.com",
         "EXPO_PUBLIC_SHOW_DEV_TOOLS": "true"
       }
     },

@@ -12,7 +12,7 @@
 | 빌드 명령 | `npm run build:web` |
 | 빌드 결과 디렉터리 | `dist` |
 | Node.js | `24` (`NODE_VERSION=24`) |
-| API 주소 | `EXPO_PUBLIC_API_URL=https://rider-guard-api.onrender.com` |
+| API 주소 | `EXPO_PUBLIC_API_URL=https://rider-guard-api-ejwy.onrender.com` |
 
 Pages의 Git 빌드는 먼저 `npm ci`로 의존성을 설치합니다. 수동 빌드/배포는 다음과 같습니다.
 
@@ -35,9 +35,9 @@ npx wrangler pages deploy dist --project-name tieng --branch main
 - 루트: `rider-guard/apps/server`
 - 빌드: `npm ci --omit=dev`
 - 시작: `npm start`
-- 상태 확인: `https://rider-guard-api.onrender.com/healthz`
+- 상태 확인: `https://rider-guard-api-ejwy.onrender.com/healthz`
 - `DATABASE_URL`과 `DATABASE_AUTH_TOKEN`: 기존 Turso 값을 유지합니다. 이 값들은 저장소에 넣지 않습니다.
-- `PUBLIC_BASE_URL`: `https://rider-guard-api.onrender.com` 또는 비워 두고 Render의 `RENDER_EXTERNAL_URL` 사용.
+- `PUBLIC_BASE_URL`: `https://rider-guard-api-ejwy.onrender.com` 또는 비워 두고 Render의 `RENDER_EXTERNAL_URL` 사용.
 
 기존 Render 서비스가 `Justin` 브랜치를 보고 있다면 Settings에서 `main`으로 바꾸고
 최신 커밋을 수동 배포해야 합니다. 저장소의 Blueprint 변경만으로 기존 서비스 설정이
@@ -94,7 +94,7 @@ Google Cloud 콘솔에서 OAuth 클라이언트 유형은 **웹 애플리케이�
 **승인된 리디렉션 URI**에는 아래 전체 주소를 넣습니다. 끝에 `/`를 추가하지 않습니다.
 
 ```text
-https://rider-guard-api.onrender.com/auth/oauth/google/callback
+https://rider-guard-api-ejwy.onrender.com/auth/oauth/google/callback
 http://localhost:4000/auth/oauth/google/callback   (로컬 서버로 시험할 때만)
 ```
 
@@ -116,7 +116,7 @@ GOOGLE_CLIENT_SECRET=<클라이언트 보안 비밀>
 ```text
 rider-guard.expo.app · tieng.pages.dev 또는 모바일 앱
   → Google 로그인 (전체 페이지 이동, 팝업 없음)
-  → rider-guard-api.onrender.com/auth/oauth/google/callback
+  → rider-guard-api-ejwy.onrender.com/auth/oauth/google/callback
      (서버가 state·PKCE(S256)·nonce 확인 후 code 교환, ID token 서명·aud·iss·exp 검증, sub로 계정 식별)
   → 웹: rider-guard.expo.app/auth/callback 또는 tieng.pages.dev/auth/callback
     모바일: riderguard://auth/callback

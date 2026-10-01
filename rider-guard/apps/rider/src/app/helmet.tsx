@@ -1,4 +1,4 @@
-// 헬멧 자동 시작 (spec-v3 02 'v3·2 헬멧 자동 시작'). ?flow=onboarding 이면 가입 흐름 1/2(다음 → 비상연락처 2/2),
+// 헬멧 자동 시작 (spec-v3 02 'v3·2 헬멧 자동 시작'). ?flow=onboarding 이면 가입 흐름 1/2(다음 → 소속 배달대행사 2/2),
 // 아니면 설정에서 연 같은 화면(단계 표시 없이 뒤로).
 // 실제 헬멧 연동은 아직 없다. 페어링된 기기가 없으면 가상 헬멧(배터리 시뮬레이션), 음성 응답은 시뮬레이션이다(features/helmet).
 import type { DeviceDto } from '@rider-guard/contract';
@@ -12,6 +12,7 @@ import { HelmetIcon } from '@/components/Icons';
 import { useToast } from '@/components/Toast';
 import { Button, Card, Divider, FadeIn, IconHalo, Screen, ScreenFooter, Sheet, Skeleton, Txt } from '@/components/ui';
 import { helmetInfo, helmetTitle, useHelmet, useProtection, type HelmetInfo } from '@/features/helmet';
+import { toggleVoice, voiceSub, voiceSupported } from '@/features/voice';
 import { batteryText } from '@/lib/format';
 import { backOr } from '@/lib/nav';
 import { colors, font, typography } from '@/theme';
@@ -23,11 +24,12 @@ export default function HelmetScreen() {
   const helmet = useHelmet();
   const protection = useProtection();
   const [changing, setChanging] = useState(false);
+  const toast = useToast();
   // me 를 받기 전에는 가상 헬멧을 그리지 않는다 — 실제 기기가 있으면 이름이 바뀌며 깜빡이므로
   const info = me ? helmetInfo(me.device, helmet.worn) : null;
 
   const back = () => backOr(onboarding ? '/onboarding' : '/settings');
-  const next = () => (onboarding ? router.push({ pathname: '/setup', params: { flow: 'onboarding' } }) : back());
+  const next = () => (onboarding ? router.push({ pathname: '/affiliation', params: { flow: 'onboarding' } }) : back());
 
   return (
     <>
@@ -64,9 +66,9 @@ export default function HelmetScreen() {
             <View style={styles.row}>
               <View style={styles.rowMain}>
                 <Txt style={styles.rowTitle}>말로 응답하기</Txt>
-                <Txt style={styles.rowSub}>사고 때 헬멧 스피커로 묻고 음성으로 답해요</Txt>
+                <Txt style={styles.rowSub}>{voiceSub(helmet.voice)}</Txt>
               </View>
-              <Toggle value={helmet.voice} onValueChange={helmet.setVoice} accessibilityLabel="말로 응답하기" style={styles.toggle} />
+              <Toggle value={helmet.voice} onValueChange={(v) => void toggleVoice(v, helmet.setVoice, toast)} disabled={!voiceSupported()} accessibilityLabel="말로 응답하기" style={styles.toggle} />
             </View>
           </Card>
         </FadeIn>

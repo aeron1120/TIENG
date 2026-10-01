@@ -20,9 +20,11 @@ import Svg, { Circle, Defs, LinearGradient, RadialGradient, Rect, Stop } from 'r
 
 import { useIncident, useRespond } from '@/api/hooks';
 import { Notice } from '@/components/forms';
-import { AlertCircleFilledIcon } from '@/components/Icons';
+import { AlertCircleFilledIcon, MicIcon } from '@/components/Icons';
 import { useToast } from '@/components/Toast';
 import { Badge, Button, FadeIn, FadeSwap, PressableScale, Screen, ScreenFooter, Skeleton, Txt, useReducedMotion } from '@/components/ui';
+import { useHelmet } from '@/features/helmet';
+import { useVoiceAnswer } from '@/features/voice';
 import { useCountdown } from '@/hooks/useCountdown';
 import { resetTo } from '@/lib/nav';
 import { colors, font, motion, radius, shadow } from '@/theme';
@@ -140,6 +142,21 @@ export default function AlertScreen() {
       },
     });
   const sending = respond.isPending ? respond.variables : null;
+  // 말로 응답하기 — 켜 둔 사람만, 카운트다운 중에만 듣는다. 알아들으면 버튼을 누른 것과 똑같이 보낸다
+  const { voice } = useHelmet();
+  const listen = voice && phase === 'count' && !respond.isPending && !respond.isSuccess;
+  const spoken = useVoiceAnswer(listen, (a) => send(a));
+  const voiceLine = !voice
+    ? '음성 응답 꺼짐 · 화면 버튼으로 알려 주세요'
+    : spoken.state === 'listening'
+      ? spoken.heard
+        ? `“${spoken.heard.slice(-24)}”`
+        : '듣고 있어요 · “괜찮아요” 또는 “도와주세요”'
+      : spoken.state === 'speaking'
+        ? '질문을 읽고 있어요'
+        : spoken.state === 'blocked'
+          ? '마이크가 막혀 있어요 · 화면 버튼으로 알려 주세요'
+          : '화면 버튼으로 알려 주세요';
   // 조회 오류는 상세를 아직 못 받았을 때만 — 받은 뒤의 폴링 실패는 응답과 상관없다.
   const problem = respond.error ?? (incident ? null : error);
 
@@ -214,9 +231,10 @@ export default function AlertScreen() {
           <Txt style={styles.question}>사고가 의심돼요.</Txt>
           <Txt style={[styles.title, { fontSize: size.title, lineHeight: size.titleLh }]}>괜찮으신가요?</Txt>
         </View>
-        {/* 음성 인식은 없다 — 무응답과 '음성 인식 실패'를 섞지 않도록 화면 버튼 응답만 안내한다 */}
-        <View style={[styles.voiceRow, { marginTop: size.voiceGap }]}>
-          <Txt style={styles.voiceText}>음성 응답 미지원 · 화면 버튼으로 알려 주세요</Txt>
+        {/* 못 알아들으면 아무것도 보내지 않는다 — 무응답은 카운트다운이 처리하고, 버튼은 늘 함께 쓸 수 있다 */}
+        <View style={[styles.voiceRow, { marginTop: size.voiceGap }]} accessibilityLiveRegion="polite">
+          {voice ? <MicIcon size={14} color={colors.textOnDark} /> : null}
+          <Txt style={styles.voiceText} numberOfLines={1}>{voiceLine}</Txt>
         </View>
       </FadeIn>
 
@@ -456,7 +474,7 @@ const styles = StyleSheet.create({
   pillText: { fontSize: 16, lineHeight: 22 },
   title: { ...font.sans(800), letterSpacing: -1, color: colors.textOnDark, textAlign: 'center' },
   question: { ...font.sans(700), fontSize: 18, lineHeight: 26, letterSpacing: -0.4, color: colors.textOnDark, textAlign: 'center' },
-  voiceRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', height: 22, opacity: DIM.voice },
+  voiceRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 22, opacity: DIM.voice },
   voiceText: { ...font.sans(400), fontSize: 13.5, lineHeight: 20, letterSpacing: -0.2, color: colors.textOnDark },
   sosBlock: { alignSelf: 'center', alignItems: 'center', justifyContent: 'center' },
   ring: { position: 'absolute', borderWidth: 1, borderColor: colors.sosRing },

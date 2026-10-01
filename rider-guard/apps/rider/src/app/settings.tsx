@@ -19,6 +19,8 @@ import { Badge, Button, FadeIn, IconCircle, ListGroup, PressableScale, Screen, S
 import { acceptanceSummaryText, useContactAcceptance } from '@/features/contactSim';
 import { helmetInfo, helmetTitle, useHelmet, useProtection, type HelmetInfo } from '@/features/helmet';
 import { PUSH_STATUS_TEXT, usePushStatus, type PushStatus } from '@/features/push';
+import { toggleVoice, voiceSub, voiceSupported } from '@/features/voice';
+import { platformsText } from '@/lib/platforms';
 import { contactDisplayName, useConsentSim } from '@/features/sim';
 import { batteryText, formatMobile, hm } from '@/lib/format';
 import { colors, font, typography } from '@/theme';
@@ -112,22 +114,31 @@ export default function SettingsScreen() {
             sub={<WornSub />}
             right={<Toggle value={helmet.worn} onValueChange={helmet.setWorn} disabled={!helmet.ready} accessibilityLabel="헬멧 착용" style={styles.toggle} />}
           />
-          {/* 음성 인식은 어떤 플랫폼에서도 사건 응답에 연결돼 있지 않다 — 켤 수 있는 것처럼 보이지 않게 */}
-          <Row
-            title="말로 응답하기"
-            sub="아직 지원하지 않아요. 사고 확인 화면의 버튼으로 응답해요"
-            right={
-              <Badge tone="neutral" size="sm">
-                미지원
-              </Badge>
-            }
-            accessibilityLabel="말로 응답하기, 미지원. 사고 확인 화면의 버튼으로 응답해요"
-          />
+          {/* 브라우저 음성 인식이 있을 때만 켤 수 있다 — 없으면 켤 수 있는 것처럼 보이지 않게 */}
+          {voiceSupported() ? (
+            <Row
+              title="말로 응답하기"
+              sub={voiceSub(helmet.voice)}
+              right={<Toggle value={helmet.voice} onValueChange={(v) => void toggleVoice(v, helmet.setVoice, toast)} accessibilityLabel="말로 응답하기" style={styles.toggle} />}
+            />
+          ) : (
+            <Row
+              title="말로 응답하기"
+              sub={voiceSub(false)}
+              right={
+                <Badge tone="neutral" size="sm">
+                  미지원
+                </Badge>
+              }
+              accessibilityLabel={`말로 응답하기, 미지원. ${voiceSub(false)}`}
+            />
+          )}
         </ListGroup>
       </Section>
 
-      <Section title="비상연락 · 알림" delay={120}>
+      <Section title="사고 때 알림" delay={120}>
         <ListGroup>
+          <AffiliationRow me={me} />
           <ContactsRow me={me} />
           <PushRow />
         </ListGroup>
@@ -392,12 +403,35 @@ function ContactsRow({ me }: { me: MeDto | undefined }) {
   return (
     <Row
       leading={circle}
-      title={count ? `비상연락처 ${count}명` : '비상연락처를 등록해 주세요'}
-      sub={count ? summary : '사고 때 1순위부터 차례로 알려요'}
+      title={count ? `가족 비상연락처 ${count}명` : '가족 비상연락처 (선택)'}
+      sub={count ? summary : '대행사 관제와 함께 가족에게도 알려요'}
       right={<EditText label={count ? '수정' : '등록'} />}
       onPress={() => router.push('/setup')}
-      accessibilityLabel={count ? `비상연락처 ${count}명, ${summary}` : '비상연락처를 등록해 주세요'}
+      accessibilityLabel={count ? `가족 비상연락처 ${count}명, ${summary}` : '가족 비상연락처, 선택'}
       accessibilityHint="비상연락처를 보고 고칠 수 있어요"
+    />
+  );
+}
+
+/** 소속 배달대행사 · 일하는 플랫폼 — 사고 때 먼저 알리는 곳 */
+function AffiliationRow({ me }: { me: MeDto | undefined }) {
+  if (!me) return null;
+  const aff = me.affiliation;
+  const title = aff?.agency ? aff.agency.name : aff ? '대행사 없이 직접 계약' : '소속 배달대행사를 연결해 주세요';
+  const sub = aff ? platformsText(aff.platforms) : '사고 때 대행사 관제에 바로 알리고 주문을 넘겨요';
+  return (
+    <Row
+      leading={
+        <IconCircle>
+          <UsersIcon size={20} color={colors.text} />
+        </IconCircle>
+      }
+      title={title}
+      sub={sub}
+      right={<EditText label={aff ? '수정' : '연결'} />}
+      onPress={() => router.push('/affiliation')}
+      accessibilityLabel={`${title}, ${sub}`}
+      accessibilityHint="소속 배달대행사와 플랫폼을 보고 고칠 수 있어요"
     />
   );
 }

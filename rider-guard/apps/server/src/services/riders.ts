@@ -20,6 +20,7 @@ import type {
 import type { AppContext, ContactRow, DeviceRow, RiderRow, SessionRow } from '../context.ts';
 import { parseJson } from '../db.ts';
 import { ApiError, iso, newId, newToken, notFound, seoulDayStart, sha256, sixDigits } from '../lib.ts';
+import { affiliationOf } from './agency.ts';
 import { ACTIVE_SESSION_SQL, activeSession, driveSecondsToday, latestLocation, TODAY_SESSIONS_SQL, toSessionDto, type TodaySessionRow } from './sessions.ts';
 
 export const CONSENT_VERSION = '2026-09';
@@ -343,5 +344,6 @@ export async function buildMe(ctx: AppContext, riderId: string): Promise<MeDto> 
     session: session ? toSessionDto(session) : null,
     today: { driveSeconds: driveSecondsToday(todaySessions, now), asOf: iso(now) },
     lastLocation: last ? { lat: last.lat, lng: last.lng, accuracy: last.accuracy, address: null, recordedAt: iso(last.recordedAt) } : null,
+    affiliation: await affiliationOf(ctx, rider),
   };
 }

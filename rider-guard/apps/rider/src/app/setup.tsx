@@ -1,4 +1,5 @@
-// 디자인: spec-v3 03 '비상연락처 (수락 상태)' — 가입 흐름 2/2, 설정·홈에서도 연다(?flow 없음).
+// 디자인: spec-v3 03 '비상연락처 (수락 상태)' — 가족 비상연락처(선택). 사고 때 먼저 알리는 곳은 소속 배달대행사 관제다(/affiliation).
+// 예전 가입 흐름(?flow=onboarding)으로 들어와도 단계 없이 연다.
 // 수락 상태·안내 문자는 화면만 시뮬레이션(features/contactSim). 실제 사고 대응은 수락 여부와 상관없이 1순위부터 차례로 알린다.
 import type { ContactDto } from '@rider-guard/contract';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -6,7 +7,7 @@ import { useState } from 'react';
 import { Animated, Pressable, StyleSheet, View } from 'react-native';
 
 import { useMe } from '@/api/hooks';
-import { Header, Notice, StepHeader } from '@/components/forms';
+import { Header, Notice } from '@/components/forms';
 import { ClockIcon, PlusIcon } from '@/components/Icons';
 import { useToast } from '@/components/Toast';
 import { Badge, Button, Card, Divider, FadeIn, IconCircle, Screen, ScreenFooter, Skeleton, Txt, usePressScale } from '@/components/ui';
@@ -29,7 +30,6 @@ export default function SetupScreen() {
   const acceptance = useContactAcceptance(me.data?.contacts);
   const toast = useToast();
   const loading = !me.data && !me.error;
-  const empty = !!me.data && contacts.length === 0;
 
   const finish = () => {
     if (onboarding) {
@@ -51,22 +51,17 @@ export default function SetupScreen() {
       enter="none"
       footer={
         <ScreenFooter>
-          {empty && <Txt style={styles.reason}>연락처를 한 명 이상 등록하면 마칠 수 있어요</Txt>}
-          <Button label="완료" disabled={loading || empty} onPress={finish} />
+          <Button label="완료" disabled={loading} onPress={finish} />
         </ScreenFooter>
       }
     >
-      {onboarding ? (
-        <StepHeader onBack={() => backOr({ pathname: '/helmet', params: { flow: 'onboarding' } })} current={2} total={2} />
-      ) : (
-        <Header onBack={() => backOr('/home')} />
-      )}
+      <Header onBack={() => backOr('/home')} />
 
       <FadeIn style={styles.intro}>
         <Txt accessibilityRole="header" style={typography.title}>
-          {'비상시 알릴 사람을\n정해주세요'}
+          {'가족에게도\n알릴까요?'}
         </Txt>
-        <Txt style={typography.lead}>{'등록하면 상대에게 안내 문자가 가요.\n수락한 사람만 실제 상황에서 알림을 받아요.'}</Txt>
+        <Txt style={typography.lead}>{'선택이에요. 사고는 소속 배달대행사 관제에 먼저 알려요.\n등록하면 상대에게 안내 문자가 가요.'}</Txt>
       </FadeIn>
 
       {me.error && !me.data ? (
@@ -251,5 +246,4 @@ const styles = StyleSheet.create({
   noticeIcon: { paddingTop: 2 },
   noticeText: { ...font.sans(400), flex: 1, fontSize: 13, lineHeight: 22, letterSpacing: -0.5, color: colors.noticeText },
   limit: { ...typography.caption, textAlign: 'center', paddingVertical: 8 },
-  reason: { ...typography.caption, textAlign: 'center' },
 });

@@ -354,6 +354,25 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE devices ADD COLUMN lastSensorAt INTEGER;`,
   // v8 — 첫 로그인 때 고르는 역할 (rider·dispatcher). 관리자는 저장하지 않고 ADMIN_EMAILS 로 정한다.
   `ALTER TABLE riders ADD COLUMN role TEXT;`,
+  // v9 — 배달대행사 소속. 관제사가 대행사를 만들면 가입 코드가 생기고, 라이더는 그 코드로 소속된다(소속 = 보호 중 위치·사고를 그 대행사 관제에 보이는 데 동의).
+  // 주문은 대행사 관제사가 배정한다 — 어느 플랫폼(배민·쿠팡이츠…) 주문인지와 함께.
+  `
+  CREATE TABLE agencies (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    joinCode TEXT NOT NULL,
+    createdBy TEXT NOT NULL,
+    createdAt INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX agencies_code ON agencies(joinCode);
+  ALTER TABLE riders ADD COLUMN agencyId TEXT;
+  ALTER TABLE riders ADD COLUMN agencyJoinedAt INTEGER;
+  ALTER TABLE riders ADD COLUMN platformsJson TEXT;
+  CREATE INDEX riders_agency ON riders(agencyId);
+  ALTER TABLE orders ADD COLUMN agencyId TEXT;
+  ALTER TABLE orders ADD COLUMN platform TEXT;
+  CREATE INDEX orders_agency ON orders(agencyId, status);
+  `,
 ];
 
 export type Params = Record<string, InValue | undefined>;

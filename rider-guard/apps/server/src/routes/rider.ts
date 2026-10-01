@@ -1,4 +1,7 @@
 import type {
+  AgencyBoardDto,
+  CreateAgencyOrderRequest,
+  SetAffiliationRequest,
   ActiveIncidentResponse,
   AuthProvidersResponse,
   AuthResponse,
@@ -27,6 +30,7 @@ import type { AppContext, OrderRow } from '../context.ts';
 import { ApiError, escapeHtml, iso, mobileSchema, newId, readBody } from '../lib.ts';
 import { deleteAccount } from '../services/account.ts';
 import { adminOverview } from '../services/admin.ts';
+import { ackIncident, agencyBoard, assignOrder, completeOrder, createAgency, PLATFORMS, reassignOrder, resolveIncident, setAffiliation } from '../services/agency.ts';
 import { loginWithEmail, revokeToken, riderIdForToken, signupWithEmail } from '../services/auth.ts';
 import { completeOAuth, enabledProviders, exchangeLoginCode, startOAuth } from '../services/oauth.ts';
 import {
@@ -106,6 +110,18 @@ const schemas = {
     priority: z.number().int().min(1).optional(),
   }),
   role: z.object({ role: z.enum(['rider', 'dispatcher']) }),
+  affiliation: z.object({
+    joinCode: z.string().trim().min(4).max(12).nullable().optional(),
+    platforms: z.array(z.enum(PLATFORMS as [string, ...string[]])).max(5),
+  }),
+  createAgency: z.object({ name: z.string().trim().min(1, '대행사 이름을 입력해 주세요.').max(40) }),
+  agencyOrder: z.object({
+    riderId: z.string().min(1),
+    platform: z.enum(PLATFORMS as [string, ...string[]]),
+    storeName: z.string().trim().min(1, '가게 이름을 입력해 주세요.').max(40),
+    destination: z.string().trim().min(1, '배달지를 입력해 주세요.').max(80),
+  }),
+  reassign: z.object({ riderId: z.string().min(1) }),
   phoneSensor: z.object({ samples: z.number().int().min(0).max(100_000), sampleRateHz: z.number().positive().max(1000).nullable().optional() }),
   pair: z.object({
     pairingCode: z
@@ -218,6 +234,46 @@ export function meRoutes(ctx: AppContext) {
     const { role } = await readBody(c, schemas.role);
     await setRole(ctx, c.var.riderId, role);
     return c.json<MeDto>(await buildMe(ctx, c.var.riderId));
+  });
+
+  // 배달대행사 소속 — 라이더는 가입 코드와 일하는 플랫폼, 관제사는 가입 코드로 다른 관제사의 대행사에 합류
+  app.put('/affiliation', async (c) => {
+    const body = await readBody(c, schemas.affiliation);
+    await setAffiliation(ctx, c.var.riderId, body as SetAffiliationRequest);
+    return c.json<MeDto>(await buildMe(ctx, c.var.riderId));
+  });
+
+  // 관제사: 대행사 등록 · 관제 화면 · 주문 배정 · 사고 접수/완료 · 대체 배차
+  app.post('/agency', async (c) => {
+    const { name } = await readBody(c, schemas.createAgency);
+    await createAgency(ctx, c.var.riderId, name);
+    return c.json<AgencyBoardDto>(await agencyBoard(ctx, c.var.riderId), 201);
+  });
+  app.get('/agency', async (c) => {
+    c.header('Cache-Control', 'no-store');
+    return c.json<AgencyBoardDto>(await agencyBoard(ctx, c.var.riderId));
+  });
+  app.post('/agency/orders', async (c) => {
+    const body = await readBody(c, schemas.agencyOrder);
+    await assignOrder(ctx, c.var.riderId, body as CreateAgencyOrderRequest);
+    return c.json<AgencyBoardDto>(await agencyBoard(ctx, c.var.riderId), 201);
+  });
+  app.post('/agency/orders/:id/delivered', async (c) => {
+    await completeOrder(ctx, c.var.riderId, c.req.param('id'));
+    return c.json<AgencyBoardDto>(await agencyBoard(ctx, c.var.riderId));
+  });
+  app.post('/agency/orders/:id/reassign', async (c) => {
+    const { riderId } = await readBody(c, schemas.reassign);
+    await reassignOrder(ctx, c.var.riderId, c.req.param('id'), riderId);
+    return c.json<AgencyBoardDto>(await agencyBoard(ctx, c.var.riderId));
+  });
+  app.post('/agency/incidents/:id/ack', async (c) => {
+    await ackIncident(ctx, c.var.riderId, c.req.param('id'));
+    return c.json<AgencyBoardDto>(await agencyBoard(ctx, c.var.riderId));
+  });
+  app.post('/agency/incidents/:id/resolve', async (c) => {
+    await resolveIncident(ctx, c.var.riderId, c.req.param('id'));
+    return c.json<AgencyBoardDto>(await agencyBoard(ctx, c.var.riderId));
   });
 
   // 관리자 운영 현황 — 실제 사고·판정 기록 (읽기 전용)

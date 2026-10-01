@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { keys, useEndSession, useMe, useStartSession } from '@/api/hooks';
 import { batteryText } from '@/lib/format';
 import { KEYS, storage } from '@/lib/storage';
+import { voiceSupported } from './voice';
 
 // ── 착용 · 음성 상태 (모듈 스토어 — 여러 화면이 같은 값을 본다) ─────────
 
@@ -83,10 +84,12 @@ export function setHelmetWorn(worn: boolean) {
   persist();
 }
 
-/** '말로 응답하기' (시뮬레이션 — 실제 음성 인식은 없다) */
+/** '말로 응답하기' — 브라우저 음성 인식이 있을 때만 켤 수 있다 (features/voice) */
 export function setHelmetVoice(voice: boolean) {
-  // Voice recognition is not wired to incident responses on any platform yet.
-  void voice;
+  if (voice && !voiceSupported()) return;
+  touched = true;
+  emit({ voice });
+  persist();
 }
 
 function subscribe(listener: () => void) {
@@ -113,7 +116,7 @@ export function useHelmet(): HelmetApi {
   const s = useSyncExternalStore(subscribe, getState, getState);
   return {
     worn: s.worn,
-    voice: false,
+    voice: s.voice && voiceSupported(),
     ready: s.ready,
     setWorn: setHelmetWorn,
     setVoice: setHelmetVoice,

@@ -21,6 +21,11 @@ export type RiderRow = {
   createdAt: number;
   /** 첫 로그인 때 고른 역할. 아직 안 골랐으면 null */
   role?: 'rider' | 'dispatcher' | null;
+  /** 소속 배달대행사 (라이더·관제사 모두) */
+  agencyId?: string | null;
+  agencyJoinedAt?: number | null;
+  /** 일하는 플랫폼 (DeliveryPlatform[]). 아직 정하지 않았으면 null */
+  platformsJson?: string | null;
 };
 
 export type ContactRow = {
@@ -77,6 +82,9 @@ export type OrderRow = {
   status: 'assigned' | 'held' | 'reassigned' | 'delivered';
   incidentId: string | null;
   reassignRequestedAt: number | null;
+  /** 대행사 관제사가 배정한 주문 — 사고 때 대체배차도 그 관제사가 한다 */
+  agencyId?: string | null;
+  platform?: string | null;
   createdAt: number;
   updatedAt: number;
 };

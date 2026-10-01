@@ -87,6 +87,7 @@ function AppShell({ fontsReady }: { fontsReady: boolean }) {
             <Stack.Screen name="onboarding" />
             <Stack.Screen name="helmet" />
             <Stack.Screen name="setup" />
+            <Stack.Screen name="affiliation" />
             <Stack.Screen name="contact" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
             <Stack.Screen name="invite" options={{ presentation: 'modal', animation: 'slide_from_bottom', contentStyle: { backgroundColor: colors.surface } }} />
             <Stack.Screen name="home" options={{ animation: 'none' }} />

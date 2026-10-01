@@ -1,4 +1,4 @@
-// 디자인: spec-v3 05 'v3·5 홈 · 보호 중' — 지도 카드 + 경로형 타임라인 + 헬멧·음성·위치 세 칸, 비상연락처 카드.
+// 디자인: spec-v3 05 'v3·5 홈 · 보호 중' — 지도 카드 + 경로형 타임라인 + 헬멧·음성·위치 세 칸, 소속 배달대행사·진행 주문 카드.
 // 보호 꺼짐·켜는 중은 디자인에 없어 같은 구조의 변형으로 그린다 (알약 '보호 꺼짐', 지도 흐리게, 착용 시간 '--:--').
 // 보호(= 서버 운행 세션)는 헬멧 착용(시뮬레이션)에 따라 SessionServices 가 자동으로 켜고 끈다 — 이 화면에는 시작/종료 버튼이 없다.
 import { Redirect, router } from 'expo-router';
@@ -10,16 +10,18 @@ import { errorMessage } from '@/api/client';
 import { useCreateIncident, useMe } from '@/api/hooks';
 import { BottomNav } from '@/components/BottomNav';
 import { IconButton, Notice } from '@/components/forms';
-import { BellIcon, ClockIcon, HelmetIcon, LockIcon, MapPinIcon, PhoneIcon, ShieldCheckIcon, UsersIcon, WaveformIcon } from '@/components/Icons';
+import { BellIcon, ClockIcon, HelmetIcon, LockIcon, MapPinIcon, ShieldCheckIcon, UsersIcon, WaveformIcon } from '@/components/Icons';
 import { MapPill, RiderMap } from '@/components/RiderMap';
 import { useToast } from '@/components/Toast';
 import { Button, Card, Divider, FadeIn, FadeSwap, IconCircle, Screen, Sheet, Skeleton, Txt } from '@/components/ui';
 import { acceptanceSummaryText, useContactAcceptance } from '@/features/contactSim';
 import { helmetInfo, helmetStatusText, useHelmet } from '@/features/helmet';
 import { recentLocation, useDevicePosition, useLocationState } from '@/features/location';
+import { voiceSupported } from '@/features/voice';
 import { enablePhoneSensor, usePhoneSensorState, type PhoneSensorStatus } from '@/features/phoneSensor';
 import { riderDisplayName, useNow, useSimNotifications, wearTime, type SimNotification } from '@/features/sim';
 import { timeAgo, timeHM } from '@/lib/format';
+import { PLATFORM_SHORT, platformsText } from '@/lib/platforms';
 import { colors, font, radius, typography } from '@/theme';
 
 // 사고 감지 테스트·헬멧 쓰기/벗기 — 개발 빌드, 또는 시연용 preview 빌드(eas.json 의 EXPO_PUBLIC_SHOW_DEV_TOOLS)에서만
@@ -178,10 +180,17 @@ export default function HomeScreen() {
     test.mutate({ source: 'test', kind: 'impact', location: recentLocation() });
   };
 
+  // 소속 배달대행사 — 사고 때 먼저 알리는 곳. 가족 비상연락처는 선택(설정)
+  const aff = me?.affiliation ?? null;
+  const order = aff?.orders[0];
   const contactSummary = acceptanceSummaryText(contacts, acceptance.statusOf);
-  const contactTitle = contacts.length ? `비상연락처 ${contacts.length}명` : '비상연락처를 등록해 주세요';
-  const contactSub = contacts.length ? contactSummary : '사고 때 1순위부터 차례로 알려요';
-  const voiceText = '미지원';
+  const contactTitle = aff?.agency ? aff.agency.name : aff ? '대행사 없이 직접 계약' : '소속 배달대행사를 연결해 주세요';
+  const contactSub = order
+    ? `${order.platform ? `${PLATFORM_SHORT[order.platform]} · ` : ''}${order.storeName} → ${order.destination}${order.status === 'held' ? ' · 보류' : ' · 배달 중'}`
+    : aff
+      ? `${platformsText(aff.platforms)}${contacts.length ? ` · 가족 ${contactSummary}` : ''}`
+      : '사고 때 대행사 관제에 바로 알리고 주문을 넘겨요';
+  const voiceText = helmet.voice ? '켜짐' : voiceSupported() ? '꺼짐' : '미지원';
   const helmetText = helmetStatusText(info);
   const wear = copy?.counting ? wearTime(startedAt, now) : kind === 'starting' ? '00:00' : '--:--';
 
@@ -261,17 +270,17 @@ export default function HomeScreen() {
         <Notice message={`보호를 ${worn ? '켜지' : '끄지'} 못했어요. ${errorMessage(helmet.protectionError)}`} style={styles.notice} />
       ) : null}
 
-      {/* 비상연락처 */}
+      {/* 소속 배달대행사 · 진행 주문 */}
       <FadeIn delay={80} style={styles.contactWrap}>
         <Card
-          onPress={() => router.push('/setup')}
+          onPress={() => router.push('/affiliation')}
           disabled={!me}
           style={styles.contactCard}
-          accessibilityLabel={me ? `${contactTitle}. ${contactSub}` : '비상연락처 불러오는 중'}
-          accessibilityHint="비상연락처를 보고 고칠 수 있어요"
+          accessibilityLabel={me ? `${contactTitle}. ${contactSub}` : '소속 불러오는 중'}
+          accessibilityHint="소속 배달대행사와 플랫폼을 보고 고칠 수 있어요"
         >
           <IconCircle size={40}>
-            <PhoneIcon size={20} color={colors.text} />
+            <UsersIcon size={20} color={colors.text} />
           </IconCircle>
           <View style={styles.contactText}>
             <TextOr loading={!me} width={112} style={styles.contactTitle} numberOfLines={1}>
@@ -281,7 +290,7 @@ export default function HomeScreen() {
               {contactSub}
             </TextOr>
           </View>
-          {me ? <Txt style={styles.edit}>{contacts.length ? '수정' : '등록'}</Txt> : null}
+          {me ? <Txt style={styles.edit}>{aff ? '수정' : '연결'}</Txt> : null}
         </Card>
       </FadeIn>
 

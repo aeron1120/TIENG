@@ -33,7 +33,7 @@ export async function processDue(ctx: AppContext) {
   await deliverPushes(ctx);
 
   // 배달대행사 대체배차 요청 (outbox). 대행사가 받아 주면 대체배차 완료 — 예전에 상담원이 누르던 단계다.
-  const orders = await ctx.db.all<OrderRow>("SELECT * FROM orders WHERE status = 'held' AND reassignRequestedAt IS NULL");
+  const orders = await ctx.db.all<OrderRow>("SELECT * FROM orders WHERE status = 'held' AND reassignRequestedAt IS NULL AND agencyId IS NULL");
   for (const order of orders) {
     if (!(await ctx.db.run('UPDATE orders SET reassignRequestedAt = :now WHERE id = :id AND reassignRequestedAt IS NULL', { id: order.id, now }))) continue;
     try {

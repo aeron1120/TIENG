@@ -246,6 +246,8 @@ export async function escalate(ctx: AppContext, incident: IncidentRow, reason: E
     if (reason === 'no_response') await enqueuePush(ctx, incident, 'escalated');
 
     const rider = await getRider(ctx, incident.riderId);
+    // 소속 대행사 관제 화면에는 사고가 바로 보인다(관제 화면이 주기적으로 읽는다) — 언제 알렸는지 기록만 남긴다
+    if (rider.agencyId) await addEvent(ctx, incident.id, 'agency_alerted', { agencyId: rider.agencyId });
     const name = displayName(rider);
     const what =
       reason === 'rider_requested'
@@ -356,6 +358,15 @@ async function closeIncident(ctx: AppContext, incident: IncidentRow, outcome: Ex
       const name = displayName(await getRider(ctx, incident.riderId));
       await queueContactUpdate(ctx, incident, `${name}님이 괜찮다고 응답해서 사고 대응을 마쳤어요. 걱정을 끼쳐 죄송해요.`);
     }
+    return true;
+  });
+}
+
+/** 소속 대행사 관제사의 '대응 완료' — 아직 나가지 않은 문자·신고는 멈춘다 */
+export async function closeByAgency(ctx: AppContext, incident: IncidentRow, by: string): Promise<boolean> {
+  return await ctx.db.tx(async () => {
+    if (!(await closeIncident(ctx, incident, 'handled'))) return false;
+    await addEvent(ctx, incident.id, 'agency_resolved', { by });
     return true;
   });
 }

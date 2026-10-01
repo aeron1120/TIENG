@@ -209,6 +209,8 @@ export type MeDto = {
   /** 오늘(한국 시간) 누적 운행 시간. 세션 진행 중이면 asOf 이후 경과분을 더해 표시한다. */
   today: { driveSeconds: number; asOf: ISODate };
   lastLocation?: IncidentLocation | null;
+  /** 소속 배달대행사와 일하는 플랫폼. 아직 정하지 않았으면 null */
+  affiliation: AffiliationDto | null;
 };
 
 export type LocationAccessDto = {
@@ -632,3 +634,70 @@ export type OpsRuleCheckDto = {
     dvValid: boolean;
   }[];
 };
+
+// ── 배달대행사 소속 · 관제 ─────────────────────────────────────
+
+/** 라이더가 일하는 주문 플랫폼 */
+export type DeliveryPlatform = 'baemin' | 'coupangeats' | 'yogiyo' | 'ddangyo' | 'other';
+
+export type AgencyDto = { id: string; name: string };
+/** agency 가 null 이면 대행사 없이 플랫폼과 직접 계약한 라이더 */
+export type AffiliationDto = {
+  agency: AgencyDto | null;
+  platforms: DeliveryPlatform[];
+  joinedAt: ISODate | null;
+  /** 대행사가 배정한 진행 중 주문(배달 중·보류) */
+  orders: { id: string; platform: DeliveryPlatform | null; storeName: string; destination: string; status: OrderStatus }[];
+};
+/**
+ * 라이더: 관제사에게 받은 가입 코드로 대행사에 소속된다. joinCode 가 null 이면 대행사 없이 플랫폼만, 빠져 있으면 지금 소속을 그대로 둔다.
+ * 관제사: 가입 코드로 다른 관제사의 대행사에 합류한다 (platforms 는 비워 보낸다).
+ */
+export type SetAffiliationRequest = { joinCode?: string | null; platforms: DeliveryPlatform[] };
+export type CreateAgencyRequest = { name: string };
+
+export type AgencyRiderDto = {
+  id: string;
+  name: string;
+  phone: string | null;
+  platforms: DeliveryPlatform[];
+  /** 보호(운행 세션) 중인가 — 위치는 보호 중에만 대행사에 보인다 */
+  protecting: boolean;
+  location: { lat: number; lng: number; recordedAt: ISODate } | null;
+  sensorOnline: boolean;
+  openIncidentId: string | null;
+};
+export type AgencyOrderDto = {
+  id: string;
+  riderId: string;
+  riderName: string;
+  platform: DeliveryPlatform | null;
+  storeName: string;
+  destination: string;
+  status: OrderStatus;
+  incidentId: string | null;
+  createdAt: ISODate;
+};
+export type AgencyIncidentDto = {
+  id: string;
+  riderId: string;
+  riderName: string;
+  riderPhone: string | null;
+  status: IncidentStatus;
+  detectedAt: ISODate;
+  escalatedAt: ISODate | null;
+  escalationReason: string | null;
+  riderResponse: string | null;
+  resolution: Resolution | null;
+  location: { lat: number; lng: number } | null;
+  /** 관제사가 접수했으면 그 이름과 시각 */
+  ack: { by: string; at: ISODate } | null;
+};
+export type AgencyBoardDto = {
+  agency: (AgencyDto & { joinCode: string }) | null;
+  riders: AgencyRiderDto[];
+  orders: AgencyOrderDto[];
+  incidents: AgencyIncidentDto[];
+};
+export type CreateAgencyOrderRequest = { riderId: string; platform: DeliveryPlatform; storeName: string; destination: string };
+export type ReassignOrderRequest = { riderId: string };

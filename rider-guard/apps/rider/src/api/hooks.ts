@@ -1,5 +1,8 @@
 import type {
   AdminOverviewDto,
+  AgencyBoardDto,
+  CreateAgencyOrderRequest,
+  SetAffiliationRequest,
   SetRoleRequest,
   ActiveIncidentResponse,
   AuthProvidersResponse,
@@ -31,6 +34,7 @@ export const keys = {
   active: ['incidents', 'active'] as const,
   list: ['incidents', 'list'] as const,
   incident: (id: string) => ['incidents', 'detail', id] as const,
+  agency: ['agency', 'board'] as const,
 };
 
 export const isOpenStatus = (s: IncidentStatus | undefined) => s === 'countdown' || s === 'escalated';
@@ -148,4 +152,60 @@ export function useAdminOverview(enabled: boolean) {
     enabled: enabled && signedIn,
     refetchInterval: 15_000,
   });
+}
+
+// ── 배달대행사 ─────────────────────────────────────────────────
+
+/** 소속 정하기 — 라이더는 가입 코드와 플랫폼, 관제사는 다른 관제사의 대행사에 가입 코드로 합류 */
+export function useSetAffiliation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SetAffiliationRequest) => api<MeDto>('PUT', '/me/affiliation', body),
+    onSuccess: (me) => {
+      qc.setQueryData(keys.me, me);
+      void qc.invalidateQueries({ queryKey: keys.agency });
+    },
+  });
+}
+
+/** 관제 화면 — 소속 라이더·주문·사고. 5초마다 다시 읽는다 */
+export function useAgencyBoard(enabled: boolean) {
+  const signedIn = useSignedIn();
+  return useQuery({
+    queryKey: keys.agency,
+    queryFn: () => api<AgencyBoardDto>('GET', '/me/agency'),
+    enabled: enabled && signedIn,
+    refetchInterval: enabled && signedIn ? 5_000 : false,
+  });
+}
+
+type AgencyAction =
+  | { kind: 'create'; name: string }
+  | { kind: 'assign'; body: CreateAgencyOrderRequest }
+  | { kind: 'delivered'; orderId: string }
+  | { kind: 'reassign'; orderId: string; riderId: string }
+  | { kind: 'ack'; incidentId: string }
+  | { kind: 'resolve'; incidentId: string };
+
+const agencyRequest = (a: AgencyAction): Promise<AgencyBoardDto> => {
+  switch (a.kind) {
+    case 'create':
+      return api('POST', '/me/agency', { name: a.name });
+    case 'assign':
+      return api('POST', '/me/agency/orders', a.body);
+    case 'delivered':
+      return api('POST', `/me/agency/orders/${a.orderId}/delivered`);
+    case 'reassign':
+      return api('POST', `/me/agency/orders/${a.orderId}/reassign`, { riderId: a.riderId });
+    case 'ack':
+      return api('POST', `/me/agency/incidents/${a.incidentId}/ack`);
+    case 'resolve':
+      return api('POST', `/me/agency/incidents/${a.incidentId}/resolve`);
+  }
+};
+
+/** 관제 화면의 모든 버튼 — 서버가 돌려준 새 관제 화면을 바로 반영한다 */
+export function useAgencyAction() {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: agencyRequest, onSuccess: (board) => qc.setQueryData(keys.agency, board) });
 }

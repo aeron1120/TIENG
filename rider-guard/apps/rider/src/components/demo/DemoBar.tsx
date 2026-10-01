@@ -2,16 +2,20 @@
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
 
 import { Badge, Button, Txt } from '@/components/ui';
-import { inClip, LEAD_IN_S, SCENARIO_IDS, SCENARIOS, type DemoState, type EventClip } from '@/features/demo/engine';
-import { dispatch, TAB_ID } from '@/features/demo/store';
+import { inClip, LEAD_IN_S, SCENARIO_IDS, SCENARIOS, type DemoAction, type DemoState, type EventClip } from '@/features/demo/engine';
+import { demoViewPath, dispatch, TAB_ID } from '@/features/demo/store';
+import { getPresentationConnection, openPresentationReport, usePresentationConnection } from '@/features/demo/presentation';
+import { dispatchPresentationAction, presentationMutationBlock } from '@/features/demo/display';
 import { mmss } from '@/lib/format';
 import { colors, font, radius, typography } from '@/theme';
 
 const open = (path: string) => {
-  if (Platform.OS === 'web' && typeof window !== 'undefined') window.open(path, '_blank');
+  if (Platform.OS === 'web' && typeof window !== 'undefined') window.open(path, '_blank', 'noopener,noreferrer');
 };
+const mutate = (action: DemoAction) => dispatchPresentationAction(getPresentationConnection(), action, dispatch);
 
 export function DemoBar({ s, clip, loading, error, links = true }: { s: DemoState; clip: EventClip | null; loading: boolean; error: unknown; links?: boolean }) {
+  const blocked = presentationMutationBlock(usePresentationConnection());
   const phase = !clip ? null : s.t < LEAD_IN_S ? '정상 주행 (D7 실측 반복)' : inClip(s.t, clip) ? `사건 구간 · ${SCENARIOS[s.scenario].short} 실측 원본${s.slowmo ? ' · 느린 재생' : ''}` : '사건 이후';
   return (
     <View style={styles.bar}>
@@ -19,10 +23,11 @@ export function DemoBar({ s, clip, loading, error, links = true }: { s: DemoStat
         {SCENARIO_IDS.map((id) => (
           <Pressable
             key={id}
-            onPress={() => dispatch({ type: 'reset', scenario: id, baseWall: Date.now() })}
-            style={[styles.scenario, s.scenario === id && styles.scenarioOn]}
+            onPress={() => mutate({ type: 'reset', scenario: id, baseWall: Date.now() })}
+            disabled={!!blocked}
+            style={[styles.scenario, s.scenario === id && styles.scenarioOn, !!blocked && styles.disabled]}
             accessibilityRole="button"
-            accessibilityState={{ selected: s.scenario === id }}
+            accessibilityState={{ selected: s.scenario === id, disabled: !!blocked }}
           >
             <Txt style={[styles.scenarioText, s.scenario === id && styles.scenarioTextOn]}>{SCENARIOS[id].title}</Txt>
           </Pressable>
@@ -34,19 +39,20 @@ export function DemoBar({ s, clip, loading, error, links = true }: { s: DemoStat
           label={s.playing ? '일시정지' : s.t > 0 ? '이어서 재생' : '재생'}
           size="sm"
           variant={s.playing ? 'soft' : 'primary'}
-          disabled={!clip}
+          disabled={!clip || !!blocked}
           loading={!clip && loading}
-          onPress={() => dispatch(s.playing ? { type: 'pause' } : { type: 'play', driver: TAB_ID })}
+          onPress={() => mutate(s.playing ? { type: 'pause' } : { type: 'play', driver: TAB_ID })}
           style={styles.btn}
         />
-        <Button label="처음부터" size="sm" variant="outline" onPress={() => dispatch({ type: 'reset', baseWall: Date.now() })} style={styles.btn} />
-        <Toggle label="사건 구간 느리게" on={s.slowmo} onPress={() => dispatch({ type: 'slowmo', on: !s.slowmo })} />
-        <Toggle label="헬멧 센서 끊기" on={s.sensorLost} onPress={() => dispatch({ type: 'sensor', lost: !s.sensorLost })} danger />
-        {s.incident?.status === 'confirming' ? <Button label="응답 대기 건너뛰기" size="sm" variant="dark" onPress={() => dispatch({ type: 'skipWait' })} style={styles.btn} /> : null}
+        <Button label="처음부터" size="sm" variant="outline" disabled={!!blocked} onPress={() => mutate({ type: 'reset', baseWall: Date.now() })} style={styles.btn} />
+        <Toggle label="사건 구간 느리게" on={s.slowmo} disabled={!!blocked} onPress={() => mutate({ type: 'slowmo', on: !s.slowmo })} />
+        <Toggle label="헬멧 센서 끊기" on={s.sensorLost} disabled={!!blocked} onPress={() => mutate({ type: 'sensor', lost: !s.sensorLost })} danger />
+        {s.incident?.status === 'confirming' ? <Button label="응답 대기 건너뛰기" size="sm" variant="dark" disabled={!!blocked} onPress={() => mutate({ type: 'skipWait' })} style={styles.btn} /> : null}
         <View style={styles.flex} />
         <Txt style={styles.time}>{`시연 ${mmss(s.t)}`}</Txt>
         {phase ? <Badge tone={clip && inClip(s.t, clip) ? 'red' : 'neutral'} size="sm">{phase}</Badge> : null}
       </View>
+      {blocked ? <Txt accessibilityRole="alert" style={styles.note}>{blocked}</Txt> : null}
       {!clip ? (
         <Txt style={[styles.note, !!error && styles.err]}>
           {error ? '시연 데이터를 받지 못했어요 — 잠시 뒤 새로고침해 주세요' : '서버에서 실측 파형과 판정을 받는 중이에요 (서버가 잠들어 있으면 최대 1분)'}
@@ -54,10 +60,10 @@ export function DemoBar({ s, clip, loading, error, links = true }: { s: DemoStat
       ) : null}
       {links ? (
         <View style={styles.row}>
-          <Link label="관제 화면만 새 창" onPress={() => open('/demo/control')} />
-          <Link label="라이더 화면만 새 창" onPress={() => open('/demo/rider')} />
+          <Link label="관제 화면만 새 창" onPress={() => open(demoViewPath('/demo/control'))} />
+          <Link label="라이더 화면만 새 창" onPress={() => open(demoViewPath('/demo/rider'))} />
           <Link label="실험·시뮬레이션 결과" onPress={() => open('/demo/results')} />
-          <Link label="사건 보고서" onPress={() => open('/demo/report')} />
+          <Link label="수신 결과·보고서" onPress={openPresentationReport} />
           <Txt style={styles.note}>같은 브라우저의 창끼리는 같은 사건·같은 시계로 움직여요</Txt>
         </View>
       ) : null}
@@ -65,9 +71,9 @@ export function DemoBar({ s, clip, loading, error, links = true }: { s: DemoStat
   );
 }
 
-function Toggle({ label, on, onPress, danger }: { label: string; on: boolean; onPress: () => void; danger?: boolean }) {
+function Toggle({ label, on, onPress, danger, disabled }: { label: string; on: boolean; onPress: () => void; danger?: boolean; disabled?: boolean }) {
   return (
-    <Pressable onPress={onPress} style={[styles.toggle, on && (danger ? styles.toggleDanger : styles.toggleOn)]} accessibilityRole="switch" accessibilityState={{ checked: on }}>
+    <Pressable disabled={disabled} onPress={onPress} style={[styles.toggle, on && (danger ? styles.toggleDanger : styles.toggleOn), disabled && styles.disabled]} accessibilityRole="switch" accessibilityState={{ checked: on, disabled }}>
       <View style={[styles.dot, on && styles.dotOn]} />
       <Txt style={[styles.toggleText, on && styles.toggleTextOn]}>{label}</Txt>
     </Pressable>
@@ -87,6 +93,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   scenario: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.surfaceMuted },
   scenarioOn: { backgroundColor: colors.asphalt },
+  disabled: { opacity: 0.45 },
   scenarioText: { ...font.sans(600), fontSize: 13, color: colors.text },
   scenarioTextOn: { color: colors.textOnDark },
   point: { ...typography.caption },

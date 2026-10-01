@@ -2,7 +2,7 @@
 // 버튼은 시연 세계의 상태를 실제로 바꾼다 — 접수하면 라이더 화면에 '관제사가 확인했어요', 대체 배차하면 주문 담당이 바뀐다.
 import type { SensorAnalysis } from '@rider-guard/contract';
 import { useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { evidenceHeadline } from '@/components/IncidentEvidence';
 import { MapPill, RiderMap } from '@/components/RiderMap';
@@ -20,10 +20,13 @@ import {
   riderStatus,
   waitLeft,
   type DemoOrder,
+  type DemoAction,
   type DemoState,
   type RiderStatus,
 } from '@/features/demo/engine';
 import { dispatch } from '@/features/demo/store';
+import { dispatchPresentationAction, presentationMutationBlock, presentationStage } from '@/features/demo/display';
+import { getPresentationConnection, openPresentationReport, usePresentationConnection } from '@/features/demo/presentation';
 import { colors, font, radius, typography } from '@/theme';
 
 const STATUS_TONE: Record<RiderStatus, BadgeTone> = { delivering: 'green', idle: 'neutral', off: 'muted', check: 'red', incident: 'redSolid' };
@@ -31,15 +34,18 @@ const ORDER_LABEL: Record<DemoOrder['status'], string> = { delivering: '배달 �
 const ORDER_TONE: Record<DemoOrder['status'], BadgeTone> = { delivering: 'green', held: 'red', reassigned: 'dark', delivered: 'neutral' };
 const METRIC_LABEL: Record<SensorAnalysis['evidence'][number]['key'], string> = { peak_g: '가속도', peak_gyro: '각속도', delta_v150: 'ΔV', bank_deg: '뱅크각' };
 const UNIT: Record<string, string> = { g: 'g', 'deg/s': '°/s', 'm/s': 'm/s', deg: '°' };
+const mutate = (action: DemoAction) => dispatchPresentationAction(getPresentationConnection(), action, dispatch);
 
 export function openReport() {
-  if (Platform.OS === 'web' && typeof window !== 'undefined') window.open('/demo/report', '_blank');
+  openPresentationReport();
 }
 
-export function ControlRoom({ s, analysis, mapHeight = 300 }: { s: DemoState; analysis: SensorAnalysis | null; mapHeight?: number }) {
+export function ControlRoom({ s, analysis, mapHeight = 300, compact = false }: { s: DemoState; analysis: SensorAnalysis | null; mapHeight?: number; compact?: boolean }) {
+  const blocked = presentationMutationBlock(usePresentationConnection());
   // 사건이 생기면 그 라이더로 — 그 사건 동안 관제사가 다른 라이더를 고르면 그쪽을 따른다
   const incidentId = s.incident?.id;
   const [picked, setPicked] = useState<{ id: string; during: string | undefined }>({ id: MAIN_RIDER, during: undefined });
+  const [roomWidth, setRoomWidth] = useState(0);
   const selected = incidentId && picked.during !== incidentId ? MAIN_RIDER : picked.id;
   const setSelected = (id: string) => setPicked({ id, during: incidentId });
   const rider = s.riders.find((r) => r.id === selected) ?? s.riders[0]!;
@@ -47,8 +53,24 @@ export function ControlRoom({ s, analysis, mapHeight = 300 }: { s: DemoState; an
   const st = riderStatus(s, rider);
   const orders = s.orders.filter((o) => o.riderId === rider.id || o.originalRiderId === rider.id);
 
-  return (
+  if (compact) return (
     <View style={styles.room}>
+      <View style={styles.top}>
+        <Txt style={styles.brand}>BATON 관제</Txt>
+        <Txt style={styles.clock}>{clockAt(s, s.t)}</Txt>
+        <Badge tone="neutral" size="sm">{`주요 라이더 · ${s.riders.find((r) => r.id === MAIN_RIDER)?.name ?? '-'}`}</Badge>
+      </View>
+      <IncidentPanel s={s} analysis={analysis} compact />
+      {blocked ? <Txt accessibilityRole="alert" style={styles.meta}>{blocked}</Txt> : null}
+      <View style={styles.orders}>
+        <Txt style={styles.colTitle}>주요 라이더의 주문 · 보류와 인계 결과</Txt>
+        {s.orders.filter((o) => o.originalRiderId === MAIN_RIDER).map((o) => <CompactOrder key={o.id} s={s} o={o} />)}
+      </View>
+    </View>
+  );
+
+  return (
+    <View style={styles.room} onLayout={(e) => setRoomWidth(e.nativeEvent.layout.width)}>
       <View style={styles.top}>
         <Txt style={styles.brand}>BATON 배달대행 관제</Txt>
         <Badge tone="neutral" size="sm">시연 데이터 · 실제 발송 없음</Badge>
@@ -60,8 +82,9 @@ export function ControlRoom({ s, analysis, mapHeight = 300 }: { s: DemoState; an
         <Txt style={styles.clock}>{clockAt(s, s.t)}</Txt>
       </View>
 
-      <View style={styles.main}>
-        <View style={styles.left}>
+      {blocked ? <Txt accessibilityRole="alert" style={styles.meta}>{blocked}</Txt> : null}
+      <View style={[styles.main, roomWidth < 920 && styles.mainStack]}>
+        <View style={[styles.left, roomWidth < 920 && styles.fullWidth]}>
           <Txt style={styles.colTitle}>{`소속 라이더 ${s.riders.length}명`}</Txt>
           {s.riders.map((r) => {
             const rs = riderStatus(s, r);
@@ -100,21 +123,21 @@ export function ControlRoom({ s, analysis, mapHeight = 300 }: { s: DemoState; an
           </View>
         </View>
 
-        <View style={styles.right}>
+        <View style={[styles.right, roomWidth < 920 && styles.fullWidth]}>
           <IncidentPanel s={s} analysis={analysis} />
         </View>
       </View>
 
       <View style={styles.orders}>
         <Txt style={styles.colTitle}>{`${rider.name} 라이더 주문`}</Txt>
-        <View style={[styles.tr, styles.th]}>
+        {roomWidth >= 800 ? <View style={[styles.tr, styles.th]}>
           {['주문', '가게 → 고객', '담당', '상태', '보류 사유', '대체 배차', '안내 이력'].map((h, k) => (
             <Txt key={h} style={[styles.thText, { flex: COLS[k] }]}>{h}</Txt>
           ))}
-        </View>
+        </View> : null}
         {orders.length === 0 ? <Txt style={styles.empty}>진행 중인 주문이 없어요</Txt> : null}
         {orders.map((o) => (
-          <OrderRow key={o.id} s={s} o={o} />
+          roomWidth < 800 ? <CompactOrder key={o.id} s={s} o={o} /> : <OrderRow key={o.id} s={s} o={o} />
         ))}
       </View>
     </View>
@@ -123,7 +146,20 @@ export function ControlRoom({ s, analysis, mapHeight = 300 }: { s: DemoState; an
 
 const COLS = [0.8, 2, 0.9, 0.9, 1.1, 2.2, 2.4];
 
+function CompactOrder({ s, o }: { s: DemoState; o: DemoOrder }) {
+  const blocked = presentationMutationBlock(usePresentationConnection());
+  const owner = s.riders.find((r) => r.id === o.riderId)?.name ?? '-';
+  const last = o.notices.at(-1);
+  return <View style={styles.compactOrder}>
+    <View style={styles.riderHead}><Txt style={styles.strongLine}>{o.id} · {owner}</Txt><Badge tone={ORDER_TONE[o.status]} size="sm">{ORDER_LABEL[o.status]}</Badge></View>
+    <Txt style={styles.meta}>{o.store} → {o.customer}</Txt>
+    {o.status === 'held' ? <View style={styles.chips}>{replacementCandidates(s).slice(0, 2).map((r) => <Button key={r.id} label={`${r.name}에게 인계`} size="sm" variant="outline" disabled={!!blocked} onPress={() => mutate({ type: 'reassign', orderId: o.id, riderId: r.id })} />)}</View> : null}
+    {last ? <Txt style={styles.meta}>{`${last.to} 안내 · ${last.text} (시연)`}</Txt> : null}
+  </View>;
+}
+
 function OrderRow({ s, o }: { s: DemoState; o: DemoOrder }) {
+  const blocked = presentationMutationBlock(usePresentationConnection());
   const owner = s.riders.find((r) => r.id === o.riderId)?.name ?? '-';
   const from = s.riders.find((r) => r.id === o.originalRiderId)?.name ?? '-';
   const last = o.notices.at(-1);
@@ -139,7 +175,7 @@ function OrderRow({ s, o }: { s: DemoState; o: DemoOrder }) {
       <View style={[styles.chips, { flex: COLS[5] }]}>
         {o.status === 'held'
           ? replacementCandidates(s).slice(0, 3).map((r) => (
-              <Pressable key={r.id} onPress={() => dispatch({ type: 'reassign', orderId: o.id, riderId: r.id })} style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]} accessibilityRole="button" accessibilityLabel={`${o.id}를 ${r.name}에게 대체 배차`}>
+              <Pressable key={r.id} disabled={!!blocked} onPress={() => mutate({ type: 'reassign', orderId: o.id, riderId: r.id })} style={({ pressed }) => [styles.chip, pressed && styles.chipPressed, !!blocked && styles.disabled]} accessibilityRole="button" accessibilityState={{ disabled: !!blocked }} accessibilityLabel={`${o.id}를 ${r.name}에게 대체 배차`}>
                 <Txt style={styles.chipText}>{`→ ${r.name} (${activeOrders(s, r.id).length}건)`}</Txt>
               </Pressable>
             ))
@@ -161,15 +197,16 @@ function Count({ label, n, alert }: { label: string; n: number; alert?: boolean 
   );
 }
 
-function IncidentPanel({ s, analysis }: { s: DemoState; analysis: SensorAnalysis | null }) {
+function IncidentPanel({ s, analysis, compact = false }: { s: DemoState; analysis: SensorAnalysis | null; compact?: boolean }) {
+  const blocked = presentationMutationBlock(usePresentationConnection());
   const i = s.incident;
+  const stage = presentationStage(s, analysis ? { caseId: '', from: 0, to: 0, candidateAt: analysis.candidateAt, decision: analysis.decision } : null);
   if (!i) {
     return (
       <View style={styles.panel}>
         <Txt style={styles.colTitle}>사건</Txt>
-        <Txt style={styles.calmTitle}>진행 중 사건 없음</Txt>
-        <Txt style={styles.meta}>모든 라이더 감시 중 · 헬멧 센서 수신 정상</Txt>
-        {s.clipDone ? <Txt style={[styles.meta, styles.gap]}>최근 판정: 사건 구간이 사고 후보 조건을 채우지 않았어요 (후보 없음)</Txt> : null}
+        <Txt style={styles.calmTitle}>{stage.title}</Txt>
+        <Txt style={[styles.meta, styles.gap]}>{stage.description}</Txt>
         {s.sensorLost ? <Txt style={[styles.meta, styles.gap, { color: colors.redInk }]}>{`${s.riders[0]!.name} 라이더 센서 신호 끊김 — 확인 필요`}</Txt> : null}
       </View>
     );
@@ -180,12 +217,13 @@ function IncidentPanel({ s, analysis }: { s: DemoState; analysis: SensorAnalysis
   const canAck = i.status === 'escalated';
   const canAct = i.status === 'escalated' || i.status === 'acknowledged';
   return (
-    <ScrollView style={styles.panel} contentContainerStyle={styles.panelInner}>
+    <View style={[styles.panel, styles.panelInner]}>
       <View style={styles.riderHead}>
         <Txt style={styles.colTitle}>{i.id}</Txt>
         <Badge tone={tone} size="sm">{INCIDENT_STATUS_LABEL[i.status]}</Badge>
       </View>
       <Txt style={styles.incTitle}>{`${s.riders[0]!.name} · ${clockAt(s, i.detectedT)} 사고 후보`}</Txt>
+      {compact ? <Txt style={styles.meta}>{stage.description}</Txt> : null}
 
       <Section title="라이더 응답">
         <Txt style={styles.strongLine}>
@@ -194,7 +232,7 @@ function IncidentPanel({ s, analysis }: { s: DemoState; analysis: SensorAnalysis
         {i.status === 'confirming' ? <Txt style={styles.meta}>응답이 없으면 관제에 접수되고 주문이 보류돼요</Txt> : null}
       </Section>
 
-      <Section title="감지 근거">
+      {!compact ? <Section title="감지 근거">
         {analysis ? (
           <>
             <Txt style={styles.strongLine}>{evidenceHeadline(analysis)}</Txt>
@@ -206,7 +244,7 @@ function IncidentPanel({ s, analysis }: { s: DemoState; analysis: SensorAnalysis
         ) : (
           <Txt style={styles.meta}>판정 근거를 불러오는 중</Txt>
         )}
-      </Section>
+      </Section> : null}
 
       <Section title="대응">
         <Txt style={styles.meta}>{i.assignee ? `담당 ${i.assignee}${i.ackT !== null ? ` · 접수 ${clockAt(s, i.ackT)}` : ''}` : '담당자 없음'}</Txt>
@@ -215,15 +253,16 @@ function IncidentPanel({ s, analysis }: { s: DemoState; analysis: SensorAnalysis
           <Txt key={k} style={styles.meta}>{`${clockAt(s, c.t)} 라이더 전화 — ${c.result}`}</Txt>
         ))}
         <View style={styles.actions}>
-          <Button label={i.assignee ? `${CONTROLLER} 담당 중` : '접수하고 담당 지정'} size="sm" variant={canAck ? 'primary' : 'soft'} disabled={!canAck} onPress={() => dispatch({ type: 'ack' })} />
+          {!compact || canAck ? <Button label={i.assignee ? `${CONTROLLER} 담당 중` : '접수하고 담당 지정'} size="sm" variant={canAck ? 'primary' : 'soft'} disabled={!canAck || !!blocked} onPress={() => mutate({ type: 'ack' })} /> : null}
+          {!compact || canAct ?
           <View style={styles.actionRow}>
-            <Button label="라이더에게 전화" size="sm" variant="outline" disabled={!canAct} onPress={() => dispatch({ type: 'call' })} style={styles.flex} />
-            <Button label="대응 완료" size="sm" variant={i.status === 'acknowledged' ? 'red' : 'soft'} disabled={i.status !== 'acknowledged'} onPress={() => dispatch({ type: 'resolve' })} style={styles.flex} />
-          </View>
+            <Button label="라이더에게 전화" size="sm" variant="outline" disabled={!canAct || !!blocked} onPress={() => mutate({ type: 'call' })} style={styles.flex} />
+            <Button label="대응 완료" size="sm" variant={i.status === 'acknowledged' ? 'red' : 'soft'} disabled={i.status !== 'acknowledged' || !!blocked} onPress={() => mutate({ type: 'resolve' })} style={styles.flex} />
+          </View> : null}
           {i.status === 'resolved' || i.status === 'rider_ok' ? <Button label="사건 보고서 열기" size="sm" variant="dark" onPress={openReport} /> : null}
         </View>
       </Section>
-    </ScrollView>
+    </View>
   );
 }
 
@@ -246,6 +285,8 @@ const styles = StyleSheet.create({
   countAlert: { color: colors.red },
   countLabel: { ...typography.meta },
   main: { flexDirection: 'row', gap: 12, minHeight: 300 },
+  mainStack: { flexDirection: 'column' },
+  fullWidth: { width: '100%' },
   left: { width: 220, gap: 6 },
   center: { flex: 1, minWidth: 260, gap: 8 },
   right: { width: 320 },
@@ -261,7 +302,7 @@ const styles = StyleSheet.create({
   logRow: { flexDirection: 'row', gap: 8, paddingVertical: 1.5 },
   logTime: { ...font.mono(600), fontSize: 11.5, color: colors.textFaint, width: 62 },
   logText: { ...font.sans(500), fontSize: 12.5, lineHeight: 17, color: colors.text, flex: 1 },
-  panel: { flex: 1, backgroundColor: colors.surfaceMuted, borderRadius: 14, padding: 12 },
+  panel: { backgroundColor: colors.surfaceMuted, borderRadius: 14, padding: 12 },
   panelInner: { gap: 8, paddingBottom: 8 },
   calmTitle: { ...font.sans(800), fontSize: 18, color: colors.text, marginTop: 8 },
   incTitle: { ...font.sans(800), fontSize: 16.5, lineHeight: 22, letterSpacing: -0.3, color: colors.text },
@@ -274,6 +315,7 @@ const styles = StyleSheet.create({
   actionRow: { flexDirection: 'row', gap: 6 },
   flex: { flex: 1, minWidth: 0 },
   orders: { gap: 2 },
+  compactOrder: { gap: 5, paddingVertical: 9, borderTopWidth: 1, borderTopColor: colors.divider },
   tr: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 7, borderTopWidth: 1, borderTopColor: colors.divider },
   th: { borderTopWidth: 0, paddingVertical: 4 },
   thText: { ...font.sans(600), fontSize: 11.5, color: colors.textFaint },
@@ -283,6 +325,7 @@ const styles = StyleSheet.create({
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
   chip: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill, backgroundColor: colors.asphalt },
   chipPressed: { backgroundColor: colors.asphaltPressed },
+  disabled: { opacity: 0.45 },
   chipText: { ...font.sans(600), fontSize: 11.5, color: colors.textOnDark },
   empty: { ...typography.meta, paddingVertical: 8 },
 });

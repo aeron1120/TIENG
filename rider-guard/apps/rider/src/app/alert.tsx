@@ -20,6 +20,7 @@ import Svg, { Circle, Defs, LinearGradient, RadialGradient, Rect, Stop } from 'r
 
 import { useIncident, useRespond } from '@/api/hooks';
 import { Notice } from '@/components/forms';
+import { AlarmSoundControl } from '@/components/AlarmSoundControl';
 import { AlertCircleFilledIcon, MicIcon } from '@/components/Icons';
 import { useToast } from '@/components/Toast';
 import { Badge, Button, FadeIn, FadeSwap, PressableScale, Screen, ScreenFooter, Skeleton, Txt, useReducedMotion } from '@/components/ui';
@@ -115,7 +116,7 @@ export default function AlertScreen() {
     if (phase === 'expired') AccessibilityInfo.announceForAccessibility(escalatedTitle);
   }, [phase, escalatedTitle]);
 
-  // 감지 즉시 진동 알람 (4.3 1단계). 소리 알람은 TODO — 알람음 에셋과 무음 모드 처리 필요.
+  // 진동과 웹 경고음은 각각 지원되는 환경에서 동작한다. 웹 경고음은 사용자 준비가 필요하다.
   useEffect(() => {
     if (expired || closed) return;
     Vibration.vibrate([0, 700, 500], true);
@@ -201,6 +202,7 @@ export default function AlertScreen() {
   return (
     <Screen tone="dark" enter="none" top={66} side={24} bottom={0} gap={0} footer={footer}>
       <StatusBar style="light" />
+      <AlarmSoundControl active={phase === 'count' && !closed && !respond.isPending && !respond.isSuccess} onDark />
 
       {/* 맨 뒤 층 — 가운데 붉은 방사형 빛 */}
       <View style={[styles.glowLayer, { left: -24, right: -24 }]}>

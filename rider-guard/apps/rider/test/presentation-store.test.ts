@@ -11,6 +11,9 @@ type Store = {
   dispatch(action: DemoAction): void;
   getDemoState(): DemoState;
   replaceDemoState(state: DemoState): void;
+  restoreDemoState(state: DemoState): void;
+  setDemoSession(id: string | null, controller: boolean): void;
+  useDemoClock(clip: EventClip): void;
   subscribeDemoActions(listener: (action: DemoAction) => void): () => void;
 };
 
@@ -19,7 +22,7 @@ type Store = {
 const source = stripTypeScriptTypes(readFileSync(new URL('../src/features/demo/store.ts', import.meta.url), 'utf8')
   .replace(/^import .*$/gm, '')
   .replace(/^export /gm, ''))
-  + '\nglobalThis.store = { TAB_ID, dispatch, getDemoState, replaceDemoState, subscribeDemoActions };';
+  + '\nglobalThis.store = { TAB_ID, dispatch, getDemoState, replaceDemoState, subscribeDemoActions, restoreDemoState, setDemoSession, useDemoClock };';
 
 function browser() {
   const channels: Channel[] = [];
@@ -38,13 +41,17 @@ function browser() {
     }
   }
   return {
-    tab(): Store {
+    tab(scope?: string): Store {
       const realm = createContext({
-        initialState, reduce, BroadcastChannel: Channel,
-        window: { BroadcastChannel: Channel, localStorage: { getItem: () => null, setItem: () => undefined } },
+        initialState, reduce, BroadcastChannel: Channel, URLSearchParams,
+        useRef: (value: unknown) => ({ current: value }), useCallback: (callback: () => void) => callback,
+        useEffect: (callback: () => void) => callback(), useFocusEffect: (callback: () => void) => callback(),
+        setInterval: () => 1, clearInterval: () => undefined, performance: { now: () => 0 },
+        window: { location: { search: scope ? `?presentation=${scope}` : '' }, BroadcastChannel: Channel, localStorage: { getItem: () => null, setItem: () => undefined } },
         setTimeout: () => 1,
       });
       runInContext(source, realm);
+      realm.store.useDemoClock(clip);
       return realm.store as Store;
     },
     drain() {
@@ -131,4 +138,68 @@ test('a response from a viewing tab is applied by the driver and forwarded to ea
   b.dispatch({ type: 'respond', response: 'help' });
   tabs.drain();
   for (const server of [serverA, serverB]) assert.equal(server.actions.filter((action) => action.type === 'respond').length, 1);
+});
+
+test('restoring a server snapshot shares the paused state without sending another reset', () => {
+  const tabs = browser();
+  const a = tabs.tab();
+  const b = tabs.tab();
+  tabs.drain();
+  const mirror = serverMirror(b, initialState('full', 1000));
+  const canonical = { ...initialState('full', 1000), t: 12, playing: false, driver: null };
+  a.restoreDemoState(canonical);
+  tabs.drain();
+  assert.equal(b.getDemoState().t, 12);
+  assert.equal(b.getDemoState().playing, false);
+  assert.equal(mirror.actions.length, 0);
+});
+
+test('different connected sessions retain their own canonical state and commands while matching views follow', () => {
+  const tabs = browser();
+  const a = tabs.tab();
+  const b = tabs.tab();
+  a.setDemoSession('pres_a', true);
+  b.setDemoSession('pres_b', true);
+  const canonicalA = { ...initialState('full', 1000), t: 12 };
+  const canonicalB = initialState('full', 2000);
+  a.restoreDemoState(canonicalA);
+  b.restoreDemoState(canonicalB);
+  const serverA = serverMirror(a, canonicalA);
+  const serverB = serverMirror(b, canonicalB);
+  const viewA = tabs.tab('pres_a');
+  const viewB = tabs.tab('pres_b');
+  tabs.drain();
+  assert.equal(a.getDemoState().t, 12);
+  assert.equal(b.getDemoState().t, 0);
+  assert.equal(viewA.getDemoState().t, 12);
+  assert.equal(viewB.getDemoState().t, 0);
+
+  // A paused viewing tab asks its controller to play; the controller owns ticks.
+  viewA.dispatch({ type: 'play', driver: viewA.TAB_ID });
+  viewB.dispatch({ type: 'play', driver: viewB.TAB_ID });
+  tabs.drain();
+  assert.equal(a.getDemoState().driver, a.TAB_ID);
+  assert.equal(b.getDemoState().driver, b.TAB_ID);
+  a.dispatch({ type: 'tick', dt: 0.5, clip });
+  b.dispatch({ type: 'tick', dt: 0.5, clip });
+  tabs.drain();
+  assert.equal(serverA.state().t, 12.5);
+  assert.equal(serverB.state().t, 0.5);
+  for (const state of [a.getDemoState(), viewA.getDemoState()]) assert.deepEqual(replayState(state), replayState(serverA.state()));
+  for (const state of [b.getDemoState(), viewB.getDemoState()]) assert.deepEqual(replayState(state), replayState(serverB.state()));
+  for (const server of [serverA, serverB]) assert.equal(server.actions.filter((action) => action.type === 'reset').length, 0);
+});
+
+test('a pinned controller ignores a peer controller snapshot even for a cloned session', () => {
+  const tabs = browser();
+  const a = tabs.tab();
+  const b = tabs.tab();
+  a.setDemoSession('pres_same', true);
+  b.setDemoSession('pres_same', true);
+  a.restoreDemoState({ ...initialState('full', 1000), t: 12 });
+  b.restoreDemoState(initialState('full', 1000));
+  b.restoreDemoState(initialState('full', 1000));
+  tabs.drain();
+  assert.equal(a.getDemoState().t, 12);
+  assert.equal(b.getDemoState().t, 0);
 });

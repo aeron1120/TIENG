@@ -9,6 +9,7 @@ import Svg, { Line as SvgLine } from 'react-native-svg';
 import { errorMessage } from '@/api/client';
 import { useCreateIncident, useMe } from '@/api/hooks';
 import { BottomNav } from '@/components/BottomNav';
+import { AlarmSoundControl } from '@/components/AlarmSoundControl';
 import { IconButton, Notice } from '@/components/forms';
 import { BellIcon, ClockIcon, HelmetIcon, LockIcon, MapPinIcon, ShieldCheckIcon, UsersIcon, WaveformIcon } from '@/components/Icons';
 import { MapPill, RiderMap } from '@/components/RiderMap';
@@ -18,7 +19,8 @@ import { acceptanceSummaryText, useContactAcceptance } from '@/features/contactS
 import { helmetInfo, helmetStatusText, useHelmet } from '@/features/helmet';
 import { recentLocation, useDevicePosition, useLocationState } from '@/features/location';
 import { voiceSupported } from '@/features/voice';
-import { enablePhoneSensor, usePhoneSensorState, type PhoneSensorStatus } from '@/features/phoneSensor';
+import { enablePhoneSensor, usePhoneSensorState } from '@/features/phoneSensor';
+import { protectionReadiness } from '@/features/protection-readiness';
 import { riderDisplayName, useNow, useSimNotifications, wearTime, type SimNotification } from '@/features/sim';
 import { timeAgo, timeHM } from '@/lib/format';
 import { PLATFORM_SHORT, platformsText } from '@/lib/platforms';
@@ -75,16 +77,6 @@ function copyFor(kind: Exclude<Kind, 'loading'>, startedAt: string | null, addre
   }
 }
 
-/** 헬멧 기기 없이 휴대폰 센서를 쓸 때, 아직 보호 중이 아닌 이유 */
-const PHONE_NOTE: Partial<Record<PhoneSensorStatus, string>> = {
-  needs_permission: '헬멧 기기가 없어 휴대폰 센서로 충격을 감지해요. 아래 버튼을 눌러 동작 센서를 허용해 주세요.',
-  starting: '휴대폰 센서를 켜는 중이에요.',
-  running: '휴대폰 센서 신호를 받았어요. 곧 보호가 켜져요.',
-  no_sensor: '이 기기에서 동작 센서 신호가 오지 않아요. 데스크탑이라면 휴대폰 브라우저로 열어 주세요.',
-  denied: '동작 센서 권한이 거부됐어요. 브라우저 설정에서 동작 및 방향 접근을 허용해 주세요.',
-  unsupported: '이 앱 빌드에서는 휴대폰 센서를 아직 쓸 수 없어요. 휴대폰 브라우저에서 열어 주세요.',
-};
-
 export default function HomeScreen() {
   // 헬멧 연결·배터리 표시를 위해 홈에 있는 동안 15초마다 새로 받는다.
   const { data: me, error: meError, refetch } = useMe({ refetchInterval: 15_000 });
@@ -97,17 +89,18 @@ export default function HomeScreen() {
   const toast = useToast();
   const acceptance = useContactAcceptance(me?.contacts);
   const notifications = useSimNotifications(me);
+  const now = useNow(1000);
 
   const sessionActive = !!me?.session;
-  const sensorFresh = !!me?.device && !me.device.kind.includes('webcam') && me.device.sensorState === 'fresh' && !!me.device.lastSensorAt;
-  const active = sessionActive && sensorFresh;
+  const readiness = protectionReadiness({ sessionActive, device: me?.device ?? null, phoneStatus: phone.status, locationAt: me?.lastLocation?.recordedAt, locationPermission: location.permission, now });
+  const active = readiness.sensorFresh;
   const { worn } = helmet;
   const kind: Kind =
     !me || !helmet.ready
       ? 'loading'
       : sessionActive
         ? worn
-          ? active ? 'on' : me.device?.sensorState === 'stale' ? 'sensorStale' : 'sensorWaiting'
+          ? active ? 'on' : me.device?.lastSensorAt ? 'sensorStale' : 'sensorWaiting'
           : helmet.heldByIncident
             ? 'held'
             : helmet.protectionError
@@ -120,8 +113,6 @@ export default function HomeScreen() {
           : 'off';
   const loading = kind === 'loading';
   const startedAt = me?.session?.startedAt ?? null;
-  // 착용 시간은 1초마다 — 보호 중일 때만 시계를 돌린다
-  const now = useNow(1000, active);
 
   // 보호가 켜지고 꺼지는 순간을 짧게 알린다 — 처음 그릴 때의 상태는 알리지 않는다
   const prevActive = useRef<boolean | null>(null);
@@ -131,8 +122,8 @@ export default function HomeScreen() {
     prevActive.current = active;
     if (was === null || was === active) return;
     if (active) toast.success('보호가 켜졌어요');
-    else toast.info('보호가 꺼졌어요');
-  }, [me, active, toast]);
+    else toast.info(sessionActive ? '최근 센서 신호를 확인해 주세요' : '보호가 꺼졌어요');
+  }, [me, active, sessionActive, toast]);
 
   // 종 아이콘 알림 목록 — 여는 순간의 목록을 보여 주고, 닫을 때 읽음으로 남긴다
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -255,17 +246,19 @@ export default function HomeScreen() {
         </Card>
       </FadeIn>
 
-      {sessionActive && !active && !loading ? (
-        <Notice
-          tone="info"
-          message={PHONE_NOTE[phone.status] ?? (me?.device?.lastSensorAt ? `최근 센서 측정 ${timeAgo(me.device.lastSensorAt, now)} · ${me.device.staleAfterSeconds ?? 60}초 기준 연결 확인 필요` : '측정된 센서 정보가 없어요. 운행 세션이 있어도 충격 감지를 확인할 수 없어요.')}
-          style={styles.notice}
-        />
+      {!loading ? (
+        <Card style={styles.readiness}>
+          <Txt style={styles.readinessTitle}>{readiness.title}</Txt>
+          <View style={styles.readinessRow}><Txt style={typography.caption}>감지 센서</Txt><Txt style={typography.caption}>{readiness.source}</Txt></View>
+          <View style={styles.readinessRow}><Txt style={typography.caption}>마지막 센서 수신</Txt><Txt style={typography.caption}>{readiness.sensorText}</Txt></View>
+          <View style={styles.readinessRow}><Txt style={typography.caption}>서버에 전달된 위치</Txt><Txt style={typography.caption}>{readiness.locationText}</Txt></View>
+          <Txt style={typography.meta}>{readiness.detail}</Txt>
+          {readiness.action === 'enable_phone' ? <Button label="휴대폰 센서 권한 확인" size="sm" variant="outline" onPress={() => void enablePhoneSensor()} /> : null}
+          {readiness.action === 'connection' || readiness.action === 'settings' ? <Button label={sessionActive ? '기기 연결 확인' : '보호 설정 확인'} size="sm" variant="outline" onPress={() => router.push('/setup')} /> : null}
+          {sessionActive ? <Button label="수신 상태 다시 확인" size="sm" variant="soft" onPress={() => void refetch()} /> : null}
+          <AlarmSoundControl />
+        </Card>
       ) : null}
-      {sessionActive && phone.status === 'needs_permission' && !loading ? (
-        <Button label="휴대폰 센서 켜기" onPress={() => void enablePhoneSensor()} style={styles.notice} />
-      ) : null}
-      {active && me?.device?.kind === 'phone' ? <Notice tone="info" message="헬멧 대신 휴대폰 센서로 충격을 감지하고 있어요. 휴대폰이 몸에 붙어 있을 때(주머니·거치대) 가장 잘 맞아요." style={styles.notice} /> : null}
       {helmet.protectionError && !loading ? (
         <Notice message={`보호를 ${worn ? '켜지' : '끄지'} 못했어요. ${errorMessage(helmet.protectionError)}`} style={styles.notice} />
       ) : null}
@@ -485,6 +478,9 @@ function TextOr({ loading, width, style, children, ...rest }: TextOrProps) {
 }
 
 const styles = StyleSheet.create({
+  readiness: { marginTop: 16, padding: 16, gap: 10 },
+  readinessTitle: { ...font.sans(700), fontSize: 16, color: colors.text },
+  readinessRow: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 },
   // 머리글 — 인사·이름은 카드보다 8 안쪽 (디자인 x 24)
   header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingLeft: 8, paddingRight: 4 },
   headerText: { flex: 1, minWidth: 0 },

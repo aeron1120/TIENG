@@ -19,6 +19,8 @@ import {
   type DemoState,
 } from '@/features/demo/engine';
 import { useDemoState } from '@/features/demo/store';
+import { presentationStage } from '@/features/demo/display';
+import { openPresentationReport, usePresentationConnection } from '@/features/demo/presentation';
 import { colors, font, radius, typography } from '@/theme';
 
 const ACTOR: Record<string, string> = { system: '시스템', sensor: '센서 판정', rider: '라이더', control: '관제', order: '주문' };
@@ -30,6 +32,8 @@ function buildJson(s: DemoState, a: SensorAnalysis | null) {
   const i = s.incident!;
   return {
     schemaVersion: 'demo-incident-report-v1',
+    source: 'local-browser-replay',
+    serverReceivedAt: null,
     notice: '시연 데이터로 만든 사건 보고서입니다. 센서 파형은 ESP32·MPU6050 헬멧 IMU 실측 기록(시나리오 재현 실험)이고, 라이더·주문·관제·연락은 시연 데이터이며 실제로 아무에게도 발송하지 않았습니다. 사고 확정·상해 정도·보험 판단 자료가 아닙니다.',
     generatedAt: new Date().toISOString(),
     incident: { ...i, detectedAt: clockAt(s, i.detectedT), scenario: SCENARIOS[s.scenario].title },
@@ -53,15 +57,33 @@ function download(s: DemoState, a: SensorAnalysis | null) {
 
 export default function DemoReportScreen() {
   const s = useDemoState();
+  const c = usePresentationConnection();
   const i = s.incident;
-  const event = useDemoCase(i?.caseId ?? null);
+  const serverContext = !!(c.sessionId || c.monitorUrl);
+  const event = useDemoCase(serverContext ? null : i?.caseId ?? null);
   const a = event.data?.analysis ?? null;
 
+  // A separate tab can hold an unrelated local replay. Prefer the shared read-only
+  // server result before rendering or requesting evidence for any local incident.
+  if (serverContext) return (
+    <View style={styles.emptyPage}>
+      <Head><title>발표 서버 수신 결과</title></Head>
+      <Badge tone="green">서버 세션 결과</Badge>
+      <Txt style={styles.h1}>{c.monitorUrl ? '발표의 수신 결과와 보고서' : '서버 보고서 읽기 링크를 확인할 수 없어요'}</Txt>
+      <Txt style={styles.caption}>{c.monitorUrl ? '이 브라우저의 로컬 재생 기록과 서버에 수신된 기록은 다를 수 있어요. 연결된 발표의 읽기 전용 결과에서 사건·정상·판정 불가와 서버 수신 시각을 확인해 주세요.' : '발표 세션은 확인했지만 이 탭에서 읽기 전용 링크를 가져오지 못했어요. 시연을 시작한 원본 탭에서 수신 결과·보고서를 열어 주세요. 이 화면에서는 로컬 사건 기록을 대신 표시하지 않아요.'}</Txt>
+      {c.monitorUrl ? <Button label="서버 수신 결과·보고서 열기 ↗" onPress={openPresentationReport} /> : null}
+      <Txt style={styles.caption}>라이더 취소는 사고 없음의 확정이 아니며, 시연 대응 종결은 실제 구조 완료를 뜻하지 않아요.</Txt>
+    </View>
+  );
+
   if (!i) {
+    const stage = presentationStage(s, null);
     return (
       <View style={styles.emptyPage}>
-        <Txt style={styles.h1}>아직 사건이 없어요</Txt>
-        <Txt style={styles.caption}>통합 시연(/demo)에서 충돌 시나리오를 재생하면 사건 보고서가 여기에 만들어져요.</Txt>
+        <Badge tone="neutral">로컬 재생 결과</Badge>
+        <Txt style={styles.h1}>{s.clipDone ? stage.title : '아직 로컬 사건이 없어요'}</Txt>
+        <Txt style={styles.caption}>{stage.description}</Txt>
+        <Txt style={styles.caption}>이 화면은 같은 브라우저에 저장된 마지막 재생 기록이에요. 연결된 서버 보고서 주소가 없어 서버 수신 시각이나 수신 완료를 확인할 수 없어요.</Txt>
       </View>
     );
   }
@@ -77,15 +99,15 @@ export default function DemoReportScreen() {
       </Head>
       <View style={styles.head}>
         <View style={styles.flex}>
-          <Txt style={styles.kicker}>Rider Guard · 사건 보고서 (시연)</Txt>
+          <Txt style={styles.kicker}>Rider Guard · 로컬 재생 보고서 (시연)</Txt>
           <Txt style={styles.h1}>{i.id}</Txt>
           <Txt style={styles.caption}>{`${SCENARIOS[s.scenario].title} · 생성 ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}`}</Txt>
         </View>
-        <Badge tone={i.status === 'resolved' ? 'neutral' : 'red'}>{INCIDENT_STATUS_LABEL[i.status]}</Badge>
+        <Badge tone={i.status === 'resolved' || i.status === 'rider_ok' ? 'neutral' : 'red'}>{INCIDENT_STATUS_LABEL[i.status]}</Badge>
       </View>
       <View style={styles.notice}>
         <Txt style={styles.noticeText}>
-          시연 데이터로 만든 보고서예요. 센서 파형은 ESP32·MPU6050 헬멧 IMU 실측 기록(시나리오 재현 실험)이고, 라이더·주문·관제·연락은 시연 데이터라 실제로 아무에게도 발송하지 않았어요. 감지 근거일 뿐 사고 확정·상해 정도·보험 판단이 아니에요.
+          같은 브라우저에 저장된 마지막 로컬 재생 기록이에요. 서버 수신 결과나 수신 시각을 확인한 보고서가 아니에요. 센서 파형은 ESP32·MPU6050 헬멧 IMU 실측 실험이고 라이더·주문·관제·연락은 시연 데이터라 실제로 발송하지 않았어요. 사고 확정·상해 정도·보험 판단이나 실제 구조 완료를 뜻하지 않아요.
         </Txt>
       </View>
       <View style={styles.buttons}>
@@ -94,6 +116,7 @@ export default function DemoReportScreen() {
       </View>
 
       <Section title="1. 요약">
+        <KV k="기록 출처" v="이 브라우저의 로컬 재생 · 서버 수신 시각 확인 불가" />
         <KV k="라이더" v={`${rider.name} · ${rider.area}`} />
         <KV k="감지" v={`${clockAt(s, i.detectedT)} 사고 후보 (센서 파형 ${i.candidateClipT.toFixed(3)}초)`} />
         <KV k="라이더 응답" v={i.response ? `${RESPONSE_LABEL[i.response]}${i.respondedT !== null ? ` · ${clockAt(s, i.respondedT)}` : ''}` : '응답 대기'} />

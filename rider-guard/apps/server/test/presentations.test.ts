@@ -19,6 +19,30 @@ const imported = (candidate = true): DetectionV1 => ({
   evidence: [{ key: 'impact', label: '외부 충격', group: 'required', value: 7, threshold: 5, op: '>=', unit: 'g', decimals: 1, fired: true, value_basis: 'window' }],
 });
 
+test('replay preview validates the same strict import without creating a session', async () => {
+  const t = await setup();
+  try {
+    const preview = await t.call<{ detection: DetectionV1 }>('POST', `${endpoint}/preview`, { body: { detection: imported() } });
+    assert.equal(preview.status, 200);
+    assert.equal(preview.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(preview.json, { detection: imported() });
+    assert.equal((await t.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM presentationSessions'))?.n, 0);
+    for (const path of [endpoint, `${endpoint}/preview`]) {
+      const invalid = await t.call<{ error: { details: { path: string; message: string }[] } }>('POST', path, { body: { detection: { ...imported(), result: { candidate: true, t_candidate_s: null }, '<img>': true } } });
+      assert.equal(invalid.status, 422);
+      assert.ok(invalid.json.error.details.some((detail) => detail.path === '$.detection.result.t_candidate_s'));
+      assert.ok(invalid.json.error.details.some((detail) => detail.path === '$.detection.<img>'));
+    }
+    for (const body of [{}, { detection: { ...imported(), source: { ...imported().source, mode: 'live' } } }, { detection: { ...imported(), result: { candidate: true, t_candidate_s: 1e10 } } }]) {
+      assert.equal((await t.call('POST', `${endpoint}/preview`, { body })).status, 422);
+    }
+    const app = createApp(t.ctx);
+    assert.equal((await app.request(`${endpoint}/preview`, { method: 'POST', body: '{' })).status, 400);
+    assert.equal((await app.request(`${endpoint}/preview`, { method: 'POST', body: 'x'.repeat(66000) })).status, 413);
+    assert.equal((await t.ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM presentationSessions'))?.n, 0);
+  } finally { t.ctx.db.close(); }
+});
+
 test('presentation capabilities are isolated, hashed, non-cacheable, and never returned on reads', async () => {
   const t = await setup();
   const c = await t.call<CreatedPresentation>('POST', endpoint, { body: { origin: 'integrated' } });

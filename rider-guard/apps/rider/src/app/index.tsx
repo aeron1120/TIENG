@@ -91,8 +91,14 @@ function LoginForm() {
       </FadeIn>
 
       <FadeIn delay={40} style={styles.intro}>
+        <View style={styles.demoEntry}>
+          <Txt style={styles.demoTitle}>사고 감지부터 주문 인계까지</Txt>
+          <Txt style={typography.caption}>실측 센서 자료로 Rider Guard의 전체 대응 흐름을 체험하세요.</Txt>
+          <Button label="로그인 없이 시연 시작" onPress={() => router.push('/demo')} />
+          <Txt style={typography.meta}>발표용 체험 · 실제 문자·119·외부 배차 발송 없음</Txt>
+        </View>
         <Txt accessibilityRole="header" style={typography.display}>
-          {'다시 오셨네요\n보호를 이어갈게요'}
+          {'계정으로 로그인'}
         </Txt>
         <Txt style={typography.lead}>{'가입한 이메일로 로그인해 주세요.\n처음이면 아래에서 바로 가입할 수 있어요.'}</Txt>
       </FadeIn>
@@ -135,9 +141,6 @@ function LoginForm() {
       <FadeIn delay={120} style={styles.actions}>
         <Button label="로그인" loading={login.isPending || authBusy} disabled={social.isPending} onPress={() => void submit()} />
         <SignupLink onPress={() => router.push('/signup')} disabled={busy} />
-        <Pressable accessibilityRole="link" onPress={() => router.push('/demo')} hitSlop={4} style={styles.link}>
-          <Txt style={styles.linkText}>로그인 없이 통합 시연 보기</Txt>
-        </Pressable>
       </FadeIn>
 
       {socialProviders.length > 0 && (
@@ -193,6 +196,8 @@ function SignupLink({ onPress, disabled }: { onPress: () => void; disabled?: boo
 }
 
 const styles = StyleSheet.create({
+  demoEntry: { backgroundColor: colors.surface, padding: 18, borderRadius: 18, gap: 12, marginBottom: 20, borderWidth: 1, borderColor: colors.border },
+  demoTitle: { ...font.sans(700), fontSize: 20, lineHeight: 28, color: colors.text },
   // v3·1 과 같은 자리 — 로고 줄(타일 28 + 'Rider Guard' 16 굵게, 사이 8) · 제목 · 입력칸이 시작·동의 화면과 겹친다
   brand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   brandName: { ...font.sans(700), fontSize: 16, lineHeight: 22, letterSpacing: -0.2, color: colors.text },

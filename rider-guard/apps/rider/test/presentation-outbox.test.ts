@@ -33,3 +33,25 @@ test('요청 크기를 제한하고 오래된 응답이 큐를 되돌리지 않�
   assert.equal(q.pending, 20);
   assert.equal(q.batch()[0]!.seq, 101);
 });
+
+test('reload preserves unacknowledged sequence and command contents', () => {
+  const q = new PresentationOutbox();
+  q.push({ type: 'play', driver: 'a' });
+  q.push({ type: 'tick', dt: 0.5 });
+  q.push({ type: 'pause' });
+  q.acknowledge(3);
+  q.push({ type: 'play', driver: 'a' });
+  q.push({ type: 'tick', dt: 0.5 });
+  const restored = new PresentationOutbox(JSON.parse(JSON.stringify(q.snapshot())));
+  assert.equal(restored.batch()[0]!.seq, 4);
+  assert.deepEqual(restored.batch(), [{ seq: 4, action: { type: 'play', driver: 'a' } }, { seq: 5, action: { type: 'tick', dt: 0.5 } }]);
+  restored.reconcile(8);
+  assert.equal(restored.pending, 0);
+  assert.equal(restored.push({ type: 'pause' }).seq, 9);
+});
+
+test('invalid persisted command order is rejected before any replay', () => {
+  assert.throws(() => new PresentationOutbox({ sequence: 4, queue: [{ seq: 3, action: { type: 'pause' } }, { seq: 3, action: { type: 'pause' } }] }), /snapshot/);
+  assert.throws(() => new PresentationOutbox({ sequence: 4, queue: [{ seq: 2, action: { type: 'pause' } }, { seq: 4, action: { type: 'pause' } }] }), /snapshot/);
+  assert.throws(() => new PresentationOutbox({ sequence: 1, queue: [{ seq: 1, action: { type: 'tick', dt: 900 } }] }), /snapshot/);
+});

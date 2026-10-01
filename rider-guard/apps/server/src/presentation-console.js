@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const $ = (id) => document.getElementById(id);
-  const statusNames = { confirming: '라이더에게 확인하고 있어요', rider_ok: '본인 확인 후 감시로 돌아왔어요', escalated: '관제 대응이 시작됐어요', acknowledged: '연락과 주문 인계를 진행해요', resolved: '대응을 마치고 기록을 남겼어요' };
+  const statusNames = { confirming: '라이더에게 확인하고 있어요', rider_ok: '본인 확인 후 감시로 돌아왔어요', escalated: '관제 대응이 시작됐어요', acknowledged: '연락과 주문 인계를 진행해요', resolved: '시연 대응을 마치고 기록을 남겼어요' };
   const orderNames = { delivering: '배달 중', held: '일시 보류', reassigned: '대체 배차 완료', delivered: '배달 완료' };
   const metricNames = { peak_g: '가속도', peak_gyro: '각속도', delta_v150: 'ΔV · 150ms', bank_deg: '뱅크각' };
   const params = new URLSearchParams(location.hash.slice(1));
@@ -23,6 +23,10 @@
   let renderedLog = '';
   let renderedOrders = '';
   let creating = false;
+  let importVersion = 0;
+  let importPreview = null;
+  let previewing = false;
+  let fileReading = false;
   let lastTickAt = performance.now();
   const driver = `monitor-${Math.random().toString(36).slice(2)}`;
 
@@ -58,6 +62,7 @@
       if (!response.ok) {
         const error = new Error(data?.error?.message ?? `요청을 처리하지 못했어요 (HTTP ${response.status}).`);
         error.status = response.status;
+        error.details = data?.error?.details;
         throw error;
       }
       if (!data) throw new Error('서버 응답을 읽지 못했어요. 연결을 확인하세요.');
@@ -83,19 +88,34 @@
   }
 
   async function loadCases() {
+    const select = $('case-select');
+    select.disabled = true;
+    $('start-measured').disabled = true;
     try {
       const data = await request('/demo-api/results');
+      if (!Array.isArray(data.items) || data.items.some((item) => !item || typeof item.id !== 'string' || typeof item.name !== 'string' || !['candidate', 'no_candidate', 'insufficient'].includes(item.v1?.decision) || !item.repeats)) throw new Error('실측 목록 형식 오류');
       cases = data.items;
-      const select = $('case-select');
-      select.replaceChildren(...cases.map((item) => {
+      if (!cases.length) {
+        select.replaceChildren(node('option', '사용할 실측 자료가 없음'));
+        $('case-note').textContent = '사용할 실측 자료가 없어요. 외부 replay 자료를 가져오거나 나중에 다시 확인하세요.';
+        return;
+      }
+      const groups = new Map();
+      for (const item of cases) {
+        // Experiment class describes the setup, never a verdict. Missing evidence takes priority.
+        const label = item.v1.decision === 'insufficient' ? '자료 부족 · 판정 제한' : ({ accident: '사고 모사 조건', boundary: '경계 조건', unrealized: '미발동 실험 조건', normal: '정상 주행 실험 조건' }[item.class] ?? '기타 실험 조건');
+        if (!groups.has(label)) { const group = node('optgroup'); group.label = label; groups.set(label, group); }
         const option = node('option', `${item.id} · ${item.name} · ${item.v1.decision === 'candidate' ? '후보 감지' : item.v1.decision === 'insufficient' ? '판정 제한' : '후보 없음'}`);
         option.value = item.id;
-        return option;
-      }));
+        groups.get(label).append(option);
+      }
+      select.replaceChildren(...groups.values());
+      select.value = cases[0].id;
       select.disabled = false;
       $('start-measured').disabled = false;
       updateCaseNote();
     } catch {
+      cases = [];
       $('case-note').textContent = '실측 목록을 불러오지 못했어요. 서버 연결을 확인하고 페이지를 새로고침하세요.';
       $('case-select').replaceChildren(node('option', '실측 목록을 불러올 수 없음'));
     }
@@ -104,6 +124,68 @@
   function updateCaseNote() {
     const item = cases.find((c) => c.id === $('case-select').value);
     if (item) $('case-note').textContent = `원본 1회차 파형 · ${item.repeats.n}회 중 후보 ${item.repeats.candidates}회 · 기록 판정과 ${item.v1.match ? '일치' : '불일치'} (실제 사고 정답 검증과 별개)`;
+  }
+
+  function importErrors(details = []) {
+    $('import-errors').replaceChildren(...details.map((detail) => node('li', `${detail.path ?? '$'}: ${detail.message ?? '값을 확인하세요.'}`)));
+    $('import-errors').hidden = details.length === 0;
+    $('json-input').setAttribute('aria-invalid', String(details.length > 0));
+  }
+
+  function invalidatePreview(message = '자료가 바뀌었어요. 다시 검증하고 미리보기를 확인하세요.') {
+    importVersion += 1;
+    importPreview = null;
+    previewing = false;
+    fileReading = false;
+    $('preview-import').disabled = creating;
+    $('import-preview').hidden = true;
+    $('create-import').disabled = true;
+    $('import-note').textContent = message;
+    importErrors();
+    return importVersion;
+  }
+
+  async function previewImport() {
+    if (creating || previewing || fileReading) return;
+    const version = invalidatePreview('서버에서 JSON 형식을 검증하고 있어요. 세션은 아직 만들지 않습니다.');
+    const raw = $('json-input').value;
+    previewing = true;
+    $('preview-import').disabled = true;
+    setError();
+    try {
+      if (!raw.trim()) throw new Error('JSON을 붙여넣거나 파일을 선택하세요.');
+      if (new Blob([raw]).size > 60000) throw new Error('JSON 파일은 60KB 이하로 선택하세요.');
+      let detection;
+      try { detection = JSON.parse(raw); } catch { throw new Error('JSON 문법을 읽을 수 없어요. 따옴표, 쉼표와 괄호를 확인하세요.'); }
+      const data = await request('/demo-api/presentations/preview', { method: 'POST', body: JSON.stringify({ detection }) });
+      if (version !== importVersion || raw !== $('json-input').value) return;
+      const d = data.detection;
+      if (!d?.source?.replay || !d.result || !Array.isArray(d.evidence)) throw new Error('미리보기 응답을 읽지 못했어요. 다시 검증하세요.');
+      importPreview = { raw, detection: d };
+      $('preview-summary').textContent = `${d.source.replay.scenario_name} · 제공된 판정: ${d.result.candidate ? '후보 감지' : '후보 없음'} · 근거 ${d.evidence.length}개. 원본 파형은 없으며 입력된 판정을 재분석하지 않습니다.`;
+      $('preview-details').replaceChildren();
+      for (const [label, value] of [['기록 ID', d.detection_id], ['기록 시각', d.occurred_at], ['재생 출처', `${d.source.replay.run_id} · ${d.source.device} / ${d.source.mount}`], ['판정 규칙', `${d.detector.name} ${d.detector.version} · ${d.detector.rule.expression}`], ['후보 시점', d.result.t_candidate_s == null ? '기록 없음' : `${number(d.result.t_candidate_s)}초 (원본 센서 시각)`]]) {
+        $('preview-details').append(node('dt', label), node('dd', value));
+      }
+      $('import-preview').hidden = false;
+      $('create-import').disabled = false;
+      $('import-note').textContent = '형식 검증 완료 · 아래 자료를 확인하고 발표를 시작하세요.';
+    } catch (error) {
+      if (version !== importVersion) return;
+      importErrors(Array.isArray(error.details) && error.details.length ? error.details : [{ path: '$', message: error.message }]);
+      $('import-note').textContent = '검증하지 못했어요. 표시된 위치를 수정하고 다시 미리보기를 실행하세요.';
+    } finally {
+      if (version === importVersion) { previewing = false; $('preview-import').disabled = creating; }
+    }
+  }
+
+  function downloadJson(value, filename) {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));
+    const link = node('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   async function createSession(body) {
@@ -124,11 +206,16 @@
       history.replaceState(null, '', `/ops/presentation#${new URLSearchParams({ session: sessionId, key: readToken })}`);
       receive(data);
       enqueue({ type: 'autopilot', on: true }, { type: 'play', driver });
-    } catch (error) { setError(`발표를 시작하지 못했어요. ${error.message}`); }
+    } catch (error) {
+      setError(`발표를 시작하지 못했어요. ${error.message}`);
+      if (body.detection && Array.isArray(error.details)) { invalidatePreview('검증 오류를 수정한 뒤 다시 미리보기를 확인하세요.'); importErrors(error.details); }
+    }
     finally {
       creating = false;
       for (const button of $('setup').querySelectorAll('button')) button.disabled = false;
       $('start-measured').disabled = !cases.length;
+      $('create-import').disabled = !importPreview || importPreview.raw !== $('json-input').value;
+      $('preview-import').disabled = previewing || fileReading;
     }
   }
 
@@ -230,7 +317,7 @@
     $('demo-clock').textContent = `${wall(s.baseWall + s.t * 1000)} KST · +${s.t.toFixed(1)}s`;
     $('event-title').textContent = incident ? statusNames[incident.status] ?? incident.status : missed ? '수신 누락으로 판정하지 못했어요' : s.sensorLost ? '센서 연결을 확인하고 있어요' : limited ? '자료가 부족해 판정이 제한됐어요' : s.clipDone ? '사고 후보 없이 분석을 마쳤어요' : s.t >= 6 ? '사건 구간을 분석하고 있어요' : '라이더의 주행을 지켜보고 있어요';
     const wait = incident?.status === 'confirming' ? Math.max(0, Math.ceil(30 - (s.t - incident.detectedT))) : null;
-    $('event-description').textContent = wait !== null ? `확인 요청 후 ${wait}초 남음 · “괜찮아요” 또는 “도움이 필요해요”로 본인이 응답할 수 있어요.` : incident?.status === 'resolved' ? `${incident.id} · 사건 경과와 주문 인계가 같은 시계에 기록되었습니다.` : incident?.status === 'rider_ok' ? '라이더의 응답을 기록했습니다. 이 응답만으로 실제 사고 여부를 확정하지 않습니다.' : incident ? '비상연락처와 관제에 상황을 공유하고, 진행 중인 주문을 안전하게 인계합니다. 모든 과정은 시연입니다.' : missed ? '원본에는 후보 시점이 있지만, 시연 센서가 끊긴 동안 해당 구간을 받아 판정하지 못했습니다. 이후 재연결되어도 정상으로 바꾸지 않습니다.' : limited ? '누락된 자료 때문에 후보 여부를 충분히 판단할 수 없습니다. 판정 제한과 근거를 그대로 기록합니다.' : s.clipDone ? session.detection ? '외부에서 제공한 후보 판정이 false인 기록입니다. 실제 사고 여부를 확정하지 않으며 사고 대응으로 강제 진행하지 않습니다.' : '후보 조건을 충족하지 않은 기록입니다. 사고 대응이나 대체 배차로 강제 진행하지 않습니다.' : '서버가 받은 실측·재생 자료에 따라 동일한 시연 시계를 진행합니다.';
+    $('event-description').textContent = wait !== null ? `확인 요청 후 ${wait}초 남음 · “괜찮아요” 또는 “도움이 필요해요”로 본인이 응답할 수 있어요.` : incident?.status === 'resolved' ? `${incident.id} · 시연 종료 · 사건 경과와 주문 인계를 기록했습니다. 실제 구조 완료를 뜻하지 않습니다.` : incident?.status === 'rider_ok' ? '라이더의 응답을 기록했습니다. 이 응답만으로 실제 사고 여부를 확정하지 않습니다.' : incident ? '비상연락처와 관제에 상황을 공유하고, 진행 중인 주문을 안전하게 인계합니다. 모든 과정은 시연입니다.' : missed ? '원본에는 후보 시점이 있지만, 시연 센서가 끊긴 동안 해당 구간을 받아 판정하지 못했습니다. 이후 재연결되어도 정상으로 바꾸지 않습니다.' : limited ? '누락된 자료 때문에 후보 여부를 충분히 판단할 수 없습니다. 판정 제한과 근거를 그대로 기록합니다.' : s.clipDone ? session.detection ? '외부에서 제공한 후보 판정이 false인 기록입니다. 실제 사고 여부를 확정하지 않으며 사고 대응으로 강제 진행하지 않습니다.' : '후보 조건을 충족하지 않은 기록입니다. 사고 대응이나 대체 배차로 강제 진행하지 않습니다.' : '서버가 받은 실측·재생 자료에 따라 동일한 시연 시계를 진행합니다.';
     $('response-value').textContent = wait !== null ? `${wait}초 남음` : ({ ok: '괜찮아요', help: '도움 요청', timeout: '30초 무응답' }[incident?.response] ?? '대기 전');
     $('assignee-value').textContent = incident?.assignee ?? '아직 배정 전';
     $('reassigned-value').textContent = `${s.orders.filter((order) => order.status === 'reassigned').length}건`;
@@ -248,7 +335,7 @@
     renderOrders(s);
     renderTimeline(s);
     $('report-summary').textContent = `${session.source.label} · ${incident ? statusNames[incident.status] ?? incident.status : missed ? '센서 수신 누락 / 판정하지 못함' : limited ? '자료 부족 / 판정 제한' : s.clipDone ? '후보 없음 / 분석 종료' : '분석 진행 중'} · 주문 인계 ${s.orders.filter((order) => order.status === 'reassigned').length}건 · 기록 ${s.log.length}건`;
-    $('report-validity').textContent = `서버 수신 ${new Date(session.receivedAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} KST / 시연 +${number(s.t, 1)}초. 후보 판정은 실제 사고의 확정이 아닙니다. ${session.source.kind === 'import' ? '외부에서 제공한 판정이며 원본 파형을 재검증하지 않았습니다.' : '실측 신호를 재분석했으며 라이더·연락·주문 흐름은 시연입니다.'}`;
+    $('report-validity').textContent = `서버 수신 ${new Date(session.receivedAt).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} KST / 시연 +${number(s.t, 1)}초. 서버 수신은 정상 판정이 아니며, 시연 종료는 실제 구조 완료가 아닙니다. 후보 판정은 실제 사고의 확정이 아닙니다. ${session.source.kind === 'import' ? '외부에서 제공한 판정이며 원본 파형을 재검증하지 않았습니다.' : '실측 신호를 재분석했으며 라이더·연락·주문 흐름은 시연입니다.'}`;
     updateConnection();
   }
 
@@ -385,25 +472,39 @@
     $('log-count').textContent = `${s.log.length}개 기록`;
   }
 
-  $('measured-form').addEventListener('submit', (event) => { event.preventDefault(); void createSession({ caseId: $('case-select').value }); });
+  $('measured-form').addEventListener('submit', (event) => { event.preventDefault(); if (cases.some((item) => item.id === $('case-select').value)) void createSession({ caseId: $('case-select').value }); });
   $('case-select').addEventListener('change', updateCaseNote);
-  $('import-form').addEventListener('submit', (event) => {
-    event.preventDefault();
-    try {
-      const raw = $('json-input').value.trim();
-      if (new Blob([raw]).size > 60000) throw new Error('JSON 파일은 60KB 이하로 선택하세요.');
-      const detection = JSON.parse(raw);
-      if (detection?.schema_version !== '1.0' || detection?.source?.mode !== 'replay') throw new Error('schema_version이 1.0이고 source.mode가 replay인 detection.v1 자료를 사용하세요.');
-      void createSession({ detection });
-    } catch (error) { setError(`JSON을 확인해주세요. ${error.message}`); }
+  $('import-form').addEventListener('submit', (event) => { event.preventDefault(); void previewImport(); });
+  $('json-input').addEventListener('input', () => invalidatePreview());
+  $('create-import').addEventListener('click', () => {
+    if (!importPreview || importPreview.raw !== $('json-input').value) { invalidatePreview(); return; }
+    void createSession({ detection: importPreview.detection });
   });
   $('json-file').addEventListener('change', async () => {
+    const version = invalidatePreview();
     const file = $('json-file').files?.[0];
     if (!file) return;
-    if (file.size > 60000) { setError('JSON 파일은 60KB 이하로 선택하세요.'); return; }
-    try { $('json-input').value = await file.text(); setError(); }
-    catch { setError('파일을 읽을 수 없어요. JSON을 직접 붙여넣거나 다시 선택하세요.'); }
+    $('json-input').value = '';
+    if (file.size > 60000) { importErrors([{ path: '$', message: 'JSON 파일은 60KB 이하로 선택하세요.' }]); return; }
+    fileReading = true;
+    $('preview-import').disabled = true;
+    $('import-note').textContent = '파일을 읽고 있어요. 읽기가 끝나면 검증할 수 있습니다.';
+    try {
+      const raw = await file.text();
+      if (version !== importVersion) return;
+      $('json-input').value = raw;
+      setError();
+      $('import-note').textContent = '파일을 읽었어요. 검증하고 미리보기를 확인하세요.';
+    } catch { if (version === importVersion) importErrors([{ path: '$', message: '파일을 읽을 수 없어요. JSON을 직접 붙여넣거나 다시 선택하세요.' }]); }
+    finally { if (version === importVersion) { fileReading = false; $('preview-import').disabled = creating; } }
   });
+  $('download-example').addEventListener('click', () => downloadJson({
+    schema_version: '1.0', detection_id: 'presentation-example-001', rider_id: 'example-rider', occurred_at: '2026-10-01T00:00:00Z',
+    source: { mode: 'replay', device: 'helmet_tag', mount: 'helmet', replay: { run_id: 'example-run-001', scenario_id: 'example-impact', scenario_name: '형식 확인용 충격 예제 (합성)', ground_truth: 'unknown' } },
+    detector: { name: 'example-detector', version: '1.0', status: 'example', profile: 'replay-example', rule: { expression: 'impact >= 5g (형식 확인용 예제)', window_s: 0.5, warmup_s: 0 } },
+    result: { candidate: true, t_candidate_s: 7 },
+    evidence: [{ key: 'impact', label: '예제 충격', group: 'required', value: 7, threshold: 5, op: '>=', unit: 'g', decimals: 1, fired: true, value_basis: 'window' }],
+  }, 'rider-guard-replay-example.json'));
   $('play').addEventListener('click', () => enqueue({ type: 'autopilot', on: $('autopilot').checked }, { type: 'play', driver }));
   $('pause').addEventListener('click', () => enqueue({ type: 'pause' }));
   $('reset').addEventListener('click', () => enqueue({ type: 'reset', baseWall: Date.now() }, { type: 'autopilot', on: $('autopilot').checked }));
@@ -426,12 +527,7 @@
     // Explicit fields exclude read/write capabilities from exported reports.
     const { id, source, state, clip, analysis, detection, lastSequence, receivedAt, expiresAt } = session;
     const report = { reportType: 'rider-guard.presentation.v1', exportedAt: new Date().toISOString(), isolatedDemo: true, id, source, state, clip, analysis, detection, lastSequence, receivedAt, expiresAt };
-    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
-    const link = node('a');
-    link.href = url;
-    link.download = `rider-guard-${id}.json`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadJson(report, `rider-guard-${id}.json`);
   });
   $('share').addEventListener('click', async () => {
     try {

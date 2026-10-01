@@ -5,6 +5,7 @@ import { HTTPException } from 'hono/http-exception';
 
 import type { AppContext } from './context.ts';
 import { ApiError } from './lib.ts';
+import { demoRoutes } from './routes/demo.ts';
 import { deviceRoutes } from './routes/device.ts';
 import { opsRoutes } from './routes/ops.ts';
 import { authRoutes, meRoutes, tooLarge } from './routes/rider.ts';
@@ -16,7 +17,7 @@ export function createApp(ctx: AppContext) {
   const app = new Hono();
 
   // 라이더 앱(웹 포함)은 토큰을 헤더로 보내고 쿠키를 쓰지 않으므로 출처 제한 없이 연다.
-  for (const path of ['/auth/*', '/me', '/me/*']) app.use(path, cors());
+  for (const path of ['/auth/*', '/me', '/me/*', '/demo-api/*']) app.use(path, cors());
   // 센서 로그 업로드만 1MB(라우트에서 제한), 나머지는 64KB. /v1 은 인증을 먼저 보고 나서 크기를 잰다(라우트에서)
   const defaultLimit = bodyLimit({ maxSize: 64 * 1024, onError: tooLarge });
   const sensorLimit = bodyLimit({ maxSize: 4 * 1024 * 1024, onError: tooLarge });
@@ -31,6 +32,7 @@ export function createApp(ctx: AppContext) {
   app.route('/device-api', deviceRoutes(ctx));
   app.route('/s', shareRoutes(ctx));
   app.route('/ops', opsRoutes(ctx));
+  app.route('/demo-api', demoRoutes());
 
   app.notFound((c) => c.json({ error: { code: 'not_found', message: '없는 경로예요.' } }, 404));
   app.onError((err, c) => {

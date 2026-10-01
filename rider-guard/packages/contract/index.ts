@@ -568,7 +568,37 @@ export type OpsJudgmentDto = {
   incidentId: string | null;
   traces: RuleTrace[];
 };
-/** 운영 모니터: 지금 서버 규칙을 실측 기록(ESP32·MPU6050 29조건 1회차)에 다시 돌린 결과 */
+// ── 시연 (로그인 없음, /demo-api) ─────────────────────────────
+
+export type DemoRuleDto = { version: string; windowS: number; dvWindowS: number; warmupS: number; g: number; gyro: number; dv: number; bank: number };
+export type DemoSourceDto = { dataSource: DataSource; label: string; note: string };
+export type DemoCaseSummaryDto = {
+  id: string;
+  name: string;
+  /** accident / boundary / unrealized / normal */
+  class: string;
+  /** 이 1회차 기록에 남은 첫 후보 시각(초) */
+  latchAt: number | null;
+  /** 같은 조건 5회 요약 [평균, 표본 SD] */
+  repeats: { n: number; peakG: [number, number]; peakDps: [number, number]; dvEst: [number, number]; candidates: number };
+  /** 같은 조건의 기존 시뮬레이션 요약 — 다른 원본, 비교용 */
+  sim: { speedKmh: number | null; peakG: number | null; peakDps: number | null; dvTrue: number | null; candidateS: number | null };
+  v1: { decision: SensorAnalysis['decision']; candidateAt: number | null; passed: SensorMetricEvidence['key'][]; match: boolean };
+  ppt: { decision: SensorAnalysis['decision']; candidateAt: number | null; passed: SensorMetricEvidence['key'][] };
+  quality: { missingPackets: number; dvValid: boolean; dvValidRatio: number | null; saturated: number };
+  peaks: Record<SensorMetricEvidence['key'], number | null>;
+};
+export type DemoResultsDto = {
+  source: DemoSourceDto;
+  /** v1 = 운영 규칙(imu-report-v1), ppt = 발표자료 초안 기준(비교용, 사고를 열지 않음) */
+  rules: { v1: DemoRuleDto; ppt: DemoRuleDto };
+  items: DemoCaseSummaryDto[];
+  /** 기록의 판정과 운영 규칙이 후보 여부·첫 후보 시각까지 맞은 조건 수 */
+  matched: number;
+};
+export type DemoCaseDto = { source: DemoSourceDto; summary: DemoCaseSummaryDto; analysis: SensorAnalysis };
+
+/** 운영 모니터: 지금 서버 규칙을 ESP32·MPU6050 MOCK 기록(29조건 1회차)에 다시 돌린 결과 */
 export type OpsRuleCheckDto = {
   ruleVersion: string;
   dataSource: DataSource;

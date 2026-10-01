@@ -38,20 +38,22 @@ export default function RootLayout() {
 
 function AppShell({ fontsReady }: { fontsReady: boolean }) {
   const { status } = useAuth();
-  const ready = fontsReady && status !== 'loading';
-  // 상태바 글자색 — 어두운 화면(사고 확인·잠금화면 미리보기)만 밝게, 나머지는 밝은 바탕이라 어둡게
   const pathname = usePathname();
+  // 통합 시연(/demo…)은 로그인 없이, 넓은 화면 그대로 — 로그인 복원을 기다리지 않는다
+  const demo = pathname === '/demo' || pathname.startsWith('/demo/');
+  const ready = fontsReady && (demo || status !== 'loading');
+  // 상태바 글자색 — 어두운 화면(사고 확인·잠금화면 미리보기)만 밝게, 나머지는 밝은 바탕이라 어둡게
   const lightStatusBar = pathname === '/alert' || pathname === '/lockscreen';
   // 넓은 웹 화면에서는 가운데 폰 폭(430) 프레임으로 보여 준다. 390 폭 캡처에서는 켜지지 않는다.
   const { width } = useWindowDimensions();
-  const framed = Platform.OS === 'web' && width > 520;
+  const framed = Platform.OS === 'web' && width > 520 && !demo;
 
   useEffect(() => {
     if (ready) SplashScreen.hideAsync();
   }, [ready]);
 
   if (!ready) return null;
-  if (status !== 'signedIn' && !['/', '/signup', '/auth/callback', '/emergency'].includes(pathname)) return <Redirect href="/" />;
+  if (!demo && status !== 'signedIn' && !['/', '/signup', '/auth/callback', '/emergency'].includes(pathname)) return <Redirect href="/" />;
 
   return (
     <View style={{ flex: 1, backgroundColor: framed ? colors.webBackdrop : colors.bg }}>
@@ -59,7 +61,7 @@ function AppShell({ fontsReady }: { fontsReady: boolean }) {
         style={{
           flex: 1,
           width: '100%',
-          maxWidth: Platform.OS === 'web' ? 430 : undefined,
+          maxWidth: Platform.OS === 'web' && !demo ? 430 : undefined,
           alignSelf: 'center',
           backgroundColor: colors.bg,
           overflow: 'hidden',
@@ -96,6 +98,12 @@ function AppShell({ fontsReady }: { fontsReady: boolean }) {
               }}
             />
             <Stack.Screen name="status" options={{ animation: 'fade', gestureEnabled: false }} />
+            {/* 통합 시연 — 로그인 없음, 넓은 화면 */}
+            <Stack.Screen name="demo/index" options={{ animation: 'none' }} />
+            <Stack.Screen name="demo/control" options={{ animation: 'none' }} />
+            <Stack.Screen name="demo/rider" options={{ animation: 'none' }} />
+            <Stack.Screen name="demo/results" options={{ animation: 'none' }} />
+            <Stack.Screen name="demo/report" options={{ animation: 'none' }} />
             {/* 비상연락처가 받는 긴급 알림 웹(v3·9) 미리보기 — 흰 바탕 전체 화면. 닫기 버튼이 없어(디자인) iOS 는 쓸어내려 닫는 모달로 */}
             <Stack.Screen
               name="emergency"

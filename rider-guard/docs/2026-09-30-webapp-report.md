@@ -45,12 +45,25 @@ cd rider-guard/apps/server && node scripts/demo-cases.ts            # 판정 요
 RIDER_TOKEN=<토큰> node scripts/demo-cases.ts --post C3            # 기록 상세 화면에서 확인
 ```
 
-## 실측 기록 재생 (추가)
+## ESP32 MOCK 기록 재생 (추가, 2026-10-01 출처 정정)
 
-- `legacy/moto_sensing/ESP32_MPU6050/data/REAL_*_repeat1.npz` 29조건 1회차를 `apps/server/fixtures/measured/*.json.gz`(사건 중심 −1.0~+0.5초, 880KB)로 옮겼다. 다시 만들기: `scripts/export-measured.py`(numpy 필요).
-  - 옮긴 것: 센서 시각·순번·원시 코드·가속도/각속도 크기·추정 뱅크각·추정 ΔV(NaN은 null+사유). 출처가 확인되지 않은 참조 채널(dv_true·roll_true·latent_*)은 옮기지 않았다.
-  - `dataSource: measured`, provenance에 '사용자 확인 실측, 보드·펌웨어·측정일 기록 없음'.
-- 결과: 현재 규칙 `imu-report-v1`이 29/29 조건에서 실험 판정의 후보 여부와 **첫 후보 시각(같은 표본)** 을 재현한다. 1회차 29건 대조일 뿐이며 검출률·오경보율로 일반화하지 않는다.
-- 운영 모니터 `/ops` 하단 '실측 기록 규칙 대조' (`GET /ops/api/rule-check`, 모니터 토큰 필요).
-- 데모: `node scripts/demo-cases.ts --measured [D6 B3 C3 | A1 …] [--post]`. 운영 서버는 replay라 사고를 열지 않는다(`not_live`).
-- 발견: 정상 주행 10건 중 8건은 판정창에 1~3개 순번 누락이 있어 `no_candidate`가 아니라 `insufficient`(판정 정보 부족)로 나온다. 사고를 열지는 않지만, 누락 한 표본을 '후보 없음'으로 볼지는 새 규칙 버전으로 따로 검증할 일이라 바꾸지 않았다(테스트에 현재 동작 고정).
+- `legacy/moto_sensing/ESP32_MPU6050/data/REAL_*_repeat1.npz` 29조건 1회차를 `apps/server/fixtures/esp32-mock/*.json.gz`(사건 중심 −1.0~+0.5초)로 옮겼다. 다시 만들기: `scripts/export-esp32.py`(numpy 필요). 같은 조건 5회 요약(평균·표본 SD)과 기존 시뮬레이션 요약(SIM_reference)도 함께 담는다.
+- **출처: MOCK.** 파일 접두사는 `REAL_`이지만 원본 보고서 `ESP32_MPU6050_헬멧_IMU_MOCK_실험보고서`와 재현 코드가 합성 자료이고 실제 실험 0회로 명시돼 있다. 2026-09-30에 `measured`로 붙였던 표시를 `mock`으로 바로잡았다. 참조 채널(dv_true·roll_true·latent_*)은 옮기지 않았다.
+- 결과: 운영 규칙 `imu-report-v1`이 29/29 조건에서 기록의 후보 여부와 첫 후보 시각(같은 표본)을 재현한다. 1회차 29건 대조일 뿐이며 검출률·오경보율로 일반화하지 않는다.
+- 발표자료 초안 기준(4g·600°/s·75°)은 `PPT_DRAFT_RULE`로 따로 돌려 비교만 한다(사고를 열지 않음). 29조건 분류는 같고, 후보를 1~29ms 먼저 건다.
+- 발견: 정상 주행 10건 중 8건은 판정창에 1~3개 순번 누락이 있어 `no_candidate`가 아니라 `insufficient`(판정 정보 부족)로 나온다. 바꾸려면 새 규칙 버전으로 검증할 일이라 그대로 두었다.
+- pcx125 시뮬레이션 원본 시계열(pcx125_sim.zip)은 이 저장소에 없다. 발표자료의 다른 집계(311·337회)는 원본·규칙 버전을 확인하지 못해 화면에 싣지 않았다.
+
+## 통합 시연 (/demo, 로그인 없음)
+
+| 주소 | 내용 |
+|---|---|
+| `/demo` | 라이더 화면 · 배달대행사 관제 화면 · 헬멧 센서 파형을 나란히. 시나리오 A1(전체 흐름)·D6·B3·C3, 재생/일시정지/처음부터, 사건 구간 느리게, 헬멧 센서 끊기, 응답 대기 건너뛰기 |
+| `/demo/control` | 관제 화면만 (넓은 화면용) |
+| `/demo/rider` | 라이더 화면만 (휴대폰·다른 창용) |
+| `/demo/results` | 29조건 결과 비교 — 5회 편차, 두 규칙 판정, 누락·ΔV 유효율, 원본 파형 |
+| `/demo/report` | 사건 보고서 — 인쇄·PDF 저장, JSON 내려받기 |
+
+- 파형과 판정: 서버 `GET /demo-api/cases/:id`·`/demo-api/results`(공개, 읽기 전용)가 운영과 같은 `analyzeImu`로 낸 결과. 라이더·주문·관제·위치·연락은 앱 안의 시연 데이터이고 실제로 아무것도 보내지 않는다(`features/demo/engine.ts`, 테스트 `test/demo-engine.test.ts`).
+- 같은 브라우저의 창끼리는 BroadcastChannel로 같은 사건·같은 시계를 공유한다. '재생'을 누른 창이 시계를 돌린다. 다른 기기끼리는 묶이지 않는다.
+- 응답 대기 30초는 운영 설정값(서버 `COUNTDOWN_SECONDS`)이고 센서 판정 시각과 따로 표시한다. 시연의 '센서 연결 확인 필요' 전환은 5초(운영 60초).

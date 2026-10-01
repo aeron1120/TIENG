@@ -59,8 +59,8 @@
   <section class="panel" id="detail"><div class="empty">왼쪽에서 사고를 선택하세요.</div></section>
 </main>
 <details class="panel" id="rulecheck">
-  <summary>실측 기록 규칙 대조 — ESP32·MPU6050 29조건 1회차</summary>
-  <div id="rulebody" class="muted">펼치면 지금 서버 규칙을 실측 기록에 다시 돌려요.</div>
+  <summary>MOCK 기록 규칙 대조 — ESP32·MPU6050 29조건 1회차</summary>
+  <div id="rulebody" class="muted">펼치면 지금 서버 규칙을 MOCK 기록에 다시 돌려요.</div>
 </details>
 <script>
   const $ = (id) => document.getElementById(id);
@@ -302,8 +302,8 @@
     );
   }
 
-  // ── 실측 기록 규칙 대조 ───────────────────────────────────────
-  // 실험 당시 첫 후보 시각과 서버 규칙의 첫 후보 시각을 나란히 본다. 정확도·검출률로 부르지 않는다 — 1회차 29건뿐이다.
+  // ── MOCK 기록 규칙 대조 ───────────────────────────────────────
+  // 기록에 남은 첫 후보 시각과 서버 규칙의 첫 후보 시각을 나란히 본다. 정확도·검출률로 부르지 않는다 — 1회차 29건뿐이다.
   const CLASS = { accident: '사고', boundary: '경계', unrealized: '미재현', normal: '정상' };
   const AN = { candidate: '사고 후보', no_candidate: '후보 없음', insufficient: '후보 없음 (판정창에 누락)' };
   const KEY = { peak_g: '가속도', peak_gyro: '각속도', delta_v150: 'ΔV', bank_deg: '뱅크각' };
@@ -314,9 +314,9 @@
     try {
       const r = await api('/rule-check');
       $('rulebody').replaceChildren(
-        el('p', { textContent: `규칙 ${r.ruleVersion} · 실험 판정과 ${r.matched}/${r.total} 일치. 출처: 사용자 확인 실측, 보드·펌웨어 기록 없음. 실세계 검출률이 아니에요.` }),
+        el('p', { textContent: `규칙 ${r.ruleVersion} · 기록의 판정과 ${r.matched}/${r.total} 일치. 출처: ESP32·MPU6050 MOCK 재현 자료(실제 실험 0회). 실세계 검출률이 아니에요.` }),
         el('table', {},
-          el('tr', {}, ...['조건', '분류', '실험 첫 후보', '서버 판정', '서버 첫 후보', '통과 지표', '누락', 'ΔV'].map((h) => el('th', { textContent: h }))),
+          el('tr', {}, ...['조건', '분류', '기록 첫 후보', '서버 판정', '서버 첫 후보', '통과 지표', '누락', 'ΔV'].map((h) => el('th', { textContent: h }))),
           ...r.items.map((i) => el('tr', {},
             el('td', { textContent: `${i.id} ${i.name}` }),
             el('td', { textContent: CLASS[i.class] || i.class }),

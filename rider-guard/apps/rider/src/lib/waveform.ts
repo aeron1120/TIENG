@@ -55,7 +55,8 @@ export function decimate(seg: { t: number; v: number }[], box: ChartBox): { t: n
   };
   seg.forEach((p, i) => {
     const c = Math.floor(((p.t - box.t0) / span) * box.width);
-    if (c !== col) {
+    // 창 왼쪽 밖 표본은 열 번호가 -1 이 되어 처음 값(-1)과 같아진다 — 아직 시작 전(lo 없음)이면 새 열로 연다
+    if (c !== col || !lo) {
       flush();
       col = c;
       lo = hi = { ...p, i };

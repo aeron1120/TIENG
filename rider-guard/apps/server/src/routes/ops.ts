@@ -9,7 +9,7 @@ import { ApiError, safeEqual } from '../lib.ts';
 import { recentDetections } from '../services/detections.ts';
 import { listForOps, opsDetail } from '../services/incidents.ts';
 import { listJudgments } from '../services/judgments.ts';
-import { measuredRuleCheck } from '../services/measured-cases.ts';
+import { esp32RuleCheck } from '../services/esp32-cases.ts';
 
 const consoleHtml = readFileSync(new URL('../ops-console.html', import.meta.url), 'utf8');
 
@@ -44,7 +44,7 @@ export function opsRoutes(ctx: AppContext) {
   app.get('/api/incidents/:id', async (c) => c.json<OpsIncidentDetailDto>(await opsDetail(ctx, c.req.param('id'))));
 
   // 배포된 규칙이 실측 기록의 실험 판정을 재현하는지 — 규칙을 바꿨을 때 여기서 어긋난 조건이 보인다
-  app.get('/api/rule-check', (c) => c.json<OpsRuleCheckDto>(ruleCheck ??= measuredRuleCheck()));
+  app.get('/api/rule-check', (c) => c.json<OpsRuleCheckDto>(ruleCheck ??= esp32RuleCheck()));
 
   return app;
 }

@@ -135,6 +135,9 @@ function LoginForm() {
       <FadeIn delay={120} style={styles.actions}>
         <Button label="로그인" loading={login.isPending || authBusy} disabled={social.isPending} onPress={() => void submit()} />
         <SignupLink onPress={() => router.push('/signup')} disabled={busy} />
+        <Pressable accessibilityRole="link" onPress={() => router.push('/demo')} hitSlop={4} style={styles.link}>
+          <Txt style={styles.linkText}>로그인 없이 통합 시연 보기</Txt>
+        </Pressable>
       </FadeIn>
 
       {socialProviders.length > 0 && (

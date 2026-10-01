@@ -207,7 +207,7 @@ function KV({ k, v }: { k: string; v: string }) {
 
 const CHART_H = 84;
 
-function WaveChart({ a, metric }: { a: SensorAnalysis; metric: Metric }) {
+export function WaveChart({ a, metric }: { a: SensorAnalysis; metric: Metric }) {
   const [width, setWidth] = useState(0);
   const m = METRIC[metric];
   const threshold = a.evidence.find((e) => e.key === metric)?.threshold ?? 0;

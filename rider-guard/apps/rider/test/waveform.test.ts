@@ -28,3 +28,10 @@ test('세로 범위는 임계선과 피크를 모두 포함한다', () => {
   assert.equal(yMaxFor([p(0, 20)], 'accG', 6), 21);
   assert.equal(wavePaths([p(0, 1), p(1, 1)], 'accG', { width: 100, height: 10, t0: 0, t1: 1, yMax: 2 })[0], 'M0.0 5.0L100.0 5.0');
 });
+
+test('창 왼쪽 밖 표본이 섞여도 축약이 멈추지 않는다', () => {
+  // 첫 표본이 왼쪽 경계 바로 밖(열 -1)이면 예전에는 lo 가 비어 있어 멈췄다
+  const seg = Array.from({ length: 3000 }, (_, i) => ({ t: -0.005 + i / 1000, v: i % 7 }));
+  const out = decimate(seg, { width: 200, height: 50, t0: 0, t1: 2.5, yMax: 10 });
+  assert.ok(out.length > 0);
+});

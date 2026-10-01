@@ -39,7 +39,7 @@ export function LiveWave({ timeline, analysis, clip, t, columns = 2, height = 92
   const cT = candidateDemoT(clip);
   return (
     <View style={styles.wrap}>
-      {t > clipEnd ? <Txt style={styles.frozen}>사건 기록 구간이 끝났어요 — 마지막 3초를 멈춰 보여 줘요</Txt> : null}
+      {t > clipEnd ? <Txt style={styles.frozen}>기록 종료 · 마지막 3초</Txt> : null}
       <View style={[styles.grid, columns === 2 && styles.grid2]}>
       {METRICS.map((m) => (
         <View key={m.key} style={columns === 2 ? styles.cell2 : styles.cell1}>

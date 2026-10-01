@@ -23,18 +23,22 @@ export default function DemoScreen() {
   const verdictVisible = !!s.incident || s.clipDone || (cT !== null && s.t >= cT);
   const wave = <View style={styles.waveCard}>
     <View style={styles.waveHead}>
-      <Txt style={styles.waveTitle}>센서 파형과 판정 근거</Txt>
-      <Txt style={styles.sub}>최근 3초 · 점선은 판정 기준 · 분홍은 판정창</Txt>
-      {data.ready ? <Badge tone="neutral" size="sm">{data.event.source.label}</Badge> : null}
+      <View style={styles.waveTitleRow}>
+        <Txt style={styles.waveTitle}>실측 파형 재생</Txt>
+        {detail && data.ready ? <Badge tone="neutral" size="sm">{data.event.source.label}</Badge> : null}
+      </View>
+      <Txt style={styles.sub}>점선: 기준 · 분홍: 판정창</Txt>
     </View>
     {data.ready ? <>
       <View style={styles.verdict}>
-        <Txt style={styles.verdictText}>{verdictVisible ? `${cT !== null ? `${clockAt(s, cT)} · ` : ''}${evidenceHeadline(data.event.analysis)}` : '판정 대기 · 해당 사건 구간까지 재생해 주세요'}</Txt>
+        <Txt style={styles.verdictText}>{verdictVisible ? `${detail && cT !== null ? `${clockAt(s, cT)} · ` : ''}${evidenceHeadline(data.event.analysis)}` : '판정 대기'}</Txt>
       </View>
       <LiveWave timeline={data.timeline} analysis={data.event.analysis} clip={data.clip} t={s.t} columns={detail && wide || wide && width >= 1750 ? 2 : 1} height={detail ? 100 : 52} />
-      <Txt style={styles.note}>{`규칙 ${data.event.analysis.ruleVersion} · 판정창 ${data.event.analysis.windowS}초 · 순번 누락 ${data.event.analysis.quality.missingPackets}개 · ΔV ${data.event.analysis.quality.dvValid ? '유효' : '일부 계산 불가'}`}</Txt>
-      <Txt style={styles.note}>{`출처: ${data.event.source.note}. 수신 성공·후보 감지는 사고 확정이나 구조 완료를 뜻하지 않아요.`}</Txt>
-      {detail ? <Txt style={styles.note}>판정은 운영 서버와 같은 코드가 이 파형에 대해 낸 결과이며, 검출률·정확도를 뜻하지 않아요.</Txt> : null}
+      {detail ? <>
+        <Txt style={styles.note}>{`규칙 ${data.event.analysis.ruleVersion} · 판정창 ${data.event.analysis.windowS}초 · 순번 누락 ${data.event.analysis.quality.missingPackets}개 · ΔV ${data.event.analysis.quality.dvValid ? '유효' : '일부 계산 불가'}`}</Txt>
+        <Txt style={styles.note}>{`출처: ${data.event.source.note}. 수신 성공·후보 감지는 사고 확정이나 구조 완료를 뜻하지 않아요.`}</Txt>
+        <Txt style={styles.note}>판정은 운영 서버와 같은 코드가 이 파형에 대해 낸 결과이며, 검출률·정확도를 뜻하지 않아요.</Txt>
+      </> : null}
     </> : <Txt style={styles.sub}>실측 파형을 불러오는 중이에요.</Txt>}
   </View>;
 
@@ -46,14 +50,14 @@ export default function DemoScreen() {
       </View>
       <View style={[styles.main, wide && styles.mainWide]}>
         <View style={[styles.phoneCol, wide && styles.phoneWide]}>
-          <Txt style={styles.colLabel}>01 · 라이더 확인</Txt>
+          <Txt style={styles.colLabel}>라이더</Txt>
           <RiderPhone s={s} compact={!detail} />
         </View>
         <View style={styles.controlCol}>
-          <Txt style={styles.colLabel}>02 · 관제 대응과 주문</Txt>
+          <Txt style={styles.colLabel}>관제</Txt>
           <ControlRoom s={s} analysis={data.ready ? data.event.analysis : null} compact={!detail} mapHeight={240} />
         </View>
-        {!detail ? <View style={styles.evidenceCol}><Txt style={styles.colLabel}>03 · 센서 근거</Txt>{wave}</View> : null}
+        {!detail ? <View style={styles.evidenceCol}><Txt style={styles.colLabel}>센서</Txt>{wave}</View> : null}
       </View>
       {detail ? wave : null}
     </ScrollView>
@@ -74,6 +78,7 @@ const styles = StyleSheet.create({
   colLabel: { ...font.sans(700), fontSize: 13, color: colors.textMuted },
   waveCard: { backgroundColor: colors.surface, borderRadius: radius.card, padding: 14, gap: 10 },
   waveHead: { gap: 5 },
+  waveTitleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
   waveTitle: { ...font.sans(800), fontSize: 17, color: colors.text },
   verdict: { backgroundColor: colors.surfaceMuted, borderRadius: radius.lg, padding: 9 },
   verdictText: { ...font.sans(700), fontSize: 13, lineHeight: 19, color: colors.text },

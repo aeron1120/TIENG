@@ -57,14 +57,14 @@ export function ControlRoom({ s, analysis, mapHeight = 300, compact = false }: {
     <View style={styles.room}>
       <View style={styles.top}>
         <Txt style={styles.brand}>BATON 관제</Txt>
-        <Txt style={styles.clock}>{clockAt(s, s.t)}</Txt>
-        <Badge tone="neutral" size="sm">{`주요 라이더 · ${s.riders.find((r) => r.id === MAIN_RIDER)?.name ?? '-'}`}</Badge>
+        <View style={styles.flex} />
+        <Badge tone="neutral" size="sm">{s.riders.find((r) => r.id === MAIN_RIDER)?.name ?? '-'}</Badge>
       </View>
       <IncidentPanel s={s} analysis={analysis} compact />
       {blocked ? <Txt accessibilityRole="alert" style={styles.meta}>{blocked}</Txt> : null}
       <View style={styles.orders}>
-        <Txt style={styles.colTitle}>주요 라이더의 주문 · 보류와 인계 결과</Txt>
-        {s.orders.filter((o) => o.originalRiderId === MAIN_RIDER).map((o) => <CompactOrder key={o.id} s={s} o={o} />)}
+        <Txt style={styles.colTitle}>주문 현황</Txt>
+        {s.orders.filter((o) => o.originalRiderId === MAIN_RIDER).map((o) => <CompactOrder key={o.id} s={s} o={o} concise />)}
       </View>
     </View>
   );
@@ -146,15 +146,16 @@ export function ControlRoom({ s, analysis, mapHeight = 300, compact = false }: {
 
 const COLS = [0.8, 2, 0.9, 0.9, 1.1, 2.2, 2.4];
 
-function CompactOrder({ s, o }: { s: DemoState; o: DemoOrder }) {
+function CompactOrder({ s, o, concise = false }: { s: DemoState; o: DemoOrder; concise?: boolean }) {
   const blocked = presentationMutationBlock(usePresentationConnection());
   const owner = s.riders.find((r) => r.id === o.riderId)?.name ?? '-';
+  const from = s.riders.find((r) => r.id === o.originalRiderId)?.name ?? '-';
   const last = o.notices.at(-1);
   return <View style={styles.compactOrder}>
-    <View style={styles.riderHead}><Txt style={styles.strongLine}>{o.id} · {owner}</Txt><Badge tone={ORDER_TONE[o.status]} size="sm">{ORDER_LABEL[o.status]}</Badge></View>
-    <Txt style={styles.meta}>{o.store} → {o.customer}</Txt>
+    <View style={styles.riderHead}><Txt style={styles.strongLine}>{concise ? o.store : `${o.id} · ${owner}`}</Txt><Badge tone={ORDER_TONE[o.status]} size="sm">{ORDER_LABEL[o.status]}</Badge></View>
+    <Txt style={styles.meta}>{concise ? o.riderId !== o.originalRiderId ? `${from} → ${owner}` : `담당 ${owner}` : `${o.store} → ${o.customer}`}</Txt>
     {o.status === 'held' ? <View style={styles.chips}>{replacementCandidates(s).slice(0, 2).map((r) => <Button key={r.id} label={`${r.name}에게 인계`} size="sm" variant="outline" disabled={!!blocked} onPress={() => mutate({ type: 'reassign', orderId: o.id, riderId: r.id })} />)}</View> : null}
-    {last ? <Txt style={styles.meta}>{`${last.to} 안내 · ${last.text} (시연)`}</Txt> : null}
+    {last && !concise ? <Txt style={styles.meta}>{`${last.to} 안내 · ${last.text} (시연)`}</Txt> : null}
   </View>;
 }
 
@@ -205,9 +206,9 @@ function IncidentPanel({ s, analysis, compact = false }: { s: DemoState; analysi
     return (
       <View style={styles.panel}>
         <Txt style={styles.colTitle}>사건</Txt>
-        <Txt style={styles.calmTitle}>{stage.title}</Txt>
-        <Txt style={[styles.meta, styles.gap]}>{stage.description}</Txt>
-        {s.sensorLost ? <Txt style={[styles.meta, styles.gap, { color: colors.redInk }]}>{`${s.riders[0]!.name} 라이더 센서 신호 끊김 — 확인 필요`}</Txt> : null}
+        <Txt style={styles.calmTitle}>{compact && !s.clipDone && !s.sensorLost ? '접수된 사건 없음' : stage.title}</Txt>
+        {!compact ? <Txt style={[styles.meta, styles.gap]}>{stage.description}</Txt> : null}
+        {s.sensorLost && !compact ? <Txt style={[styles.meta, styles.gap, { color: colors.redInk }]}>{`${s.riders[0]!.name} 라이더 센서 신호 끊김 — 확인 필요`}</Txt> : null}
       </View>
     );
   }
@@ -219,17 +220,16 @@ function IncidentPanel({ s, analysis, compact = false }: { s: DemoState; analysi
   return (
     <View style={[styles.panel, styles.panelInner]}>
       <View style={styles.riderHead}>
-        <Txt style={styles.colTitle}>{i.id}</Txt>
+        <Txt style={styles.colTitle}>{compact ? `감지 ${clockAt(s, i.detectedT)}` : i.id}</Txt>
         <Badge tone={tone} size="sm">{INCIDENT_STATUS_LABEL[i.status]}</Badge>
       </View>
-      <Txt style={styles.incTitle}>{`${s.riders[0]!.name} · ${clockAt(s, i.detectedT)} 사고 후보`}</Txt>
-      {compact ? <Txt style={styles.meta}>{stage.description}</Txt> : null}
+      {!compact ? <Txt style={styles.incTitle}>{`${s.riders[0]!.name} · ${clockAt(s, i.detectedT)} 사고 후보`}</Txt> : null}
 
       <Section title="라이더 응답">
         <Txt style={styles.strongLine}>
-          {i.response ? `${RESPONSE_LABEL[i.response]}${i.respondedT !== null ? ` · ${clockAt(s, i.respondedT)}` : ''}` : `확인 대기 — ${Math.ceil(left ?? 0)}초 남음`}
+          {i.response ? `${RESPONSE_LABEL[i.response]}${!compact && i.respondedT !== null ? ` · ${clockAt(s, i.respondedT)}` : ''}` : i.status === 'confirming' ? `확인 대기 · ${Math.ceil(left ?? 0)}초` : '응답 없음'}
         </Txt>
-        {i.status === 'confirming' ? <Txt style={styles.meta}>응답이 없으면 관제에 접수되고 주문이 보류돼요</Txt> : null}
+        {i.status === 'confirming' && !compact ? <Txt style={styles.meta}>응답이 없으면 관제에 접수되고 주문이 보류돼요</Txt> : null}
       </Section>
 
       {!compact ? <Section title="감지 근거">
@@ -247,19 +247,19 @@ function IncidentPanel({ s, analysis, compact = false }: { s: DemoState; analysi
       </Section> : null}
 
       <Section title="대응">
-        <Txt style={styles.meta}>{i.assignee ? `담당 ${i.assignee}${i.ackT !== null ? ` · 접수 ${clockAt(s, i.ackT)}` : ''}` : '담당자 없음'}</Txt>
-        <Txt style={styles.meta}>{i.contactNotifiedT !== null ? `비상연락처 ${FIRST_CONTACT} 알림 · ${clockAt(s, i.contactNotifiedT)} (시연)` : '비상연락처 알림 전'}</Txt>
-        {i.calls.map((c, k) => (
-          <Txt key={k} style={styles.meta}>{`${clockAt(s, c.t)} 라이더 전화 — ${c.result}`}</Txt>
+        {i.assignee || !compact ? <Txt style={styles.meta}>{i.assignee ? `담당 ${i.assignee}${!compact && i.ackT !== null ? ` · 접수 ${clockAt(s, i.ackT)}` : ''}` : '담당자 없음'}</Txt> : null}
+        <Txt style={styles.meta}>{i.contactNotifiedT !== null ? compact ? '비상연락 알림 기록' : `비상연락처 ${FIRST_CONTACT} 알림 · ${clockAt(s, i.contactNotifiedT)} (시연)` : '비상연락 대기'}</Txt>
+        {(compact ? i.calls.slice(-1) : i.calls).map((c, k) => (
+          <Txt key={k} style={styles.meta}>{compact ? `전화 · ${c.result}` : `${clockAt(s, c.t)} 라이더 전화 — ${c.result}`}</Txt>
         ))}
         <View style={styles.actions}>
-          {!compact || canAck ? <Button label={i.assignee ? `${CONTROLLER} 담당 중` : '접수하고 담당 지정'} size="sm" variant={canAck ? 'primary' : 'soft'} disabled={!canAck || !!blocked} onPress={() => mutate({ type: 'ack' })} /> : null}
+          {!compact || canAck ? <Button label={compact ? '관제 접수' : i.assignee ? `${CONTROLLER} 담당 중` : '접수하고 담당 지정'} size="sm" variant={canAck ? 'primary' : 'soft'} disabled={!canAck || !!blocked} onPress={() => mutate({ type: 'ack' })} /> : null}
           {!compact || canAct ?
           <View style={styles.actionRow}>
             <Button label="라이더에게 전화" size="sm" variant="outline" disabled={!canAct || !!blocked} onPress={() => mutate({ type: 'call' })} style={styles.flex} />
             <Button label="대응 완료" size="sm" variant={i.status === 'acknowledged' ? 'red' : 'soft'} disabled={i.status !== 'acknowledged' || !!blocked} onPress={() => mutate({ type: 'resolve' })} style={styles.flex} />
           </View> : null}
-          {i.status === 'resolved' || i.status === 'rider_ok' ? <Button label="사건 보고서 열기" size="sm" variant="dark" onPress={openReport} /> : null}
+          {!compact && (i.status === 'resolved' || i.status === 'rider_ok') ? <Button label="사건 보고서 열기" size="sm" variant="dark" onPress={openReport} /> : null}
         </View>
       </Section>
     </View>

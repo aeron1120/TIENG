@@ -26,7 +26,7 @@ export function PresentationPanel({ s, clip, loading, error, detail, onDetailCha
   const stage = presentationStage(s, clip);
   const blocked = busy || c.status === 'retrying';
   const tone = stage.tone === 'danger' ? 'red' : stage.tone === 'success' ? 'green' : 'neutral';
-  const status = c.status === 'restoring' ? '이전 시연 복구 중' : c.status === 'connecting' ? '서버 연결 중' : c.canResume ? '이전 시연 이어가기 가능' : problem ? '수신 확인 필요' : !linked ? '서버 연결 전' : c.pending ? `전송 대기 ${c.pending}개` : '서버 수신 확인';
+  const status = c.status === 'restoring' ? '복구 중' : c.status === 'connecting' ? '연결 중' : c.canResume ? '이전 시연 있음' : problem ? '연결 확인 필요' : !linked ? '준비' : c.pending ? '동기화 중' : '연결됨';
   const start = async (fresh = false) => {
     if (fresh && c.canResume) discardPresentation();
     await startPresentation(automatic);
@@ -43,12 +43,12 @@ export function PresentationPanel({ s, clip, loading, error, detail, onDetailCha
   return (
     <View style={styles.panel}>
       <View style={styles.row}>
-        <Txt style={styles.brand}>Rider Guard 통합 시연</Txt>
+        <Txt style={styles.brand}>Rider Guard</Txt>
+        <Txt style={styles.note}>시연 · 실제 발송 없음</Txt>
         <Badge tone={problem ? 'red' : linked ? 'green' : 'neutral'} size="sm">{status}</Badge>
         <View style={styles.spacer} />
         <Txt style={styles.time}>{mmss(s.t)}</Txt>
-        <Choice label="발표 보기" selected={!detail} onPress={() => onDetailChange(false)} />
-        <Choice label="상세 보기" selected={detail} onPress={() => onDetailChange(true)} />
+        <Choice label={detail ? '발표 보기' : '상세 보기'} selected={detail} onPress={() => onDetailChange(!detail)} />
       </View>
       <View style={styles.row}>
         {SCENARIO_IDS.map((id) => <Choice key={id} label={SCENARIOS[id].short} selected={s.scenario === id} disabled={blocked || c.canResume} onPress={() => dispatch({ type: 'reset', scenario: id, baseWall: Date.now() })} />)}
@@ -60,22 +60,20 @@ export function PresentationPanel({ s, clip, loading, error, detail, onDetailCha
       </View>
       <View style={[styles.situation, stage.tone === 'danger' && styles.danger, stage.tone === 'warning' && styles.warning]}>
         <Badge tone={tone} size="sm">{stage.title}</Badge>
-        <Txt style={styles.sentence}>{stage.description}</Txt>
-        {s.incident?.status === 'confirming' ? <Button label="응답 대기 건너뛰기" size="sm" variant="outline" disabled={blocked || c.canResume} onPress={() => dispatch({ type: 'skipWait' })} /> : null}
-        {(stage.finished || c.monitorUrl) ? <Button label="수신 결과·보고서 ↗" variant="outline" size="sm" onPress={openPresentationReport} /> : null}
+        {detail ? <Txt style={styles.sentence}>{stage.description}</Txt> : <View style={styles.spacer} />}
+        {s.incident?.status === 'confirming' ? <Button label="대기 건너뛰기" size="sm" variant="outline" disabled={blocked || c.canResume} onPress={() => dispatch({ type: 'skipWait' })} /> : null}
+        {(stage.finished || c.monitorUrl) ? <Button label="보고서 ↗" variant="outline" size="sm" onPress={openPresentationReport} /> : null}
+        <Pressable accessibilityRole="button" accessibilityState={{ expanded: advanced }} onPress={() => setAdvanced(!advanced)}><Txt style={styles.link}>{advanced ? '옵션 닫기 ▴' : '옵션 ▾'}</Txt></Pressable>
       </View>
-      <View style={styles.row}>
+      {detail ? <View style={styles.row}>
         {['데이터 수신', '사고 판정', '라이더 확인', '연락·신고', '주문 인계', '결과'].map((label, index) => {
           const skipped = stage.skippedSteps.includes(index);
           return <Txt key={label} style={[styles.step, index === stage.step && styles.current, skipped && styles.skipped]}>{`${index + 1} ${label}${skipped ? ' · 생략' : index === stage.step ? ' · 현재' : ''}`}</Txt>;
         })}
-        <View style={styles.spacer} />
-        <Pressable accessibilityRole="button" accessibilityState={{ expanded: advanced }} onPress={() => setAdvanced(!advanced)}><Txt style={styles.link}>{advanced ? '실험 옵션 접기 ▴' : '실험 옵션 ▾'}</Txt></Pressable>
-      </View>
-      {!clip ? <Txt accessibilityRole={error ? 'alert' : undefined} style={[styles.note, !!error && styles.error]}>{error ? '실측 데이터를 받지 못했어요. 새로고침 후 다시 시도해 주세요.' : loading ? '실측 파형과 판정을 불러오는 중이에요. 서버가 잠들어 있으면 최대 1분 걸려요.' : '시연 데이터를 준비하고 있어요.'}</Txt> : null}
-      {c.canResume && !busy ? <Txt style={styles.note}>이전 시연 이어가기는 서버 기록을 확인한 뒤 일시정지 상태로 복구해요. 이어서 재생을 누르면 시계가 다시 움직여요.</Txt> : null}
+      </View> : null}
+      {!clip ? <Txt accessibilityRole={error ? 'alert' : undefined} style={[styles.note, !!error && styles.error]}>{error ? '데이터 수신 실패 · 새로고침해 주세요.' : loading ? '실측 데이터 불러오는 중…' : '시연 준비 중…'}</Txt> : null}
       {problem ? <View style={styles.row}><Txt accessibilityRole="alert" style={styles.error}>{c.message}</Txt>{c.status === 'retrying' ? <Button label="수신 다시 확인" variant="outline" size="sm" onPress={retryPresentation} /> : null}</View> : null}
-      {c.message && !problem && !busy ? <Txt style={styles.note}>{c.message}</Txt> : null}
+      {c.message && !problem && !busy && (detail || (c.status === 'idle' && !c.canResume)) ? <Txt style={styles.note}>{c.message}</Txt> : null}
       {c.storageWarning ? <Txt accessibilityRole="alert" style={styles.error}>{c.storageWarning}</Txt> : null}
       {advanced ? <View style={styles.advanced}>
         <Txt style={styles.note}>{SCENARIOS[s.scenario].point}{automatic ? ' · 자동 모드는 응답 대기 후 관제와 주문 인계를 진행해요.' : ' · 수동 모드는 라이더와 관제 버튼을 직접 눌러 진행해요.'}</Txt>
@@ -89,7 +87,7 @@ export function PresentationPanel({ s, clip, loading, error, detail, onDetailCha
         </View>
         {c.receivedAt ? <Txt style={styles.note}>{`서버 수신 ${new Date(c.receivedAt).toLocaleTimeString('ko-KR', { hour12: false })} · 명령 ${c.acknowledged}건 확인 · 수신 성공은 사고 판정이나 구조 완료를 뜻하지 않아요.`}</Txt> : null}
       </View> : null}
-      <Txt style={styles.note}>실측 파형 · 라이더·주문·위치는 시연 데이터 · 문자·119·외부 배차 실제 발송 없음</Txt>
+      {detail || advanced ? <Txt style={styles.note}>실측 파형 · 라이더·주문·위치는 시연 데이터 · 문자·119·외부 배차 실제 발송 없음</Txt> : null}
     </View>
   );
 }

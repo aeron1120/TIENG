@@ -379,6 +379,24 @@ const MIGRATIONS: string[] = [
   ALTER TABLE agencies ADD COLUMN staffCode TEXT;
   CREATE UNIQUE INDEX agencies_staff_code ON agencies(staffCode) WHERE staffCode IS NOT NULL;
   `,
+  // v11 — isolated presentation replay. Capability plaintext is never persisted.
+  `
+  CREATE TABLE presentationSessions (
+    id TEXT PRIMARY KEY,
+    readHash TEXT NOT NULL,
+    writeHash TEXT NOT NULL,
+    sessionJson TEXT NOT NULL,
+    createdAt INTEGER NOT NULL,
+    expiresAt INTEGER NOT NULL
+  );
+  CREATE INDEX presentationSessions_expires ON presentationSessions(expiresAt);
+  CREATE TABLE presentationCommands (
+    sessionId TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    bodyHash TEXT NOT NULL,
+    PRIMARY KEY (sessionId, seq)
+  );
+  `,
 ];
 
 export type Params = Record<string, InValue | undefined>;

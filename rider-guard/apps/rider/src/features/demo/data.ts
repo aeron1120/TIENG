@@ -50,7 +50,7 @@ export function useScenarioData(scenario: ScenarioId) {
     if (!ev || !ld) return { ready: false as const, error: event.error ?? lead.error ?? null, loading: event.isPending || lead.isPending };
     const e = rangeOf(ev.analysis);
     const l = rangeOf(ld.analysis);
-    const clip: EventClip = { caseId, from: e.from, to: e.to, candidateAt: ev.analysis.candidateAt };
+    const clip: EventClip = { caseId, from: e.from, to: e.to, candidateAt: ev.analysis.candidateAt, decision: ev.analysis.decision };
     const timeline: TimelinePoint[] = [];
     const lLen = l.to - l.from || 1.5;
     for (let k = 0; k * lLen < LEAD_IN_S; k++) {

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Rider Guard · 발표 모니터</title>
+  <link rel="stylesheet" href="/ops/presentation.css">
+  <script src="/ops/presentation.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">본문으로 건너뛰기</a>
+  <header class="masthead">
+    <a class="brand" href="/ops/presentation"><span class="brand-mark" aria-hidden="true">R</span> RIDER GUARD <span class="brand-sub">PRESENTATION</span></a>
+    <div class="header-actions"><span class="badge">격리된 발표 세션</span><a href="/ops">운영 모니터 ↗</a></div>
+  </header>
+  <main id="main">
+    <section class="intro">
+      <div><p class="eyebrow">FROM SIGNAL TO RESPONSE</p><h1>하나의 신호에서,<br>끝까지 이어지는 보호.</h1><p class="intro-copy">실측·재생 근거와 서버 수신을 확인하고,<br>라이더 확인부터 주문 인계와 보고서까지 따라갑니다.</p></div>
+      <div class="isolation"><span class="isolation-number">01 → 06</span><p>센서 · 판정 · 확인 · 대응 · 주문 · 기록</p><small>라이더·위치·연락·주문 처리는 시연입니다.<br>실제 문자, 전화, 119 신고와 배차는 실행하지 않습니다.</small></div>
+    </section>
+
+    <div id="error" class="error" role="alert" hidden></div>
+    <section id="setup" class="setup card">
+      <div class="section-heading"><div><p class="eyebrow">START A PRESENTATION</p><h2>발표할 자료를 선택하세요</h2></div><span class="subtle">운영 토큰 없이 시작</span></div>
+      <div class="setup-grid">
+        <form id="measured-form"><span class="source-tag">ESP32 · MPU6050</span><h3>직접 측정한 29가지 조건</h3><p class="subtle">원본 파형을 서버 규칙으로 다시 분석합니다. 사고·경계·정상 사례의 차이를 확인하세요.</p><label for="case-select">실험 조건</label><select id="case-select" required disabled><option>실측 목록 불러오는 중…</option></select><button id="start-measured" class="primary" type="submit" disabled>실측으로 발표 시작 →</button><p id="case-note" class="fine">원본 1회차 파형 · 조건별 5회 요약</p></form>
+        <form id="import-form"><span class="source-tag neutral">DETECTION.V1 · REPLAY</span><h3>외부 판정 기록 가져오기</h3><p class="subtle">제공된 후보 판정과 근거를 그대로 표시합니다. 재생 JSON만 사용하며, 없는 원본 파형은 만들지 않습니다.</p><label for="json-input">JSON 붙여넣기 또는 파일 선택</label><textarea id="json-input" rows="3" placeholder='{"schema_version":"1.0", …}' spellcheck="false"></textarea><div class="import-actions"><input id="json-file" type="file" accept=".json,application/json" aria-label="detection.v1 JSON 파일"><button class="secondary" type="submit">JSON으로 시작 →</button></div><p class="fine">외부 후보는 실제 사고의 확정 증거가 아닙니다.</p></form>
+      </div>
+    </section>
+
+    <section id="session-view" hidden>
+      <div class="session-heading"><div><p id="source-kind" class="eyebrow"></p><h2 id="source-label"></h2><p id="source-note" class="subtle"></p></div><div class="receipt-box"><span id="connection" class="badge">수신 확인 중</span><span id="receipt-time" class="fine"></span><span id="session-id" class="fine"></span></div></div>
+      <div class="toolbar no-print"><div id="controls" class="control-group" hidden><button id="play" class="primary">자동 발표 시작</button><button id="pause" class="secondary">일시 정지</button><button id="reset" class="text-button">처음부터</button><label class="check"><input id="autopilot" type="checkbox" checked> 자동 대응</label><label class="check"><input id="slowmo" type="checkbox" checked> 파형 느리게</label></div><span id="readonly-note" class="subtle" hidden>읽기 전용 · 연결한 시연 화면에서 진행하세요</span><div class="report-actions"><button id="share" class="secondary">읽기 링크 복사</button><button id="download" class="secondary">JSON 저장</button><button id="print" class="secondary">보고서 인쇄</button><a class="text-button" href="/ops/presentation">새 발표</a></div></div>
+      <p id="transport-note" class="transport-note" role="status" aria-live="polite"></p>
+      <ol id="pipeline" class="pipeline" aria-label="발표 진행 단계"></ol>
+      <div class="dashboard-grid">
+        <section class="card event-card"><div class="section-heading"><p class="eyebrow">CURRENT MOMENT</p><span id="demo-clock" class="mono"></span></div><h2 id="event-title"></h2><p id="event-description" class="subtle"></p><div class="metrics"><div><span class="fine">본인 확인</span><strong id="response-value">대기 전</strong></div><div><span class="fine">관제 담당</span><strong id="assignee-value">—</strong></div><div><span class="fine">대체 배차</span><strong id="reassigned-value">0건</strong></div></div><div id="response-controls" class="control-group no-print" hidden><button id="respond-ok" class="secondary">괜찮아요</button><button id="respond-help" class="primary">도움이 필요해요</button><button id="skip-wait" class="text-button">대기 건너뛰기</button></div><div id="manual-controls" class="control-group no-print" hidden><button id="ack" class="secondary">관제 접수</button><button id="call" class="secondary">전화 시연</button><button id="reassign" class="secondary">주문 인계</button><button id="resolve" class="secondary">대응 완료</button></div><p class="fine">모든 대응 및 연락 상태는 발표 세션 안의 시연 기록입니다.</p></section>
+        <section class="card evidence-card"><div class="section-heading"><div><p class="eyebrow">EVIDENCE</p><h2>판정 근거</h2></div><span id="decision" class="badge"></span></div><p id="rule-description" class="subtle"></p><div class="table-wrap"><table><thead><tr><th scope="col">지표</th><th scope="col">관측값</th><th scope="col">기준</th><th scope="col">발동</th></tr></thead><tbody id="evidence-body"></tbody></table></div><p id="quality" class="fine"></p><div id="waveform-wrap"><div class="waveform-heading"><span class="fine">실측 원본 · 가속도</span><span id="waveform-range" class="fine"></span></div><svg id="waveform" role="img" aria-label="실측 가속도 파형, 가로축 센서 시간, 세로축 g" viewBox="0 0 600 120" preserveAspectRatio="none"></svg><p id="waveform-note" class="fine"></p></div><p id="no-waveform" class="empty-note" hidden>원본 파형이 제공되지 않았습니다. 제공된 판정과 근거만 표시합니다.</p><details id="case-detail"><summary>출처·실험 상세</summary><dl id="source-details"></dl></details></section>
+        <section class="card orders-card"><div class="section-heading"><div><p class="eyebrow">DELIVERY CONTINUITY</p><h2>주문과 안내</h2></div><span class="badge neutral">시연</span></div><div id="orders"></div></section>
+        <section class="card timeline-card"><div class="section-heading"><div><p class="eyebrow">EVENT RECORD</p><h2>하나의 사건, 이어지는 기록</h2></div><span id="log-count" class="fine"></span></div><ol id="timeline" class="timeline"></ol></section>
+      </div>
+      <section class="report-footer"><div><p class="eyebrow">PRESENTATION REPORT</p><p id="report-summary"></p></div><p id="report-validity" class="fine"></p></section>
+    </section>
+    <footer class="page-footer"><span>RIDER GUARD / 보호의 흐름을 확인하다</span><span>실측 근거 · 서버 수신 · 격리된 대응 시연</span></footer>
+  </main>
+</body>
+</html>

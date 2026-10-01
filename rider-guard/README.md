@@ -59,6 +59,8 @@ Pages 빌드와 Google OAuth 설정은 [배포 안내](docs/deployment.md)를 �
 
 ## 데모 순서
 
+**발표용 전체 흐름:** `cd apps/server && npm run presentation`으로 통합 시연과 수신 모니터를 함께 실행합니다. 실측 29조건·외부 판정 JSON·통합 시연 재생을 격리된 서버 세션으로 연결합니다. [발표 시연 안내](docs/presentation-demo.md)를 참고하세요.
+
 1. 앱에서 이메일로 가입(또는 SNS 로그인) → 이름·휴대폰·동의 입력 → 설정 화면
 2. 다른 터미널에서 `cd apps/server && npm run fake-detector` → 표시된 페어링 코드를 앱에 입력 (하드웨어 없이 감지 기기 흉내)
 3. 비상연락처 추가 → 설정 완료 → 홈에서 **운행 시작**

@@ -27,6 +27,42 @@ const play = (s: DemoState, seconds: number, clip: EventClip) => {
 };
 const main = (s: DemoState) => riderStatus(s, s.riders.find((r) => r.id === MAIN_RIDER)!);
 
+test('발표 자동 진행은 감지·대기·연락·주문 대체·보고서까지 끝낸 뒤 멈춘다', () => {
+  let s = run(initialState('full', 0), { type: 'autopilot', on: true }, { type: 'slowmo', on: false }, { type: 'play', driver: 'presenter' });
+  s = play(s, 65, A1);
+  assert.equal(s.incident?.status, 'resolved');
+  assert.equal(s.incident?.response, 'timeout');
+  assert.equal(s.orders.filter((o) => o.originalRiderId === MAIN_RIDER && o.status === 'reassigned').length, 2);
+  assert.ok(s.log.some((e) => e.text.includes('119') && e.text.includes('시연')));
+  assert.equal(s.playing, false);
+});
+
+test('자동 진행도 정상 데이터·센서 끊김을 사고로 만들지 않는다', () => {
+  for (const [clip, lost] of [[D6, false], [A1, true]] as const) {
+    const s = play(run(initialState('full', 0), { type: 'autopilot', on: true }, { type: 'slowmo', on: false }, { type: 'sensor', lost }, { type: 'play', driver: 'presenter' }), 65, clip);
+    assert.equal(s.incident, null);
+    assert.equal(s.playing, false);
+    assert.ok(s.orders.every((o) => o.status === 'delivering'));
+  }
+});
+
+test('자동 진행 중 괜찮아요 응답을 하면 연락·주문 보류 없이 끝난다', () => {
+  let s = play(run(initialState('full', 0), { type: 'autopilot', on: true }, { type: 'slowmo', on: false }, { type: 'play', driver: 'presenter' }), 8, A1);
+  s = play(reduce(s, { type: 'respond', response: 'ok' }), 40, A1);
+  assert.equal(s.incident?.status, 'rider_ok');
+  assert.equal(s.playing, false);
+  assert.equal(s.incident?.contactNotifiedT, null);
+});
+
+test('후보가 없어도 데이터가 부족하면 정상으로 단정하지 않는다', () => {
+  const clip: EventClip = { ...D6, decision: 'insufficient' };
+  const s = play(run(initialState('curb', 0), { type: 'autopilot', on: true }, { type: 'play', driver: 'a' }), 30, clip);
+  assert.equal(s.incident, null);
+  assert.equal(s.playing, false);
+  assert.ok(s.log.some((e) => e.text.includes('판정 불가')));
+  assert.ok(!s.log.some((e) => e.text.includes('미충족')));
+});
+
 test('정상 주행 중에는 보호 중·배달 중, 사건 없음', () => {
   const s = play(run(initialState('full', 0), { type: 'play', driver: 'a' }), 3, A1);
   assert.equal(s.incident, null);
@@ -97,7 +133,7 @@ test('D6 연석은 사건 구간을 지나도 후보가 없고 감시를 계속�
   const s = play(run(initialState('curb', 0), { type: 'play', driver: 'a' }, { type: 'slowmo', on: false }), LEAD_IN_S + 3, D6);
   assert.equal(s.incident, null);
   assert.equal(s.clipDone, true);
-  assert.ok(s.log.some((l) => l.text.includes('미충족')));
+  assert.ok(s.log.some((l) => l.text.includes('후보 아님')));
 });
 
 test('센서가 끊긴 채 사건 구간을 지나면 감지하지 못한 것을 그대로 남긴다', () => {

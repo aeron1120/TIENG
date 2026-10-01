@@ -12,6 +12,9 @@ import { listJudgments } from '../services/judgments.ts';
 import { esp32RuleCheck } from '../services/esp32-cases.ts';
 
 const consoleHtml = readFileSync(new URL('../ops-console.html', import.meta.url), 'utf8');
+const presentationHtml = readFileSync(new URL('../presentation-console.html', import.meta.url), 'utf8');
+const presentationJs = readFileSync(new URL('../presentation-console.js', import.meta.url), 'utf8');
+const presentationCss = readFileSync(new URL('../presentation-console.css', import.meta.url), 'utf8');
 
 /**
  * 운영 모니터 (읽기 전용). 사고 대응은 관제 상담원 없이 서버가 전부 처리하므로 누를 버튼이 없다 —
@@ -27,6 +30,10 @@ export function opsRoutes(ctx: AppContext) {
     ? consoleHtml.replace("/*DEFAULT_TOKEN*/''", JSON.stringify(DEV_OPS_TOKEN))
     : consoleHtml;
   app.get('/', (c) => c.html(page));
+  // Public shell only. Session data requires its own read capability, never an operations token.
+  app.get('/presentation', (c) => c.html(presentationHtml));
+  app.get('/presentation.js', (c) => c.body(presentationJs, 200, { 'Content-Type': 'text/javascript; charset=utf-8' }));
+  app.get('/presentation.css', (c) => c.body(presentationCss, 200, { 'Content-Type': 'text/css; charset=utf-8' }));
 
   app.use('/api/*', async (c, next) => {
     const header = c.req.header('authorization') ?? '';

@@ -14,7 +14,7 @@ const CHANNEL = 'rider-guard-demo';
 const KEY = 'rider-guard-demo-state';
 export const TAB_ID = Math.random().toString(36).slice(2, 10);
 
-type Message = { kind: 'state'; state: DemoState } | { kind: 'action'; action: DemoAction } | { kind: 'hello' };
+type Message = { kind: 'state'; state: DemoState } | { kind: 'action'; action: DemoAction } | { kind: 'applied'; action: DemoAction } | { kind: 'hello' };
 
 const hasWindow = typeof window !== 'undefined';
 const channel: BroadcastChannel | null = hasWindow && 'BroadcastChannel' in window ? new BroadcastChannel(CHANNEL) : null;
@@ -25,7 +25,7 @@ function loadStored(): DemoState | null {
     if (!raw) return null;
     const s = JSON.parse(raw) as DemoState;
     // 시계를 돌리던 탭이 살아 있으면 hello 답장으로 다시 따라간다
-    return typeof s?.v === 'number' && Array.isArray(s.orders) ? { ...s, playing: false, driver: null } : null;
+    return typeof s?.v === 'number' && Array.isArray(s.orders) ? { ...s, autoPilot: s.autoPilot ?? false, playing: false, driver: null } : null;
   } catch {
     return null;
   }
@@ -33,6 +33,7 @@ function loadStored(): DemoState | null {
 
 let state: DemoState = loadStored() ?? initialState();
 const listeners = new Set<() => void>();
+const actionListeners = new Set<(action: DemoAction) => void>();
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 function persist() {
@@ -55,13 +56,23 @@ function set(next: DemoState, broadcast: boolean) {
   if (broadcast) channel?.postMessage({ kind: 'state', state } satisfies Message);
 }
 
+function applyAction(action: DemoAction) {
+  const next = reduce(state, action);
+  if (next === state) return;
+  set(next, true);
+  actionListeners.forEach((listener) => listener(action));
+  channel?.postMessage({ kind: 'applied', action } satisfies Message);
+}
+
 channel?.addEventListener('message', (e: MessageEvent<Message>) => {
   const m = e.data;
   if (m.kind === 'state') {
     if (m.state.v > state.v) set(m.state, false);
   } else if (m.kind === 'action') {
     // 재생 중 다른 탭이 누른 버튼 — 시계를 돌리는 이 탭이 순서대로 반영한다
-    if (state.playing && state.driver === TAB_ID) set(reduce(state, m.action), true);
+    if (state.playing && state.driver === TAB_ID) applyAction(m.action);
+  } else if (m.kind === 'applied') {
+    actionListeners.forEach((listener) => listener(m.action));
   } else if (m.kind === 'hello') {
     channel.postMessage({ kind: 'state', state } satisfies Message);
   }
@@ -73,7 +84,22 @@ export function dispatch(action: DemoAction) {
     channel?.postMessage({ kind: 'action', action } satisfies Message);
     return;
   }
-  set(reduce(state, action), true);
+  applyAction(action);
+}
+
+/** A connection starts from the server's fresh state without replaying a stale local incident. */
+export function replaceDemoState(next: DemoState) {
+  set({ ...next, v: state.v + 1 }, true);
+  // Another tab can already publish this shared replay to a server session.
+  // Send the same reset to its outbox as well as replacing the local snapshot.
+  const action: DemoAction = { type: 'reset', scenario: next.scenario, baseWall: next.baseWall };
+  actionListeners.forEach((listener) => listener(action));
+  channel?.postMessage({ kind: 'applied', action } satisfies Message);
+}
+
+export function subscribeDemoActions(listener: (action: DemoAction) => void) {
+  actionListeners.add(listener);
+  return () => { actionListeners.delete(listener); };
 }
 
 export const getDemoState = () => state;

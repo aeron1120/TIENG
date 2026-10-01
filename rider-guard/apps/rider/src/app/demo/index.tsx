@@ -7,6 +7,7 @@ import { ControlRoom } from '@/components/demo/ControlRoom';
 import { DemoBar } from '@/components/demo/DemoBar';
 import { LiveWave } from '@/components/demo/LiveWave';
 import { RiderPhone } from '@/components/demo/RiderPhone';
+import { PresentationPanel } from '@/components/demo/PresentationPanel';
 import { Badge, Txt } from '@/components/ui';
 import { useDemo } from '@/features/demo/data';
 import { candidateDemoT, clockAt, SCENARIOS } from '@/features/demo/engine';
@@ -33,6 +34,7 @@ export default function DemoScreen() {
         <Badge tone="neutral">라이더·주문·위치: 시연 데이터</Badge>
       </View>
 
+      <PresentationPanel s={s} ready={data.ready} />
       <DemoBar s={s} clip={clip} loading={!data.ready && data.loading} error={!data.ready ? data.error : null} />
 
       <View style={[styles.main, wide && styles.mainWide]}>

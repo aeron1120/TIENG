@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "fake-detector": "node scripts/fake-detector.ts",
     "sim": "node scripts/sim-bridge.ts",
+    "presentation": "node scripts/presentation-preview.ts",
     "lint": "eslint ."
   },
   "dependencies": {

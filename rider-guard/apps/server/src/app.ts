@@ -8,6 +8,7 @@ import { ApiError } from './lib.ts';
 import { demoRoutes } from './routes/demo.ts';
 import { deviceRoutes } from './routes/device.ts';
 import { opsRoutes } from './routes/ops.ts';
+import { presentationRoutes } from './routes/presentations.ts';
 import { authRoutes, meRoutes, tooLarge } from './routes/rider.ts';
 import { shareRoutes } from './routes/share.ts';
 import { v1Routes } from './routes/v1.ts';
@@ -32,6 +33,7 @@ export function createApp(ctx: AppContext) {
   app.route('/device-api', deviceRoutes(ctx));
   app.route('/s', shareRoutes(ctx));
   app.route('/ops', opsRoutes(ctx));
+  app.route('/demo-api/presentations', presentationRoutes(ctx));
   app.route('/demo-api', demoRoutes());
 
   app.notFound((c) => c.json({ error: { code: 'not_found', message: '없는 경로예요.' } }, 404));

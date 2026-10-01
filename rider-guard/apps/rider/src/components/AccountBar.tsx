@@ -1,9 +1,8 @@
-// 넓은 화면(관제·관리자) 맨 위 — 화면 이름 · 로그인한 계정 · 역할 바꾸기 · 로그아웃
+// 넓은 화면(관제·관리자) 맨 위 — 화면 이름 · 로그인한 계정 · 로그아웃
 import type { UserRole } from '@rider-guard/contract';
-import { router } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
-import { useMe, useSetRole } from '@/api/hooks';
+import { useMe } from '@/api/hooks';
 import { useAuth } from '@/auth/AuthProvider';
 import { LogoIcon } from '@/components/Icons';
 import { Badge, Button, Txt } from '@/components/ui';
@@ -14,7 +13,6 @@ export const ROLE_LABEL: Record<UserRole, string> = { rider: '배달기사', dis
 export function AccountBar({ title, sub }: { title: string; sub?: string }) {
   const { data: me } = useMe();
   const { signOut } = useAuth();
-  const setRole = useSetRole();
   const role = me?.role ?? null;
   const who = me?.rider.name?.trim() || me?.account.email || '';
   return (
@@ -26,16 +24,6 @@ export function AccountBar({ title, sub }: { title: string; sub?: string }) {
       </View>
       {role ? <Badge tone={role === 'admin' ? 'dark' : 'neutral'}>{ROLE_LABEL[role]}</Badge> : null}
       {who ? <Txt style={styles.who} numberOfLines={1}>{who}</Txt> : null}
-      {role === 'dispatcher' ? (
-        <Button
-          label="배달기사로 바꾸기"
-          size="sm"
-          variant="outline"
-          loading={setRole.isPending}
-          onPress={() => setRole.mutate('rider', { onSuccess: () => router.replace('/') })}
-          style={styles.btn}
-        />
-      ) : null}
       <Button label="로그아웃" size="sm" variant="soft" onPress={() => signOut()} style={styles.btn} />
     </View>
   );

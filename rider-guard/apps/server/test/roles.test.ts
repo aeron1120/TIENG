@@ -18,16 +18,36 @@ async function kakaoLogin(t: T, subject: string, email: string | null) {
   return (await t.call('POST', '/auth/oauth/exchange', { body: { code: loginCode, sessionKey: start.json.sessionKey } })).json.token as string;
 }
 
-test('첫 로그인에는 역할이 없고, 배달기사·관제사를 고르고 바꿀 수 있다', async () => {
+test('첫 로그인에는 역할이 없고 한 번 고른다 — 시작하기 전에만 다시 고를 수 있다', async () => {
   const t = await setup(KEYS);
-  const token = await t.login();
+  const signup = await t.call('POST', '/auth/signup', { body: { email: 'new@rider.test', password: 'password123' } });
+  const token = signup.json.token as string;
   assert.equal((await t.call('GET', '/me', { token })).json.role, null);
   const r = await t.call('PUT', '/me/role', { token, body: { role: 'dispatcher' } });
   assert.equal(r.status, 200);
   assert.equal(r.json.role, 'dispatcher');
-  assert.equal((await t.call('PUT', '/me/role', { token, body: { role: 'rider' } })).json.role, 'rider');
+  assert.equal(r.json.canChangeRole, true);
+  // 대행사 등록 전인 관제사는 잘못 고른 것으로 보고 배달기사로 다시 고를 수 있다
+  const back = await t.call('PUT', '/me/role', { token, body: { role: 'rider' } });
+  assert.equal(back.json.role, 'rider');
+  // 가입 정보를 넣은 배달기사는 더 바꿀 수 없다
+  await t.call('POST', '/me/onboarding', { token, body: { name: '김라이더', phone: '010-3333-0000', consents: { locationSensor: true, shareOnIncident: true, insuranceRecords: false } } });
+  assert.equal((await t.call('GET', '/me', { token })).json.canChangeRole, false);
+  const locked = await t.call('PUT', '/me/role', { token, body: { role: 'dispatcher' } });
+  assert.equal(locked.status, 409);
+  assert.equal(locked.json.error.code, 'role_locked');
+  // 같은 역할을 다시 보내는 건 괜찮다
+  assert.equal((await t.call('PUT', '/me/role', { token, body: { role: 'rider' } })).status, 200);
   // 관리자는 고를 수 없다
   assert.equal((await t.call('PUT', '/me/role', { token, body: { role: 'admin' } })).status, 400);
+});
+
+test('대행사를 등록한 관제사는 배달기사로 바꿀 수 없다', async () => {
+  const t = await setup(KEYS);
+  const token = await t.login();
+  await t.call('PUT', '/me/role', { token, body: { role: 'dispatcher' } });
+  await t.call('POST', '/me/agency', { token, body: { name: '대행' } });
+  assert.equal((await t.call('PUT', '/me/role', { token, body: { role: 'rider' } })).status, 409);
 });
 
 test('ADMIN_EMAILS 의 인증된 SNS 이메일로 로그인하면 관리자 — 대소문자·공백 무시, 고른 역할보다 우선', async () => {

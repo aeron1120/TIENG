@@ -2,14 +2,15 @@
 // 대행사를 등록하면 라이더 가입 코드가 생긴다. 라이더가 그 코드로 소속돼야(= 보호 중 위치·사고를 이 관제에 보이는 데 동의) 여기에 보인다.
 // 위치는 라이더가 보호 중일 때만 보이고, 볼 때마다 서버가 위치 이용 기록을 남긴다(라이더가 설정에서 확인).
 import type { AgencyBoardDto, AgencyIncidentDto, AgencyOrderDto, AgencyRiderDto, DeliveryPlatform } from '@rider-guard/contract';
+import { router } from 'expo-router';
 import Head from 'expo-router/head';
 import { useState } from 'react';
 import { Linking, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { errorMessage } from '@/api/client';
-import { useAgencyAction, useAgencyBoard, useMe, useSetAffiliation } from '@/api/hooks';
+import { useAgencyAction, useAgencyBoard, useMe, useSetAffiliation, useSetRole } from '@/api/hooks';
 import { AccountBar } from '@/components/AccountBar';
-import { ErrorText, Field, Notice } from '@/components/forms';
+import { ErrorText, Field, Notice, TextButton } from '@/components/forms';
 import { MapPill, RiderMap } from '@/components/RiderMap';
 import { useToast } from '@/components/Toast';
 import { Badge, Button, Txt, type BadgeTone } from '@/components/ui';
@@ -68,6 +69,8 @@ function AgencySetup() {
   const action = useAgencyAction();
   const join = useSetAffiliation();
   const toast = useToast();
+  const { data: me } = useMe();
+  const setRole = useSetRole();
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   return (
@@ -86,12 +89,12 @@ function AgencySetup() {
       </View>
       <View style={styles.setupCard}>
         <Txt style={styles.h2}>다른 관제사의 대행사에 합류</Txt>
-        <Txt style={styles.caption}>같은 대행사 관제사에게 가입 코드를 받아 넣어요.</Txt>
+        <Txt style={styles.caption}>같은 대행사 관제사에게 관제사 초대 코드(8자리)를 받아 넣어요. 라이더 가입 코드로는 합류할 수 없어요.</Txt>
         <Field
-          label="가입 코드"
+          label="관제사 초대 코드"
           value={code}
           onChangeText={(t) => setCode(t.toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 8))}
-          placeholder="예: K7M2QX"
+          placeholder="예: 7KQ2MX9P"
           autoCapitalize="characters"
         />
         <ErrorText error={join.error} />
@@ -103,6 +106,16 @@ function AgencySetup() {
           onPress={() => join.mutate({ joinCode: code, platforms: [] }, { onSuccess: () => toast.success('대행사에 합류했어요') })}
         />
       </View>
+      {/* 첫 로그인에 역할을 잘못 고른 경우의 출구 — 대행사를 등록·합류하기 전까지만 (서버 canChangeRole) */}
+      {me?.role === 'dispatcher' && me.canChangeRole ? (
+        <TextButton
+          label="배달기사이신가요? 배달기사로 시작하기"
+          underline
+          disabled={setRole.isPending}
+          onPress={() => setRole.mutate('rider', { onSuccess: () => router.replace('/') })}
+          style={styles.roleLink}
+        />
+      ) : null}
     </View>
   );
 }
@@ -120,9 +133,9 @@ function Board({ b }: { b: AgencyBoardDto }) {
   const selected = b.riders.find((r) => r.id === selectedId) ?? null;
   const agency = b.agency!;
 
-  const copyCode = () => {
+  const copy = (code: string, what: string) => {
     if (Platform.OS === 'web' && navigator.clipboard) {
-      void navigator.clipboard.writeText(agency.joinCode).then(() => toast.success('가입 코드를 복사했어요'));
+      void navigator.clipboard.writeText(code).then(() => toast.success(`${what}를 복사했어요`));
     }
   };
 
@@ -133,9 +146,13 @@ function Board({ b }: { b: AgencyBoardDto }) {
           <Txt style={styles.agencyName}>{agency.name}</Txt>
           <Txt style={styles.caption}>라이더 앱 → 소속 배달대행사 → 가입 코드에 넣어 달라고 알려 주세요</Txt>
         </View>
-        <Pressable onPress={copyCode} accessibilityRole="button" accessibilityLabel={`라이더 가입 코드 ${agency.joinCode}, 복사`} style={styles.codeBox}>
+        <Pressable onPress={() => copy(agency.joinCode, '라이더 가입 코드')} accessibilityRole="button" accessibilityLabel={`라이더 가입 코드 ${agency.joinCode}, 복사`} style={styles.codeBox}>
           <Txt style={styles.codeLabel}>라이더 가입 코드</Txt>
           <Txt style={styles.code}>{agency.joinCode}</Txt>
+        </Pressable>
+        <Pressable onPress={() => copy(agency.staffCode, '관제사 초대 코드')} accessibilityRole="button" accessibilityLabel={`관제사 초대 코드 ${agency.staffCode}, 복사`} style={styles.staffBox}>
+          <Txt style={styles.staffLabel}>관제사 초대 코드 · 라이더에게 주지 마세요</Txt>
+          <Txt style={styles.staffCode}>{agency.staffCode}</Txt>
         </Pressable>
         <Stat n={b.riders.length} label="소속" />
         <Stat n={b.riders.filter((r) => r.protecting).length} label="보호 중" />
@@ -246,7 +263,7 @@ function RiderDetail({ r, b }: { r: AgencyRiderDto; b: AgencyBoardDto }) {
         location={loc ? { lat: loc.lat, lng: loc.lng, accuracy: 20 } : null}
         tone={incident ? 'red' : 'dark'}
         dim={!loc}
-        label={incident ? `${time(incident.detectedAt)} 사고 위치` : loc ? r.name : null}
+        label={!loc ? null : incident ? `${time(incident.detectedAt)} 사고 위치` : r.name}
         height={320}
         radius={14}
         topLeft={<MapPill label={loc ? (r.location ? `위치 ${time(r.location.recordedAt)}` : '사고 위치') : '보호 중이 아니라 위치가 보이지 않아요'} />}
@@ -391,6 +408,10 @@ const styles = StyleSheet.create({
   codeBox: { backgroundColor: colors.asphalt, borderRadius: radius.lg, paddingVertical: 8, paddingHorizontal: 14, alignItems: 'center' },
   codeLabel: { ...font.sans(600), fontSize: 11, color: colors.textOnDark, opacity: 0.7 },
   code: { ...font.mono(700), fontSize: 22, letterSpacing: 4, color: colors.textOnDark },
+  staffBox: { borderRadius: radius.lg, paddingVertical: 8, paddingHorizontal: 12, alignItems: 'center', borderWidth: 1.5, borderColor: colors.border },
+  staffLabel: { ...font.sans(600), fontSize: 11, color: colors.textMuted },
+  staffCode: { ...font.mono(700), fontSize: 16, letterSpacing: 2, color: colors.text },
+  roleLink: { alignSelf: 'flex-start' },
   stat: { minWidth: 76, alignItems: 'center' },
   statN: { ...font.mono(700), fontSize: 24, color: colors.text },
 

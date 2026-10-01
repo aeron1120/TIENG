@@ -229,7 +229,7 @@ export function meRoutes(ctx: AppContext) {
   // 프로필 · 동의
   app.get('/', async (c) => c.json<MeDto>(await buildMe(ctx, c.var.riderId)));
 
-  // 첫 로그인 때 배달기사·관제사 중 고른다 (나중에 바꿀 수 있다). 관리자는 ADMIN_EMAILS 로 정해져 여기서 고를 수 없다
+  // 첫 로그인 때 배달기사·관제사 중 고른다 (시작하기 전에만 다시 고를 수 있다 — services/riders.ts canChangeRole). 관리자는 ADMIN_EMAILS 로 정해져 여기서 고를 수 없다
   app.put('/role', async (c) => {
     const { role } = await readBody(c, schemas.role);
     await setRole(ctx, c.var.riderId, role);

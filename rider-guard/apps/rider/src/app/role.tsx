@@ -1,4 +1,5 @@
-// 첫 로그인 — 배달기사 / 관제사 고르기. 고른 역할에 따라 보는 화면이 나뉜다 (나중에 설정에서 바꿀 수 있다).
+// 첫 로그인 — 배달기사 / 관제사 고르기. 고른 역할에 따라 보는 화면이 나뉜다. 오가며 바꾸지 않는다 —
+// 잘못 고른 경우만 시작하기 전(가입 정보 입력 전 · 대행사 등록 전)에 그 화면의 링크로 다시 고른다.
 // 관리자는 고르지 않는다 — 서버의 ADMIN_EMAILS 에 있는 인증된 SNS 이메일로 정해진다.
 import type { SetRoleRequest } from '@rider-guard/contract';
 import { Redirect } from 'expo-router';
@@ -47,7 +48,7 @@ export default function RoleScreen() {
         <Txt accessibilityRole="header" style={typography.display}>
           {'어떤 일을\n하고 계세요?'}
         </Txt>
-        <Txt style={typography.lead}>고른 역할에 맞는 화면을 보여 드려요. 나중에 설정에서 바꿀 수 있어요.</Txt>
+        <Txt style={typography.lead}>배달기사와 관제사는 화면이 따로예요. 한 번 고르면 그 역할로만 써요.</Txt>
       </FadeIn>
       <FadeIn delay={80} style={styles.choices}>
         {CHOICES.map((c) => (

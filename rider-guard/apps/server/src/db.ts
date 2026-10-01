@@ -373,6 +373,12 @@ const MIGRATIONS: string[] = [
   ALTER TABLE orders ADD COLUMN platform TEXT;
   CREATE INDEX orders_agency ON orders(agencyId, status);
   `,
+  // v10 — 관제사 초대 코드. 라이더 가입 코드는 라이더들이 알고 있으니, 그 코드로 관제사가 되어 다른 라이더 위치를 보지 못하게 따로 둔다.
+  // 이미 있는 대행사는 관제 화면을 처음 열 때 만든다 (services/agency.ts).
+  `
+  ALTER TABLE agencies ADD COLUMN staffCode TEXT;
+  CREATE UNIQUE INDEX agencies_staff_code ON agencies(staffCode) WHERE staffCode IS NOT NULL;
+  `,
 ];
 
 export type Params = Record<string, InValue | undefined>;

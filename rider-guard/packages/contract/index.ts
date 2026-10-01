@@ -197,6 +197,8 @@ export type AdminOverviewDto = {
 export type MeDto = {
   /** 관리자는 ADMIN_EMAILS 에 있는 인증된 SNS 이메일로 정해진다 */
   role: UserRole | null;
+  /** 시작하기 전(배달기사: 가입 정보 입력 전, 관제사: 대행사 등록 전)에만 역할을 다시 고를 수 있다 */
+  canChangeRole: boolean;
   rider: RiderDto;
   account: AccountDto;
   /** 가입 정보(이름·휴대폰·필수 동의)를 마쳤는가. false 면 운행을 시작할 수 없다. */
@@ -650,8 +652,8 @@ export type AffiliationDto = {
   orders: { id: string; platform: DeliveryPlatform | null; storeName: string; destination: string; status: OrderStatus }[];
 };
 /**
- * 라이더: 관제사에게 받은 가입 코드로 대행사에 소속된다. joinCode 가 null 이면 대행사 없이 플랫폼만, 빠져 있으면 지금 소속을 그대로 둔다.
- * 관제사: 가입 코드로 다른 관제사의 대행사에 합류한다 (platforms 는 비워 보낸다).
+ * 라이더: 관제사에게 받은 라이더 가입 코드로 대행사에 소속된다. joinCode 가 null 이면 대행사 없이 플랫폼만, 빠져 있으면 지금 소속을 그대로 둔다.
+ * 관제사: 관제사 초대 코드(staffCode)로 다른 관제사의 대행사에 합류한다 (platforms 는 비워 보낸다). 라이더 가입 코드로는 관제사가 될 수 없다.
  */
 export type SetAffiliationRequest = { joinCode?: string | null; platforms: DeliveryPlatform[] };
 export type CreateAgencyRequest = { name: string };
@@ -694,7 +696,8 @@ export type AgencyIncidentDto = {
   ack: { by: string; at: ISODate } | null;
 };
 export type AgencyBoardDto = {
-  agency: (AgencyDto & { joinCode: string }) | null;
+  /** joinCode = 라이더 가입 코드, staffCode = 관제사 초대 코드 (서로 바꿔 쓸 수 없다) */
+  agency: (AgencyDto & { joinCode: string; staffCode: string }) | null;
   riders: AgencyRiderDto[];
   orders: AgencyOrderDto[];
   incidents: AgencyIncidentDto[];

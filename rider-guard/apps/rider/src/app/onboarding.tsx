@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Keyboard, StyleSheet, View, type TextInput } from 'react-native';
 
 import { api } from '@/api/client';
-import { keys, useMe } from '@/api/hooks';
+import { keys, useMe, useSetRole } from '@/api/hooks';
 import { useAuth } from '@/auth/AuthProvider';
 import { Checkbox, ErrorText, Field, Header, Input, Notice, TextButton } from '@/components/forms';
 import { LogoIcon } from '@/components/Icons';
@@ -168,6 +168,8 @@ function useFalsePositive(fresh: boolean) {
 /** 로고 줄 · 제목 · 설명 (v3·1). 스켈레톤과 같은 자리 */
 function Intro({ animate }: { animate: boolean }) {
   const { signOut } = useAuth();
+  const { data: me } = useMe();
+  const setRole = useSetRole();
   return (
     <>
       <FadeIn animate={animate} style={styles.brand}>
@@ -180,7 +182,19 @@ function Intro({ animate }: { animate: boolean }) {
         <Txt accessibilityRole="header" style={typography.display}>
           {'달리는 동안\n곁에서 지켜볼게요'}
         </Txt>
-        <Txt style={[typography.lead, styles.lead]}>{'사고가 감지되면 먼저 라이더님께 묻고,\n답이 없을 때만 가까운 사람에게 알려요.'}</Txt>
+        <Txt style={[typography.lead, styles.lead]}>{'사고가 감지되면 먼저 라이더님께 묻고,\n답이 없을 때만 소속 대행사 관제에 알려요.'}</Txt>
+        {/* 첫 로그인에 역할을 잘못 고른 경우의 출구 — 가입 정보를 넣기 전까지만 (서버 canChangeRole) */}
+        {me?.role === 'rider' && me.canChangeRole ? (
+          <TextButton
+            label="배달대행사 관제사이신가요? 관제사로 시작하기"
+            underline
+            disabled={setRole.isPending}
+            onPress={() => setRole.mutate('dispatcher', { onSuccess: () => router.replace('/control') })}
+            color={colors.textMuted}
+            fontSize={13}
+            style={styles.roleLink}
+          />
+        ) : null}
       </FadeIn>
     </>
   );
@@ -564,6 +578,7 @@ function OnboardingError({ error }: { error: unknown }) {
 }
 
 const styles = StyleSheet.create({
+  roleLink: { alignSelf: 'flex-start', marginTop: 4 },
   // 로고 28 + 'Rider Guard' 15 굵게 (+ 오른쪽 끝 '다른 계정으로 로그인')
   brand: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 28 },
   exit: { marginLeft: 'auto', marginRight: -8, minHeight: 28 },

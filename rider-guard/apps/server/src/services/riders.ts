@@ -308,8 +308,20 @@ export async function isAdmin(ctx: AppContext, riderId: string): Promise<boolean
   return roleOf(ctx, {}, rows) === 'admin';
 }
 
-/** 역할은 본인이 고르고 바꿀 수 있다 — 관제사 역할로 다른 라이더의 실제 데이터가 열리지 않으므로 권한 상승이 아니다 */
+/**
+ * 역할은 첫 로그인 때 한 번 고른다. 배달기사와 관제사는 쓰는 화면도 보는 데이터도 다르다 — 오가며 바꾸지 않는다.
+ * 잘못 고른 경우만 시작하기 전(배달기사: 가입 정보 입력 전, 관제사: 대행사 등록·합류 전)에 다시 고를 수 있다.
+ */
+export function canChangeRole(rider: Pick<RiderRow, 'role' | 'onboardedAt' | 'agencyId'>): boolean {
+  if (!rider.role) return true;
+  if (rider.agencyId) return false;
+  return rider.role === 'dispatcher' || !rider.onboardedAt;
+}
+
 export async function setRole(ctx: AppContext, riderId: string, role: 'rider' | 'dispatcher') {
+  const rider = await getRider(ctx, riderId);
+  if (rider.role === role) return;
+  if (!canChangeRole(rider)) throw new ApiError(409, 'role_locked', '역할은 처음 한 번만 고를 수 있어요. 다른 역할로 쓰려면 새 계정으로 가입해 주세요.');
   await ctx.db.run('UPDATE riders SET role = :role WHERE id = :riderId', { riderId, role });
 }
 
@@ -335,6 +347,7 @@ export async function buildMe(ctx: AppContext, riderId: string): Promise<MeDto> 
   const last = await latestLocation(ctx, riderId, 0);
   return {
     role: roleOf(ctx, rider, identities),
+    canChangeRole: canChangeRole(rider),
     rider: toRiderDto(rider),
     account: accountWith(rider, identities),
     onboarded: onboardedWith(rider, consents),

@@ -64,6 +64,20 @@ test('관제 화면은 관제사만, 자기 대행사 소속만 — 위치는 �
   const access = (await t.call('GET', '/me/location-access', { token: rider })).json.items;
   assert.ok(access.some((a: { accessor: string }) => a.accessor.startsWith('강남 바로배달 관제')));
 
+  // 라이더 가입 코드를 아는 사람이 관제사로 합류해 위치를 볼 수 없다 — 관제사는 관제사 초대 코드로만
+  const { joinCode, staffCode } = board.agency;
+  assert.notEqual(joinCode, staffCode);
+  const intruder = await t.login('010-9000-0008');
+  await t.call('PUT', '/me/role', { token: intruder, body: { role: 'dispatcher' } });
+  const sneak = await t.call('PUT', '/me/affiliation', { token: intruder, body: { joinCode, platforms: [] } });
+  assert.equal(sneak.status, 404);
+  assert.equal((await t.call('GET', '/me/agency', { token: intruder })).json.agency, null);
+  const staff = await t.call('PUT', '/me/affiliation', { token: intruder, body: { joinCode: staffCode, platforms: [] } });
+  assert.equal(staff.status, 200);
+  assert.equal((await t.call('GET', '/me/agency', { token: intruder })).json.riders.length, 1);
+  // 배달기사는 관제사 초대 코드로 소속될 수 없다(라이더 가입 코드만)
+  assert.equal((await t.call('PUT', '/me/affiliation', { token: rider, body: { joinCode: staffCode, platforms: ['baemin'] } })).status, 404);
+
   // 다른 대행사 관제사에게는 보이지 않는다
   const other = await t.login('010-9000-0009');
   await t.call('PUT', '/me/role', { token: other, body: { role: 'dispatcher' } });

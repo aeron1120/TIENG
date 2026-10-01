@@ -33,17 +33,18 @@ const CODE_CHARS = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
 const LOCATION_FRESH_MS = 10 * 60_000;
 const SENSOR_ONLINE_MS = 60_000;
 
-type AgencyRow = { id: string; name: string; joinCode: string; createdBy: string; createdAt: number };
+type AgencyRow = { id: string; name: string; joinCode: string; staffCode: string | null; createdBy: string; createdAt: number };
 
 const platformsOf = (r: Pick<RiderRow, 'platformsJson'>): DeliveryPlatform[] =>
   (parseJson<string[]>(r.platformsJson ?? null) ?? []).filter((p): p is DeliveryPlatform => PLATFORMS.includes(p as DeliveryPlatform));
 
 const staffName = (r: Pick<RiderRow, 'name' | 'email'>) => r.name?.trim() || r.email?.split('@')[0] || '관제사';
 
-async function uniqueJoinCode(ctx: AppContext): Promise<string> {
+/** 라이더 가입 코드 6자리 · 관제사 초대 코드 8자리. 두 코드는 서로 겹치지 않는다(길이가 다르다) */
+async function uniqueCode(ctx: AppContext, length: 6 | 8): Promise<string> {
   for (;;) {
-    const code = Array.from({ length: 6 }, () => CODE_CHARS[randomInt(CODE_CHARS.length)]).join('');
-    if (!(await ctx.db.get('SELECT 1 FROM agencies WHERE joinCode = :code', { code }))) return code;
+    const code = Array.from({ length }, () => CODE_CHARS[randomInt(CODE_CHARS.length)]).join('');
+    if (!(await ctx.db.get('SELECT 1 FROM agencies WHERE joinCode = :code OR staffCode = :code', { code }))) return code;
   }
 }
 
@@ -65,12 +66,21 @@ export async function affiliationOf(ctx: AppContext, rider: RiderRow): Promise<A
 
 /**
  * 소속 정하기. joinCode 가 있으면 그 대행사에 소속되고, null 이면 대행사 없이(플랫폼 직접 계약) 플랫폼만 남긴다. 빠져 있으면 소속은 그대로.
+ * 배달기사는 라이더 가입 코드로, 관제사는 관제사 초대 코드로만 들어간다 — 라이더 코드를 아는 사람이 관제사로 합류해 다른 라이더 위치를 보지 못하게.
  * 진행 중인 주문이 있으면 대행사를 바꾸지 않는다 — 주문이 원래 대행사 관제에서 사라진다.
  */
 export async function setAffiliation(ctx: AppContext, riderId: string, input: { joinCode?: string | null; platforms: DeliveryPlatform[] }) {
   const rider = await getRider(ctx, riderId);
-  const agency = input.joinCode ? await ctx.db.get<AgencyRow>('SELECT * FROM agencies WHERE joinCode = :code', { code: normalizeJoinCode(input.joinCode) }) : undefined;
-  if (input.joinCode && !agency) throw new ApiError(404, 'agency_not_found', '가입 코드에 맞는 배달대행사가 없어요. 관제사에게 코드를 다시 확인해 주세요.');
+  const staff = rider.role === 'dispatcher' || (await isAdmin(ctx, riderId));
+  const column = staff ? 'staffCode' : 'joinCode';
+  const agency = input.joinCode ? await ctx.db.get<AgencyRow>(`SELECT * FROM agencies WHERE ${column} = :code`, { code: normalizeJoinCode(input.joinCode) }) : undefined;
+  if (input.joinCode && !agency) {
+    throw new ApiError(
+      404,
+      'agency_not_found',
+      staff ? '관제사 초대 코드에 맞는 배달대행사가 없어요. 라이더 가입 코드가 아니라 관제사 초대 코드를 넣어 주세요.' : '가입 코드에 맞는 배달대행사가 없어요. 관제사에게 코드를 다시 확인해 주세요.',
+    );
+  }
   // joinCode 가 빠져 있으면 소속은 그대로 두고 플랫폼만 바꾼다
   const nextAgencyId = input.joinCode === undefined ? (rider.agencyId ?? null) : (agency?.id ?? null);
   if (nextAgencyId !== (rider.agencyId ?? null)) {
@@ -106,9 +116,9 @@ export async function createAgency(ctx: AppContext, riderId: string, name: strin
   const me = await requireDispatcher(ctx, riderId);
   if (me.agencyId) throw new ApiError(409, 'already_in_agency', '이미 소속된 배달대행사가 있어요.');
   const now = ctx.clock.now();
-  const agency: AgencyRow = { id: newId('agc'), name: name.trim(), joinCode: await uniqueJoinCode(ctx), createdBy: riderId, createdAt: now };
+  const agency: AgencyRow = { id: newId('agc'), name: name.trim(), joinCode: await uniqueCode(ctx, 6), staffCode: await uniqueCode(ctx, 8), createdBy: riderId, createdAt: now };
   await ctx.db.tx(async () => {
-    await ctx.db.run('INSERT INTO agencies (id, name, joinCode, createdBy, createdAt) VALUES (:id, :name, :joinCode, :createdBy, :createdAt)', agency);
+    await ctx.db.run('INSERT INTO agencies (id, name, joinCode, staffCode, createdBy, createdAt) VALUES (:id, :name, :joinCode, :staffCode, :createdBy, :createdAt)', agency);
     await ctx.db.run('UPDATE riders SET agencyId = :agencyId, agencyJoinedAt = :now WHERE id = :riderId', { riderId, agencyId: agency.id, now });
   });
   return agency;
@@ -122,6 +132,11 @@ export async function agencyBoard(ctx: AppContext, riderId: string): Promise<Age
   const me = await requireDispatcher(ctx, riderId);
   const agency = me.agencyId ? await ctx.db.get<AgencyRow>('SELECT * FROM agencies WHERE id = :id', { id: me.agencyId }) : undefined;
   if (!agency) return { agency: null, riders: [], orders: [], incidents: [] };
+  // v10 이전에 만든 대행사는 관제사 초대 코드가 없다 — 처음 열 때 만든다
+  if (!agency.staffCode) {
+    agency.staffCode = await uniqueCode(ctx, 8);
+    await ctx.db.run('UPDATE agencies SET staffCode = :code WHERE id = :id AND staffCode IS NULL', { code: agency.staffCode, id: agency.id });
+  }
   const now = ctx.clock.now();
   const [members, sessions, devices, orders, incidents, acks] = (await ctx.db.readMany([
     { sql: MEMBERS_SQL, params: { agencyId: agency.id } },
@@ -191,7 +206,7 @@ export async function agencyBoard(ctx: AppContext, riderId: string): Promise<Age
 
   const ackOf = new Map(acks.map((a) => [a.incidentId, { by: parseJson<{ by?: string }>(a.dataJson)?.by ?? '관제사', at: iso(a.at) }]));
   return {
-    agency: { id: agency.id, name: agency.name, joinCode: agency.joinCode },
+    agency: { id: agency.id, name: agency.name, joinCode: agency.joinCode, staffCode: agency.staffCode },
     riders,
     orders: orders.map(toAgencyOrder),
     incidents: recentIncidents.map(

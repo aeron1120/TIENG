@@ -41,14 +41,21 @@ export function openReport() {
   openPresentationReport();
 }
 
-export function ControlRoom({ s, analysis, mapHeight = 300, compact = false, guided = false }: { s: DemoState; analysis: SensorAnalysis | null; mapHeight?: number; compact?: boolean; guided?: boolean }) {
-  const blocked = presentationMutationBlock(usePresentationConnection());
+export type ControlInteraction = { dispatch: (action: DemoAction) => void; blocked: string | null; openReport: () => void };
+
+export function ControlRoom({ s, analysis, mapHeight = 300, compact = false, guided = false, interaction, title, showSource = true, onSelectRider }: {
+  s: DemoState; analysis: SensorAnalysis | null; mapHeight?: number; compact?: boolean; guided?: boolean;
+  interaction?: ControlInteraction; title?: string; showSource?: boolean; onSelectRider?: (id: string) => void;
+}) {
+  const connection = usePresentationConnection();
+  const actions: ControlInteraction = interaction ?? { dispatch: mutate, blocked: presentationMutationBlock(connection), openReport };
+  const blocked = actions.blocked;
   // 사건이 생기면 그 라이더로 — 그 사건 동안 관제사가 다른 라이더를 고르면 그쪽을 따른다
   const incidentId = s.incident?.id;
   const [picked, setPicked] = useState<{ id: string; during: string | undefined }>({ id: MAIN_RIDER, during: undefined });
   const [roomWidth, setRoomWidth] = useState(0);
   const selected = guided || (incidentId && picked.during !== incidentId) ? MAIN_RIDER : picked.id;
-  const setSelected = (id: string) => setPicked({ id, during: incidentId });
+  const setSelected = (id: string) => { setPicked({ id, during: incidentId }); onSelectRider?.(id); };
   const rider = s.riders.find((r) => r.id === selected) ?? s.riders[0]!;
   const counts = s.riders.reduce<Record<RiderStatus, number>>((acc, r) => ({ ...acc, [riderStatus(s, r)]: acc[riderStatus(s, r)] + 1 }), { delivering: 0, idle: 0, off: 0, check: 0, incident: 0 });
   const st = riderStatus(s, rider);
@@ -61,11 +68,11 @@ export function ControlRoom({ s, analysis, mapHeight = 300, compact = false, gui
         <View style={styles.flex} />
         <Badge tone="neutral" size="sm">{s.riders.find((r) => r.id === MAIN_RIDER)?.name ?? '-'}</Badge>
       </View>
-      <IncidentPanel s={s} analysis={analysis} compact />
+      <IncidentPanel s={s} analysis={analysis} compact actions={actions} showSource={showSource} />
       {blocked ? <Txt accessibilityRole="alert" style={styles.meta}>{blocked}</Txt> : null}
       <View style={styles.orders}>
         <Txt style={styles.colTitle}>주문 현황</Txt>
-        {s.orders.filter((o) => o.originalRiderId === MAIN_RIDER).map((o) => <CompactOrder key={o.id} s={s} o={o} concise />)}
+        {s.orders.filter((o) => o.originalRiderId === MAIN_RIDER).map((o) => <CompactOrder key={o.id} s={s} o={o} concise actions={actions} />)}
       </View>
     </View>
   );
@@ -73,8 +80,8 @@ export function ControlRoom({ s, analysis, mapHeight = 300, compact = false, gui
   return (
     <View style={styles.room} onLayout={(e) => setRoomWidth(e.nativeEvent.layout.width)}>
       <View style={styles.top}>
-        <Txt style={styles.brand}>BATON 배달대행 관제</Txt>
-        <Badge tone="neutral" size="sm">시연 데이터 · 실제 발송 없음</Badge>
+        <Txt style={styles.brand}>{title ?? 'BATON 배달대행 관제'}</Txt>
+        {showSource ? <Badge tone="neutral" size="sm">시연 데이터 · 실제 발송 없음</Badge> : null}
         <View style={styles.flex} />
         <Count label="배달 중" n={counts.delivering} />
         <Count label="대기" n={counts.idle} />
@@ -85,24 +92,26 @@ export function ControlRoom({ s, analysis, mapHeight = 300, compact = false, gui
 
       {blocked ? <Txt accessibilityRole="alert" style={styles.meta}>{blocked}</Txt> : null}
       <View style={[styles.main, roomWidth < 920 && styles.mainStack]}>
-        <View style={[styles.left, roomWidth < 920 && styles.fullWidth]}>
+        <TourTarget name="control-riders" style={[styles.left, roomWidth < 920 && styles.fullWidth]}>
           <Txt style={styles.colTitle}>{`소속 라이더 ${s.riders.length}명`}</Txt>
           {s.riders.map((r) => {
             const rs = riderStatus(s, r);
             return (
-              <Pressable key={r.id} onPress={() => setSelected(r.id)} style={[styles.riderItem, r.id === selected && styles.riderSel, rs === 'incident' && styles.riderAlert]} accessibilityRole="button" accessibilityLabel={`${r.name}, ${RIDER_STATUS_LABEL[rs]}`}>
+              <TourTarget key={r.id} name={`control-select-${r.id}`} onTourPress={() => setSelected(r.id)}>
+              <Pressable onPress={() => setSelected(r.id)} style={[styles.riderItem, r.id === selected && styles.riderSel, rs === 'incident' && styles.riderAlert]} accessibilityRole="button" accessibilityLabel={`${r.name}, ${RIDER_STATUS_LABEL[rs]}`}>
                 <View style={styles.riderHead}>
                   <Txt style={styles.riderName}>{r.name}</Txt>
                   <Badge tone={STATUS_TONE[rs]} size="sm" dot={rs === 'delivering' || rs === 'incident'}>{RIDER_STATUS_LABEL[rs]}</Badge>
                 </View>
                 <Txt style={styles.riderSub}>{`${r.area} · 진행 주문 ${activeOrders(s, r.id).filter((o) => o.status !== 'held').length}건${r.id === MAIN_RIDER ? ' · 헬멧 센서' : ''}`}</Txt>
               </Pressable>
+              </TourTarget>
             );
           })}
-        </View>
+        </TourTarget>
 
         <View style={styles.center}>
-          <RiderMap
+          <TourTarget name="control-map"><RiderMap
             location={{ lat: rider.lat, lng: rider.lng, accuracy: 20 }}
             tone={st === 'incident' || st === 'check' ? 'red' : 'dark'}
             label={st === 'incident' && s.incident ? `${clockAt(s, s.incident.detectedT)} 사고 위치` : rider.name}
@@ -110,8 +119,8 @@ export function ControlRoom({ s, analysis, mapHeight = 300, compact = false, gui
             radius={14}
             topLeft={<MapPill label={`${rider.name} · ${RIDER_STATUS_LABEL[st]}`} dot={st === 'incident' || st === 'check' ? colors.red : colors.green} halo={st === 'incident' || st === 'check' ? colors.redSoft : colors.greenSoft} />}
             topRight={<MapPill label={`위치 갱신 ${clockAt(s, Math.max(0, s.t - (s.t % 5)))}`} />}
-          />
-          <View style={styles.logBox}>
+          /></TourTarget>
+          <TourTarget name="control-events" style={styles.logBox}>
             <Txt style={styles.colTitle}>최근 이벤트</Txt>
             <ScrollView style={styles.logScroll}>
               {[...s.log].reverse().slice(0, 12).map((l, k) => (
@@ -121,12 +130,12 @@ export function ControlRoom({ s, analysis, mapHeight = 300, compact = false, gui
                 </View>
               ))}
             </ScrollView>
-          </View>
+          </TourTarget>
         </View>
 
-        <View style={[styles.right, roomWidth < 920 && styles.fullWidth]}>
-          <IncidentPanel s={s} analysis={analysis} />
-        </View>
+        <TourTarget name="control-incident" style={[styles.right, roomWidth < 920 && styles.fullWidth]}>
+          <IncidentPanel s={s} analysis={analysis} actions={actions} showSource={showSource} />
+        </TourTarget>
       </View>
 
       <View style={styles.orders}>
@@ -138,7 +147,7 @@ export function ControlRoom({ s, analysis, mapHeight = 300, compact = false, gui
         </View> : null}
         {orders.length === 0 ? <Txt style={styles.empty}>진행 중인 주문이 없어요</Txt> : null}
         {orders.map((o) => (
-          roomWidth < 800 ? <CompactOrder key={o.id} s={s} o={o} /> : <OrderRow key={o.id} s={s} o={o} />
+          roomWidth < 800 ? <CompactOrder key={o.id} s={s} o={o} actions={actions} /> : <OrderRow key={o.id} s={s} o={o} actions={actions} />
         ))}
       </View>
     </View>
@@ -147,8 +156,8 @@ export function ControlRoom({ s, analysis, mapHeight = 300, compact = false, gui
 
 const COLS = [0.8, 2, 0.9, 0.9, 1.1, 2.2, 2.4];
 
-function CompactOrder({ s, o, concise = false }: { s: DemoState; o: DemoOrder; concise?: boolean }) {
-  const blocked = presentationMutationBlock(usePresentationConnection());
+function CompactOrder({ s, o, concise = false, actions }: { s: DemoState; o: DemoOrder; concise?: boolean; actions: ControlInteraction }) {
+  const { dispatch: mutate, blocked } = actions;
   const owner = s.riders.find((r) => r.id === o.riderId)?.name ?? '-';
   const from = s.riders.find((r) => r.id === o.originalRiderId)?.name ?? '-';
   const last = o.notices.at(-1);
@@ -160,8 +169,8 @@ function CompactOrder({ s, o, concise = false }: { s: DemoState; o: DemoOrder; c
   </TourTarget>;
 }
 
-function OrderRow({ s, o }: { s: DemoState; o: DemoOrder }) {
-  const blocked = presentationMutationBlock(usePresentationConnection());
+function OrderRow({ s, o, actions }: { s: DemoState; o: DemoOrder; actions: ControlInteraction }) {
+  const { dispatch: mutate, blocked } = actions;
   const owner = s.riders.find((r) => r.id === o.riderId)?.name ?? '-';
   const from = s.riders.find((r) => r.id === o.originalRiderId)?.name ?? '-';
   const last = o.notices.at(-1);
@@ -201,16 +210,16 @@ function Count({ label, n, alert }: { label: string; n: number; alert?: boolean 
   );
 }
 
-function IncidentPanel({ s, analysis, compact = false }: { s: DemoState; analysis: SensorAnalysis | null; compact?: boolean }) {
-  const blocked = presentationMutationBlock(usePresentationConnection());
+function IncidentPanel({ s, analysis, compact = false, actions, showSource }: { s: DemoState; analysis: SensorAnalysis | null; compact?: boolean; actions: ControlInteraction; showSource: boolean }) {
+  const { dispatch: mutate, blocked, openReport } = actions;
   const i = s.incident;
   const stage = presentationStage(s, analysis ? { caseId: '', from: 0, to: 0, candidateAt: analysis.candidateAt, decision: analysis.decision } : null);
   if (!i) {
     return (
       <View style={styles.panel}>
         <Txt style={styles.colTitle}>사건</Txt>
-        <Txt style={styles.calmTitle}>{compact && !s.clipDone && !s.sensorLost ? '접수된 사건 없음' : stage.title}</Txt>
-        {!compact ? <Txt style={[styles.meta, styles.gap]}>{stage.description}</Txt> : null}
+        <Txt style={styles.calmTitle}>{(compact || !showSource) && !s.clipDone && !s.sensorLost ? '접수된 사건 없음' : stage.title}</Txt>
+        {!compact ? <Txt style={[styles.meta, styles.gap]}>{!showSource && s.t === 0 ? '라이더의 보호 상태를 확인하고 있어요. 사고 후보가 감지되면 이곳에 응답 상태와 대응 정보가 표시돼요.' : stage.description}</Txt> : null}
         {s.sensorLost && !compact ? <Txt style={[styles.meta, styles.gap, { color: colors.redInk }]}>{`${s.riders[0]!.name} 라이더 센서 신호 끊김 — 확인 필요`}</Txt> : null}
       </View>
     );

@@ -15,6 +15,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
   type DimensionValue,
   type GestureResponderEvent,
@@ -800,6 +801,7 @@ type SheetProps = {
   onClose: () => void;
   title: string;
   description?: string;
+  scrollable?: boolean;
   /** 버튼들 — gap 10 으로 제목 아래에 쌓인다 */
   children?: React.ReactNode;
 };
@@ -808,8 +810,9 @@ type SheetProps = {
  * 아래에서 올라오는 확인 시트. 가림막(scrim)을 누르거나 안드로이드 뒤로가기로 onClose.
  * 닫을 때는 내려가는 애니메이션이 끝난 뒤 언마운트한다. Alert.alert 대신 쓴다(웹에서도 동작).
  */
-export function Sheet({ visible, onClose, title, description, children }: SheetProps) {
+export function Sheet({ visible, onClose, title, description, scrollable = false, children }: SheetProps) {
   const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
   const reduced = useReducedMotion();
   const [mounted, setMounted] = useState(visible);
   if (visible && !mounted) setMounted(true);
@@ -850,14 +853,16 @@ export function Sheet({ visible, onClose, title, description, children }: SheetP
         </Animated.View>
         <Animated.View
           accessibilityViewIsModal
-          style={[styles.sheet, { paddingBottom: insets.bottom + 20, transform: [{ translateY: offset }] }]}
+          style={[styles.sheet, scrollable && { maxHeight: Math.max(0, height - insets.top - 12) }, { paddingBottom: insets.bottom + 20, transform: [{ translateY: offset }] }]}
         >
           <View style={styles.sheetHandle} />
           <Txt accessibilityRole="header" style={styles.sheetTitle}>
             {title}
           </Txt>
           {description ? <Txt style={styles.sheetDescription}>{description}</Txt> : null}
-          {children ? <View style={styles.sheetBody}>{children}</View> : null}
+          {children ? scrollable
+            ? <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetScrollContent}>{children}</ScrollView>
+            : <View style={styles.sheetBody}>{children}</View> : null}
         </Animated.View>
       </View>
     </Modal>
@@ -1086,4 +1091,6 @@ const styles = StyleSheet.create({
   sheetTitle: { ...font.sans(800), fontSize: 20, lineHeight: 28, letterSpacing: -0.5 },
   sheetDescription: { fontSize: 15, lineHeight: 22, color: colors.textMuted, marginTop: 6 },
   sheetBody: { gap: 10, marginTop: 20 },
+  sheetScroll: { flexGrow: 0, flexShrink: 1, minHeight: 0, marginTop: 20 },
+  sheetScrollContent: { gap: 10, paddingBottom: 2 },
 });

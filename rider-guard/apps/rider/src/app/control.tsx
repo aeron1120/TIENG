@@ -1,15 +1,16 @@
-// 관제사 화면 (로그인, 넓은 화면) — 배달대행사 관제. 실제 소속 라이더의 보호 상태·위치·사고·주문.
-// 대행사를 등록하면 라이더 가입 코드가 생긴다. 라이더가 그 코드로 소속돼야(= 보호 중 위치·사고를 이 관제에 보이는 데 동의) 여기에 보인다.
+// 관제사 등록/합류 후, 빈 대행사에는 채워진 관제 화면과 체험 흐름을 제공한다.
+// 실제 소속·주문·사고가 있으면 운영 화면을 유지한다. 도움말 조작은 화면 안의 별도 상태다.
 // 위치는 라이더가 보호 중일 때만 보이고, 볼 때마다 서버가 위치 이용 기록을 남긴다(라이더가 설정에서 확인).
 import type { AgencyBoardDto, AgencyIncidentDto, AgencyOrderDto, AgencyRiderDto, DeliveryPlatform } from '@rider-guard/contract';
 import { router } from 'expo-router';
 import Head from 'expo-router/head';
 import { useState } from 'react';
-import { Linking, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { errorMessage } from '@/api/client';
 import { useAgencyAction, useAgencyBoard, useMe, useSetAffiliation, useSetRole } from '@/api/hooks';
 import { AccountBar } from '@/components/AccountBar';
+import { DispatcherExperience } from '@/components/control/DispatcherExperience';
 import { ErrorText, Field, Notice, TextButton } from '@/components/forms';
 import { MapPill, RiderMap } from '@/components/RiderMap';
 import { useToast } from '@/components/Toast';
@@ -38,6 +39,7 @@ export default function ControlScreen() {
   const { data: me } = useMe();
   const canUse = me?.role === 'dispatcher' || me?.role === 'admin';
   const board = useAgencyBoard(canUse);
+  if (board.data?.agency) return <DispatcherExperience key={board.data.agency.id} board={board.data} liveBoard={<Board b={board.data} />} />;
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
       <Head>
@@ -47,18 +49,9 @@ export default function ControlScreen() {
       {board.error && !board.data ? <Notice error={board.error} onRetry={() => void board.refetch()} /> : null}
       {!board.data ? (
         !board.error ? <Txt style={styles.meta}>불러오는 중</Txt> : null
-      ) : board.data.agency ? (
-        <Board b={board.data} />
       ) : (
         <AgencySetup />
       )}
-      <Pressable
-        accessibilityRole="link"
-        onPress={() => (Platform.OS === 'web' ? window.open('/demo/control', '_blank') : undefined)}
-        style={styles.demoLink}
-      >
-        <Txt style={styles.demoLinkText}>시연 데이터(ESP32 실측 파형)로 관제 흐름 보기 ↗</Txt>
-      </Pressable>
     </ScrollView>
   );
 }
@@ -125,41 +118,14 @@ function AgencySetup() {
 function Board({ b }: { b: AgencyBoardDto }) {
   const { width } = useWindowDimensions();
   const wide = width >= 1100;
-  const toast = useToast();
   const [picked, setPicked] = useState<string | null>(null);
   const open = b.incidents.filter((i) => i.status === 'countdown' || i.status === 'escalated');
   // 선택이 없으면 사고 난 라이더 → 보호 중인 라이더 → 첫 라이더
   const selectedId = picked ?? open[0]?.riderId ?? b.riders.find((r) => r.protecting)?.id ?? b.riders[0]?.id ?? null;
   const selected = b.riders.find((r) => r.id === selectedId) ?? null;
-  const agency = b.agency!;
-
-  const copy = (code: string, what: string) => {
-    if (Platform.OS === 'web' && navigator.clipboard) {
-      void navigator.clipboard.writeText(code).then(() => toast.success(`${what}를 복사했어요`));
-    }
-  };
 
   return (
     <>
-      <View style={styles.strip}>
-        <View style={styles.flex}>
-          <Txt style={styles.agencyName}>{agency.name}</Txt>
-          <Txt style={styles.caption}>라이더 앱 → 소속 배달대행사 → 가입 코드에 넣어 달라고 알려 주세요</Txt>
-        </View>
-        <Pressable onPress={() => copy(agency.joinCode, '라이더 가입 코드')} accessibilityRole="button" accessibilityLabel={`라이더 가입 코드 ${agency.joinCode}, 복사`} style={styles.codeBox}>
-          <Txt style={styles.codeLabel}>라이더 가입 코드</Txt>
-          <Txt style={styles.code}>{agency.joinCode}</Txt>
-        </Pressable>
-        <Pressable onPress={() => copy(agency.staffCode, '관제사 초대 코드')} accessibilityRole="button" accessibilityLabel={`관제사 초대 코드 ${agency.staffCode}, 복사`} style={styles.staffBox}>
-          <Txt style={styles.staffLabel}>관제사 초대 코드 · 라이더에게 주지 마세요</Txt>
-          <Txt style={styles.staffCode}>{agency.staffCode}</Txt>
-        </Pressable>
-        <Stat n={b.riders.length} label="소속" />
-        <Stat n={b.riders.filter((r) => r.protecting).length} label="보호 중" />
-        <Stat n={b.orders.filter((o) => o.status === 'assigned').length} label="배달 중" />
-        <Stat n={open.length} label="사고" red={open.length > 0} />
-      </View>
-
       {open.map((i) => (
         <IncidentCard key={i.id} i={i} b={b} />
       ))}
@@ -180,15 +146,6 @@ function Board({ b }: { b: AgencyBoardDto }) {
       <Orders b={b} />
       <History b={b} />
     </>
-  );
-}
-
-function Stat({ n, label, red }: { n: number; label: string; red?: boolean }) {
-  return (
-    <View style={styles.stat}>
-      <Txt style={[styles.statN, red && { color: colors.red }]}>{String(n)}</Txt>
-      <Txt style={styles.meta}>{label}</Txt>
-    </View>
   );
 }
 
@@ -403,17 +360,7 @@ const styles = StyleSheet.create({
   setupRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
   setupCard: { flexGrow: 1, flexBasis: 360, backgroundColor: colors.surface, borderRadius: radius.card, padding: 20, gap: 12 },
 
-  strip: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 12, backgroundColor: colors.surface, borderRadius: radius.card, padding: 16 },
-  agencyName: { ...font.sans(800), fontSize: 20, color: colors.text },
-  codeBox: { backgroundColor: colors.asphalt, borderRadius: radius.lg, paddingVertical: 8, paddingHorizontal: 14, alignItems: 'center' },
-  codeLabel: { ...font.sans(600), fontSize: 11, color: colors.textOnDark, opacity: 0.7 },
-  code: { ...font.mono(700), fontSize: 22, letterSpacing: 4, color: colors.textOnDark },
-  staffBox: { borderRadius: radius.lg, paddingVertical: 8, paddingHorizontal: 12, alignItems: 'center', borderWidth: 1.5, borderColor: colors.border },
-  staffLabel: { ...font.sans(600), fontSize: 11, color: colors.textMuted },
-  staffCode: { ...font.mono(700), fontSize: 16, letterSpacing: 2, color: colors.text },
   roleLink: { alignSelf: 'flex-start' },
-  stat: { minWidth: 76, alignItems: 'center' },
-  statN: { ...font.mono(700), fontSize: 24, color: colors.text },
 
   incident: { backgroundColor: colors.redSoft, borderRadius: radius.card, padding: 16, gap: 8, borderWidth: 1.5, borderColor: colors.red },
   incidentHead: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
@@ -450,6 +397,4 @@ const styles = StyleSheet.create({
   badgeCell: { alignItems: 'flex-start' },
   rowActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, flex: 1.6 },
 
-  demoLink: { alignSelf: 'flex-start', paddingVertical: 6 },
-  demoLinkText: { ...font.sans(600), fontSize: 13, color: colors.textMuted, textDecorationLine: 'underline' },
 });

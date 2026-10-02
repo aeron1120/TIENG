@@ -1,5 +1,6 @@
 // 넓은 화면(관제·관리자) 맨 위 — 화면 이름 · 로그인한 계정 · 로그아웃
 import type { UserRole } from '@rider-guard/contract';
+import type { ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { useMe } from '@/api/hooks';
@@ -10,7 +11,7 @@ import { colors, font, typography } from '@/theme';
 
 export const ROLE_LABEL: Record<UserRole, string> = { rider: '배달기사', dispatcher: '관제사', admin: '관리자' };
 
-export function AccountBar({ title, sub }: { title: string; sub?: string }) {
+export function AccountBar({ title, sub, actions }: { title: string; sub?: string; actions?: ReactNode }) {
   const { data: me } = useMe();
   const { signOut } = useAuth();
   const role = me?.role ?? null;
@@ -22,6 +23,7 @@ export function AccountBar({ title, sub }: { title: string; sub?: string }) {
         <Txt style={styles.title}>{title}</Txt>
         {sub ? <Txt style={styles.sub}>{sub}</Txt> : null}
       </View>
+      {actions}
       {role ? <Badge tone={role === 'admin' ? 'dark' : 'neutral'}>{ROLE_LABEL[role]}</Badge> : null}
       {who ? <Txt style={styles.who} numberOfLines={1}>{who}</Txt> : null}
       <Button label="로그아웃" size="sm" variant="soft" onPress={() => signOut()} style={styles.btn} />

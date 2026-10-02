@@ -194,6 +194,8 @@ export const colors = {
   skeletonOnDark: '#2E2F34',
   /** 바텀시트 뒤 가림막 */
   scrim: 'rgba(15,16,19,0.45)',
+  /** 단계별 가이드 배경 — 강조 영역은 원래 밝기를 유지한다. */
+  tourScrim: 'rgba(15,16,19,0.78)',
   /** 입력칸 포커스 링 · 오류 링 */
   focusRing: 'rgba(29,30,34,0.08)',
   errorRing: 'rgba(29,30,34,0.10)',

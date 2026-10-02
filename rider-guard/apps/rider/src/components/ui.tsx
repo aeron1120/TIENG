@@ -19,6 +19,7 @@ import {
   type DimensionValue,
   type GestureResponderEvent,
   type PressableProps,
+  type ScrollViewProps,
   type StyleProp,
   type TextProps,
   type TextStyle,
@@ -139,6 +140,8 @@ export type ScreenTone = 'default' | 'white' | 'dark' | 'lock';
 const SCREEN_BG: Record<ScreenTone, string> = { default: colors.bg, white: colors.surface, dark: colors.alertBg, lock: colors.lockBottom };
 
 type ScreenProps = {
+  /** A guide can control the existing scroller without adding another scroll container. */
+  scrollProps?: ScrollViewProps & { ref?: React.Ref<ScrollView> };
   children: React.ReactNode;
   /** 디자인 기준 상단/하단/좌우 패딩 */
   top?: number;
@@ -162,7 +165,7 @@ type ScreenProps = {
  * 세로로 쌓이는 화면 틀. 작은 폰에서는 스크롤되고, 큰 폰에서는 <Spacer/> 가 CTA 를 바닥으로 민다.
  * v3 좌우 여백은 24(홈처럼 넓은 카드 화면은 side={16}).
  */
-export function Screen({ children, top = 46, bottom = 32, side = 24, gap = 16, tone, dark, footer, enter = 'auto' }: ScreenProps) {
+export function Screen({ children, top = 46, bottom = 32, side = 24, gap = 16, tone, dark, footer, enter = 'auto', scrollProps }: ScreenProps) {
   const insets = useSafeAreaInsets();
   const reduced = useReducedMotion();
   const bg = SCREEN_BG[tone ?? (dark ? 'dark' : 'default')];
@@ -184,6 +187,7 @@ export function Screen({ children, top = 46, bottom = 32, side = 24, gap = 16, t
         }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        {...scrollProps}
       >
         <Animated.View style={{ flexGrow: 1, gap, opacity: progress, transform: [{ translateY }] }}>{children}</Animated.View>
       </ScrollView>

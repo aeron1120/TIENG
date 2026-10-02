@@ -26,12 +26,12 @@ const TAB_H = 48;
 /** 탭 칸 아래 남는 자리(3)만큼 빼서 — 아이폰(34)에서 디자인 83 그대로, 웹·제스처바도 같은 높이 */
 const navBottom = (insetBottom: number) => Math.max(insetBottom, DESIGN_HOME_INDICATOR) - (TAB_H - 42) / 2 - 2;
 
-export function BottomNav({ active }: { active: TabKey }) {
+export function BottomNav({ active, onNavigate }: { active: TabKey; onNavigate?: (tab: TabKey) => void }) {
   const insets = useSafeAreaInsets();
   return (
     <View accessibilityRole="tablist" accessibilityLabel="하단 메뉴" style={[styles.nav, { paddingBottom: navBottom(insets.bottom) }]}>
       {TABS.map(({ key, label, Icon, go }) => (
-        <Tab key={key} label={label} Icon={Icon} go={go} selected={key === active} />
+        <Tab key={key} label={label} Icon={Icon} go={onNavigate ? () => onNavigate(key) : go} selected={key === active} />
       ))}
     </View>
   );

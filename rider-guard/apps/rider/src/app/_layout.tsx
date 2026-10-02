@@ -44,7 +44,7 @@ function AppShell({ fontsReady }: { fontsReady: boolean }) {
   // 통합 시연(/demo…)은 로그인 없이, 넓은 화면 그대로 — 로그인 복원을 기다리지 않는다
   const demo = pathname === '/demo' || pathname.startsWith('/demo/');
   // 관제·관리자 화면도 넓은 데스크톱 화면 그대로 (폰 폭 프레임 없음)
-  const wide = demo || pathname === '/control' || pathname === '/admin';
+  const wide = (demo && pathname !== '/demo/home') || pathname === '/control' || pathname === '/admin';
   const ready = fontsReady && (demo || status !== 'loading');
   // 상태바 글자색 — 어두운 화면(사고 확인·잠금화면 미리보기)만 밝게, 나머지는 밝은 바탕이라 어둡게
   const lightStatusBar = pathname === '/alert' || pathname === '/lockscreen';
@@ -110,6 +110,7 @@ function AppShell({ fontsReady }: { fontsReady: boolean }) {
             <Stack.Screen name="demo/index" options={{ animation: 'none' }} />
             <Stack.Screen name="demo/control" options={{ animation: 'none' }} />
             <Stack.Screen name="demo/rider" options={{ animation: 'none' }} />
+            <Stack.Screen name="demo/home" options={{ animation: 'none' }} />
             <Stack.Screen name="demo/results" options={{ animation: 'none' }} />
             <Stack.Screen name="demo/report" options={{ animation: 'none' }} />
             {/* 비상연락처가 받는 긴급 알림 웹(v3·9) 미리보기 — 흰 바탕 전체 화면. 닫기 버튼이 없어(디자인) iOS 는 쓸어내려 닫는 모달로 */}

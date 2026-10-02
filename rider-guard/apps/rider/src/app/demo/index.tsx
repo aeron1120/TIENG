@@ -8,12 +8,20 @@ import { ControlRoom } from '@/components/demo/ControlRoom';
 import { LiveWave } from '@/components/demo/LiveWave';
 import { RiderPhone } from '@/components/demo/RiderPhone';
 import { PresentationPanel } from '@/components/demo/PresentationPanel';
+import { GuidedTourProvider, TourTarget, useGuidedTour } from '@/components/tour/GuidedTour';
+import { DEMO_TOUR } from '@/components/tour/steps';
 import { Badge, Txt } from '@/components/ui';
 import { useDemo } from '@/features/demo/data';
 import { candidateDemoT, clockAt } from '@/features/demo/engine';
+import { dispatch } from '@/features/demo/store';
 import { colors, font, radius, typography } from '@/theme';
 
 export default function DemoScreen() {
+  return <GuidedTourProvider steps={DEMO_TOUR} onStart={() => dispatch({ type: 'pause' })}><DemoContent /></GuidedTourProvider>;
+}
+
+function DemoContent() {
+  const tour = useGuidedTour();
   const { s, data } = useDemo();
   const { width, height, fontScale } = useWindowDimensions();
   const [detail, setDetail] = useState(false);
@@ -21,7 +29,7 @@ export default function DemoScreen() {
   const clip = data.ready ? data.clip : null;
   const cT = clip ? candidateDemoT(clip) : null;
   const verdictVisible = !!s.incident || s.clipDone || (cT !== null && s.t >= cT);
-  const wave = <View style={styles.waveCard}>
+  const wave = <TourTarget name="demo-sensor" style={styles.waveCard}>
     <View style={styles.waveHead}>
       <View style={styles.waveTitleRow}>
         <Txt style={styles.waveTitle}>실측 파형 재생</Txt>
@@ -40,23 +48,23 @@ export default function DemoScreen() {
         <Txt style={styles.note}>판정은 운영 서버와 같은 코드가 이 파형에 대해 낸 결과이며, 검출률·정확도를 뜻하지 않아요.</Txt>
       </> : null}
     </> : <Txt style={styles.sub}>실측 파형을 불러오는 중이에요.</Txt>}
-  </View>;
+  </TourTarget>;
 
   return <>
     <Head><title>Rider Guard 통합 시연</title></Head>
-    <ScrollView style={styles.page} contentContainerStyle={styles.content} stickyHeaderIndices={wide && height >= 650 && !detail ? [0] : undefined}>
+    <ScrollView {...tour.scrollProps} style={styles.page} contentContainerStyle={styles.content} stickyHeaderIndices={!tour.active && wide && height >= 650 && !detail ? [0] : undefined}>
       <View style={styles.sticky}>
         <PresentationPanel s={s} clip={clip} loading={!data.ready && data.loading} error={!data.ready ? data.error : null} detail={detail} onDetailChange={setDetail} />
       </View>
       <View style={[styles.main, wide && styles.mainWide]}>
-        <View style={[styles.phoneCol, wide && styles.phoneWide]}>
+        <TourTarget name="demo-rider" style={[styles.phoneCol, wide && styles.phoneWide]}>
           <Txt style={styles.colLabel}>라이더</Txt>
           <RiderPhone s={s} compact={!detail} />
-        </View>
-        <View style={styles.controlCol}>
+        </TourTarget>
+        <TourTarget name="demo-control" style={styles.controlCol}>
           <Txt style={styles.colLabel}>관제</Txt>
           <ControlRoom s={s} analysis={data.ready ? data.event.analysis : null} compact={!detail} mapHeight={240} />
-        </View>
+        </TourTarget>
         {!detail ? <View style={styles.evidenceCol}><Txt style={styles.colLabel}>센서</Txt>{wave}</View> : null}
       </View>
       {detail ? wave : null}

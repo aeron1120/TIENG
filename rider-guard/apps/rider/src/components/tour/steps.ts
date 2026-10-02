@@ -1,17 +1,13 @@
-export type TourStep = { target: string; title: string; body: string; hint?: string };
+export type TourStep = {
+  target: string; title: string; body: string; hint?: string;
+  /** An action can mount only after the preceding action changes the screen. */
+  fallbackTarget?: string;
+  interaction?: 'press' | 'wait';
+  actionLabel?: string;
+  complete?: boolean;
+};
 
-export const DEMO_TOUR: TourStep[] = [
-  { target: 'demo-help', title: '화면으로 함께 보는 안전 대응', body: '실측 센서에서 사고 후보를 찾고, 라이더 확인과 주문 인계까지 한 화면에서 살펴봅니다.', hint: '안내 중에는 재생이 멈춰요. 마친 뒤 직접 시작해 주세요.' },
-  { target: 'demo-scenarios', title: '먼저 시연할 사례를 골라요', body: '충돌·전도·정상 주행 등 실측 사례를 바꿔 비교합니다. 발표는 A1 충돌부터 시작하면 흐름을 설명하기 좋아요.' },
-  { target: 'demo-playback', title: '자동으로 재생하거나 직접 조작해요', body: '자동은 대응 과정을 순서대로 진행하고, 수동은 라이더·관제 버튼으로 진행합니다. 시작·일시정지·다시 시작도 여기 있어요.' },
-  { target: 'demo-status', title: '지금 어느 단계인지 한눈에', body: '데이터 수신부터 라이더 확인, 연락·신고, 주문 인계까지 현재 진행 상황이 표시됩니다. 확인 대기 중에는 대기를 건너뛸 수 있어요.' },
-  { target: 'demo-rider', title: '라이더가 실제로 보는 화면', body: '사고 후보가 감지되면 확인 화면과 카운트다운이 나타납니다. 괜찮아요 또는 도움이 필요해요로 응답하는 흐름을 보여 주세요.' },
-  { target: 'demo-control', title: '대응과 주문 인계를 함께 확인해요', body: '라이더 상태와 위치, 사고 대응, 보류된 주문의 인계 과정을 확인합니다. 실제 발송 없이 대응 흐름을 시연해요.' },
-  { target: 'demo-sensor', title: '판정의 근거는 실측 파형', body: '센서 파형과 기준선, 판정창을 함께 봅니다. 데이터 품질 제한도 확인해 주세요. 후보 감지는 사고 확정이나 구조 완료를 뜻하지 않아요.' },
-  { target: 'demo-report', title: '같은 사건의 보고서로 이어져요', body: '서버가 받은 판정 근거와 진행 기록을 새 창에서 확인합니다. 원본 시연 창은 열어 두세요.' },
-  { target: 'demo-view', title: '설명이 더 필요하면 상세 보기', body: '발표 보기는 핵심 상태와 결과에 집중합니다. 상세 보기로 바꾸면 판정 규칙과 출처, 자세한 파형을 확인할 수 있어요.' },
-  { target: 'demo-options', title: '발표 속도와 보조 화면도 조절해요', body: '옵션에서 느린 재생, 센서 끊김, 라이더·관제 단독 창을 사용할 수 있어요. 이제 안내를 마치고 시연을 시작해 보세요.', hint: '도움말에서 언제든 처음부터 다시 볼 수 있어요.' },
-];
+export const canAdvanceTourStep = (step: TourStep) => !step.interaction || step.complete === true;
 
 export const HOME_TOUR: TourStep[] = [
   { target: 'home-help', title: '내 안전 상태를 함께 살펴봐요', body: '보호 상태와 센서 연결, 위치, 소속 정보를 차례로 안내합니다. 도움말을 누르면 언제든 다시 볼 수 있어요.', hint: '안내 중에도 센서 수신과 사고 감지는 계속돼요.' },

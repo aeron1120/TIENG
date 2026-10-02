@@ -5,6 +5,7 @@ import { StyleSheet, View } from 'react-native';
 import { AlertIcon, CheckIcon, HelmetIcon, MapPinIcon, ShieldCheckIcon, UsersIcon } from '@/components/Icons';
 import { MapPill, RiderMap } from '@/components/RiderMap';
 import { Badge, Button, Txt } from '@/components/ui';
+import { TourActionButton } from '@/components/tour/GuidedTour';
 import {
   activeOrders,
   clockAt,
@@ -66,7 +67,7 @@ function Confirm({ s, compact }: { s: DemoState; compact: boolean }) {
       </View>
       <View style={[styles.confirmButtons, compact && styles.confirmButtonsCompact]}>
         <Button label="괜찮아요" variant="white" size={compact ? 'md' : 'xl'} disabled={!!blocked} onDark onPress={() => mutate({ type: 'respond', response: 'ok' })} />
-        <Button label="도움이 필요해요" variant="red" size={compact ? 'md' : 'lg'} disabled={!!blocked} onDark onPress={() => mutate({ type: 'respond', response: 'help' })} />
+        <TourActionButton name="demo-response-help" label="도움이 필요해요" variant="red" size={compact ? 'md' : 'lg'} disabled={!!blocked} onDark onPress={() => mutate({ type: 'respond', response: 'help' })} />
       </View>
       {blocked ? <Txt accessibilityRole="alert" style={styles.confirmSub}>{blocked}</Txt> : null}
       {!compact ? <Txt style={styles.confirmNote}>{`응답 대기 ${RESPONSE_WAIT_S}초는 운영 설정값이에요. 센서 판정 시각과 별개예요.`}</Txt> : null}

@@ -28,6 +28,7 @@ import { dispatch } from '@/features/demo/store';
 import { dispatchPresentationAction, presentationMutationBlock, presentationStage } from '@/features/demo/display';
 import { getPresentationConnection, openPresentationReport, usePresentationConnection } from '@/features/demo/presentation';
 import { colors, font, radius, typography } from '@/theme';
+import { TourActionButton, TourTarget } from '@/components/tour/GuidedTour';
 
 const STATUS_TONE: Record<RiderStatus, BadgeTone> = { delivering: 'green', idle: 'neutral', off: 'muted', check: 'red', incident: 'redSolid' };
 const ORDER_LABEL: Record<DemoOrder['status'], string> = { delivering: '배달 중', held: '보류', reassigned: '대체 배차', delivered: '완료' };
@@ -40,13 +41,13 @@ export function openReport() {
   openPresentationReport();
 }
 
-export function ControlRoom({ s, analysis, mapHeight = 300, compact = false }: { s: DemoState; analysis: SensorAnalysis | null; mapHeight?: number; compact?: boolean }) {
+export function ControlRoom({ s, analysis, mapHeight = 300, compact = false, guided = false }: { s: DemoState; analysis: SensorAnalysis | null; mapHeight?: number; compact?: boolean; guided?: boolean }) {
   const blocked = presentationMutationBlock(usePresentationConnection());
   // 사건이 생기면 그 라이더로 — 그 사건 동안 관제사가 다른 라이더를 고르면 그쪽을 따른다
   const incidentId = s.incident?.id;
   const [picked, setPicked] = useState<{ id: string; during: string | undefined }>({ id: MAIN_RIDER, during: undefined });
   const [roomWidth, setRoomWidth] = useState(0);
-  const selected = incidentId && picked.during !== incidentId ? MAIN_RIDER : picked.id;
+  const selected = guided || (incidentId && picked.during !== incidentId) ? MAIN_RIDER : picked.id;
   const setSelected = (id: string) => setPicked({ id, during: incidentId });
   const rider = s.riders.find((r) => r.id === selected) ?? s.riders[0]!;
   const counts = s.riders.reduce<Record<RiderStatus, number>>((acc, r) => ({ ...acc, [riderStatus(s, r)]: acc[riderStatus(s, r)] + 1 }), { delivering: 0, idle: 0, off: 0, check: 0, incident: 0 });
@@ -151,12 +152,12 @@ function CompactOrder({ s, o, concise = false }: { s: DemoState; o: DemoOrder; c
   const owner = s.riders.find((r) => r.id === o.riderId)?.name ?? '-';
   const from = s.riders.find((r) => r.id === o.originalRiderId)?.name ?? '-';
   const last = o.notices.at(-1);
-  return <View style={styles.compactOrder}>
+  return <TourTarget name={`demo-order-${o.id}`} style={styles.compactOrder}>
     <View style={styles.riderHead}><Txt style={styles.strongLine}>{concise ? o.store : `${o.id} · ${owner}`}</Txt><Badge tone={ORDER_TONE[o.status]} size="sm">{ORDER_LABEL[o.status]}</Badge></View>
     <Txt style={styles.meta}>{concise ? o.riderId !== o.originalRiderId ? `${from} → ${owner}` : `담당 ${owner}` : `${o.store} → ${o.customer}`}</Txt>
-    {o.status === 'held' ? <View style={styles.chips}>{replacementCandidates(s).slice(0, 2).map((r) => <Button key={r.id} label={`${r.name}에게 인계`} size="sm" variant="outline" disabled={!!blocked} onPress={() => mutate({ type: 'reassign', orderId: o.id, riderId: r.id })} />)}</View> : null}
+    {o.status === 'held' ? <View style={styles.chips}>{replacementCandidates(s).slice(0, 2).map((r) => <TourActionButton key={r.id} name={`demo-reassign-${o.id}-${r.id}`} label={`${r.name}에게 인계`} size="sm" variant="outline" disabled={!!blocked} onPress={() => mutate({ type: 'reassign', orderId: o.id, riderId: r.id })} />)}</View> : null}
     {last && !concise ? <Txt style={styles.meta}>{`${last.to} 안내 · ${last.text} (시연)`}</Txt> : null}
-  </View>;
+  </TourTarget>;
 }
 
 function OrderRow({ s, o }: { s: DemoState; o: DemoOrder }) {
@@ -165,7 +166,7 @@ function OrderRow({ s, o }: { s: DemoState; o: DemoOrder }) {
   const from = s.riders.find((r) => r.id === o.originalRiderId)?.name ?? '-';
   const last = o.notices.at(-1);
   return (
-    <View style={styles.tr}>
+    <TourTarget name={`demo-order-${o.id}`} style={styles.tr}>
       <Txt style={[styles.td, styles.mono, { flex: COLS[0] }]}>{o.id}</Txt>
       <Txt style={[styles.td, { flex: COLS[1] }]} numberOfLines={2}>{`${o.store} → ${o.customer}`}</Txt>
       <Txt style={[styles.td, styles.strong, { flex: COLS[2] }]}>{o.riderId !== o.originalRiderId ? `${owner} (← ${from})` : owner}</Txt>
@@ -176,16 +177,18 @@ function OrderRow({ s, o }: { s: DemoState; o: DemoOrder }) {
       <View style={[styles.chips, { flex: COLS[5] }]}>
         {o.status === 'held'
           ? replacementCandidates(s).slice(0, 3).map((r) => (
-              <Pressable key={r.id} disabled={!!blocked} onPress={() => mutate({ type: 'reassign', orderId: o.id, riderId: r.id })} style={({ pressed }) => [styles.chip, pressed && styles.chipPressed, !!blocked && styles.disabled]} accessibilityRole="button" accessibilityState={{ disabled: !!blocked }} accessibilityLabel={`${o.id}를 ${r.name}에게 대체 배차`}>
+              <TourTarget key={r.id} name={`demo-reassign-${o.id}-${r.id}`} tourDisabled={!!blocked} onTourPress={() => mutate({ type: 'reassign', orderId: o.id, riderId: r.id })}>
+              <Pressable disabled={!!blocked} onPress={() => mutate({ type: 'reassign', orderId: o.id, riderId: r.id })} style={({ pressed }) => [styles.chip, pressed && styles.chipPressed, !!blocked && styles.disabled]} accessibilityRole="button" accessibilityState={{ disabled: !!blocked }} accessibilityLabel={`${o.id}를 ${r.name}에게 대체 배차`}>
                 <Txt style={styles.chipText}>{`→ ${r.name} (${activeOrders(s, r.id).length}건)`}</Txt>
               </Pressable>
+              </TourTarget>
             ))
           : <Txt style={styles.td}>{o.status === 'reassigned' ? `${owner} 배정 완료` : '-'}</Txt>}
       </View>
       <Txt style={[styles.td, styles.meta, { flex: COLS[6] }]} numberOfLines={3}>
         {last ? `${clockAt(s, last.t)} ${last.to}: ${last.text}${o.notices.length > 1 ? ` 외 ${o.notices.length - 1}건` : ''}` : '-'}
       </Txt>
-    </View>
+    </TourTarget>
   );
 }
 
@@ -253,11 +256,11 @@ function IncidentPanel({ s, analysis, compact = false }: { s: DemoState; analysi
           <Txt key={k} style={styles.meta}>{compact ? `전화 · ${c.result}` : `${clockAt(s, c.t)} 라이더 전화 — ${c.result}`}</Txt>
         ))}
         <View style={styles.actions}>
-          {!compact || canAck ? <Button label={compact ? '관제 접수' : i.assignee ? `${CONTROLLER} 담당 중` : '접수하고 담당 지정'} size="sm" variant={canAck ? 'primary' : 'soft'} disabled={!canAck || !!blocked} onPress={() => mutate({ type: 'ack' })} /> : null}
+          {!compact || canAck ? <TourActionButton name="demo-ack" label={compact ? '관제 접수' : i.assignee ? `${CONTROLLER} 담당 중` : '접수하고 담당 지정'} size="sm" variant={canAck ? 'primary' : 'soft'} disabled={!canAck || !!blocked} onPress={() => mutate({ type: 'ack' })} /> : null}
           {!compact || canAct ?
           <View style={styles.actionRow}>
-            <Button label="라이더에게 전화" size="sm" variant="outline" disabled={!canAct || !!blocked} onPress={() => mutate({ type: 'call' })} style={styles.flex} />
-            <Button label="대응 완료" size="sm" variant={i.status === 'acknowledged' ? 'red' : 'soft'} disabled={i.status !== 'acknowledged' || !!blocked} onPress={() => mutate({ type: 'resolve' })} style={styles.flex} />
+            <TourActionButton name="demo-call" label="라이더에게 전화" size="sm" variant="outline" disabled={!canAct || !!blocked} onPress={() => mutate({ type: 'call' })} style={styles.flex} />
+            <TourActionButton name="demo-resolve" label="대응 완료" size="sm" variant={i.status === 'acknowledged' ? 'red' : 'soft'} disabled={i.status !== 'acknowledged' || !!blocked} onPress={() => mutate({ type: 'resolve' })} style={styles.flex} />
           </View> : null}
           {!compact && (i.status === 'resolved' || i.status === 'rider_ok') ? <Button label="사건 보고서 열기" size="sm" variant="dark" onPress={openReport} /> : null}
         </View>

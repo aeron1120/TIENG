@@ -45,12 +45,13 @@ function fixture() {
   const realm = createContext({ document, HTMLElement: Element, Platform: { OS: 'web' }, getComputedStyle: (el: Element) => el.style, setTimeout, clearTimeout });
   runInContext(source, realm);
   const unlock = () => realm.tour.lockWebInput(card, { close: () => actions.closed++, next: () => actions.next++, previous: () => actions.previous++ });
-  const key = (key: string, repeat = false, shiftKey = false) => {
+  const key = (key: string, repeat = false, shiftKey = false, target?: Element) => {
     const event = Object.assign(new Event('keydown', { cancelable: true }), { key, repeat, shiftKey });
+    if (target) Object.defineProperty(event, 'target', { value: target });
     document.dispatchEvent(event);
     return event;
   };
-  return { document, background, alreadyInert, card, skip, next, actions, unlock, key, measure: realm.tour.measureTarget as (el: Element) => Promise<unknown> };
+  return { document, background, alreadyInert, card, skip, next, actions, unlock, key, addAction: () => card.append(new Element()), measure: realm.tour.measureTarget as (el: Element) => Promise<unknown> };
 }
 
 test('tour locks background input, traps focus, and restores previous state on repeated exits', () => {
@@ -86,6 +87,22 @@ test('arrow keys navigate once per press and Escape closes; cleanup removes shor
   assert.deepEqual(f.actions, { closed: 1, next: 1, previous: 1 });
   release(); f.key('ArrowRight'); f.key('Escape');
   assert.deepEqual(f.actions, { closed: 1, next: 1, previous: 1 });
+});
+
+test('highlighted action accepts Enter and Space while covered controls stay locked', () => {
+  const f = fixture();
+  const action = f.addAction();
+  const release = f.unlock();
+  assert.equal(f.key('Enter', false, false, action).defaultPrevented, false);
+  assert.equal(f.key(' ', false, false, action).defaultPrevented, false);
+  assert.equal(f.key('Enter', false, false, f.background).defaultPrevented, true);
+  assert.equal(f.key(' ', false, false, f.background).defaultPrevented, true);
+  action.focus();
+  f.key('Tab');
+  assert.equal(f.document.activeElement, f.skip);
+  assert.equal(f.background.inert, true);
+  release();
+  assert.equal(f.background.inert, false);
 });
 
 test('hidden ancestors are skipped but below-fold targets remain available for auto-scroll', async () => {

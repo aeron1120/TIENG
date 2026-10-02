@@ -3,7 +3,7 @@ import { Platform, Pressable, StyleSheet, View } from 'react-native';
 
 import { API_URL } from '@/api/client';
 import { Badge, Button, Txt } from '@/components/ui';
-import { TourHelpButton, TourTarget } from '@/components/tour/GuidedTour';
+import { TourActionButton, TourHelpButton, TourTarget, useGuidedTour } from '@/components/tour/GuidedTour';
 import { presentationPlaybackActions, presentationStage } from '@/features/demo/display';
 import { SCENARIO_IDS, SCENARIOS, type DemoState, type EventClip } from '@/features/demo/engine';
 import { discardPresentation, getPresentationConnection, openPresentationReport, resumePresentation, retryPresentation, startPresentation, usePresentationConnection } from '@/features/demo/presentation';
@@ -15,11 +15,13 @@ const open = (url: string) => {
   if (Platform.OS === 'web' && typeof window !== 'undefined') window.open(url, '_blank', 'noopener,noreferrer');
 };
 
-export function PresentationPanel({ s, clip, loading, error, detail, onDetailChange }: {
-  s: DemoState; clip: EventClip | null; loading: boolean; error: unknown; detail: boolean; onDetailChange: (detail: boolean) => void;
+export function PresentationPanel({ s, clip, loading, error }: {
+  s: DemoState; clip: EventClip | null; loading: boolean; error: unknown;
 }) {
+  const tour = useGuidedTour();
   const c = usePresentationConnection();
-  const [automatic, setAutomatic] = useState(s.t > 0 ? s.autoPilot : true);
+  const [automaticChoice, setAutomatic] = useState(s.t > 0 ? s.autoPilot : true);
+  const automatic = tour.active ? false : automaticChoice;
   const [advanced, setAdvanced] = useState(false);
   const linked = !!c.sessionId && !c.canResume;
   const busy = c.status === 'connecting' || c.status === 'restoring';
@@ -49,8 +51,7 @@ export function PresentationPanel({ s, clip, loading, error, detail, onDetailCha
         <Badge tone={problem ? 'red' : linked ? 'green' : 'neutral'} size="sm">{status}</Badge>
         <View style={styles.spacer} />
         <Txt style={styles.time}>{mmss(s.t)}</Txt>
-        <TourTarget name="demo-view"><Choice label={detail ? '발표 보기' : '상세 보기'} selected={detail} onPress={() => onDetailChange(!detail)} /></TourTarget>
-        <TourHelpButton name="demo-help" disabled={busy} />
+        <TourHelpButton name="demo-help" disabled={busy || blocked || !clip} />
       </View>
       <View style={styles.row}>
         <TourTarget name="demo-scenarios" style={styles.row}>
@@ -60,26 +61,30 @@ export function PresentationPanel({ s, clip, loading, error, detail, onDetailCha
         <TourTarget name="demo-playback" style={styles.row}>
         <Choice label="자동" selected={automatic} disabled={blocked || c.canResume} onPress={() => { setAutomatic(true); if (linked) dispatch({ type: 'autopilot', on: true }); }} />
         <Choice label="수동" selected={!automatic} disabled={blocked || c.canResume} onPress={() => { setAutomatic(false); if (linked) dispatch({ type: 'autopilot', on: false }); }} />
-        <Button label={primaryLabel} variant={s.playing ? 'soft' : 'primary'} size="sm" loading={busy} disabled={!clip || blocked || (linked && stage.finished && !s.playing)} onPress={() => void primary()} />
+        <TourActionButton name="demo-start" label={primaryLabel} variant={s.playing ? 'soft' : 'primary'} size="sm" loading={busy} disabled={!clip || blocked || (linked && stage.finished && !s.playing)} onPress={primary} onTourPress={async () => {
+          await primary();
+          const connection = getPresentationConnection();
+          if (connection.status === 'error') throw new Error(connection.message ?? '연결하지 못했어요. 시작 버튼을 다시 눌러 주세요.');
+        }} />
         <Button label={c.canResume ? '새로 시작' : '다시 시작'} variant="outline" size="sm" disabled={!clip || busy} onPress={() => void start(true)} />
         </TourTarget>
       </View>
       <TourTarget name="demo-status" style={[styles.situation, stage.tone === 'danger' && styles.danger, stage.tone === 'warning' && styles.warning]}>
         <Badge tone={tone} size="sm">{stage.title}</Badge>
-        {detail ? <Txt style={styles.sentence}>{stage.description}</Txt> : <View style={styles.spacer} />}
+        <Txt style={styles.sentence}>{stage.description}</Txt>
         {s.incident?.status === 'confirming' ? <Button label="대기 건너뛰기" size="sm" variant="outline" disabled={blocked || c.canResume} onPress={() => dispatch({ type: 'skipWait' })} /> : null}
         {(stage.finished || c.monitorUrl) ? <TourTarget name="demo-report"><Button label="보고서 ↗" variant="outline" size="sm" onPress={openPresentationReport} /></TourTarget> : null}
         <TourTarget name="demo-options"><Pressable accessibilityRole="button" accessibilityState={{ expanded: advanced }} onPress={() => setAdvanced(!advanced)}><Txt style={styles.link}>{advanced ? '옵션 닫기 ▴' : '옵션 ▾'}</Txt></Pressable></TourTarget>
       </TourTarget>
-      {detail ? <View style={styles.row}>
+      <View style={styles.row}>
         {['데이터 수신', '사고 판정', '라이더 확인', '연락·신고', '주문 인계', '결과'].map((label, index) => {
           const skipped = stage.skippedSteps.includes(index);
           return <Txt key={label} style={[styles.step, index === stage.step && styles.current, skipped && styles.skipped]}>{`${index + 1} ${label}${skipped ? ' · 생략' : index === stage.step ? ' · 현재' : ''}`}</Txt>;
         })}
-      </View> : null}
+      </View>
       {!clip ? <Txt accessibilityRole={error ? 'alert' : undefined} style={[styles.note, !!error && styles.error]}>{error ? '데이터 수신 실패 · 새로고침해 주세요.' : loading ? '실측 데이터 불러오는 중…' : '시연 준비 중…'}</Txt> : null}
       {problem ? <View style={styles.row}><Txt accessibilityRole="alert" style={styles.error}>{c.message}</Txt>{c.status === 'retrying' ? <Button label="수신 다시 확인" variant="outline" size="sm" onPress={retryPresentation} /> : null}</View> : null}
-      {c.message && !problem && !busy && (detail || (c.status === 'idle' && !c.canResume)) ? <Txt style={styles.note}>{c.message}</Txt> : null}
+      {c.message && !problem && !busy ? <Txt style={styles.note}>{c.message}</Txt> : null}
       {c.storageWarning ? <Txt accessibilityRole="alert" style={styles.error}>{c.storageWarning}</Txt> : null}
       {advanced ? <View style={styles.advanced}>
         <Txt style={styles.note}>{SCENARIOS[s.scenario].point}{automatic ? ' · 자동 모드는 응답 대기 후 관제와 주문 인계를 진행해요.' : ' · 수동 모드는 라이더와 관제 버튼을 직접 눌러 진행해요.'}</Txt>
@@ -94,7 +99,7 @@ export function PresentationPanel({ s, clip, loading, error, detail, onDetailCha
         </View>
         {c.receivedAt ? <Txt style={styles.note}>{`서버 수신 ${new Date(c.receivedAt).toLocaleTimeString('ko-KR', { hour12: false })} · 명령 ${c.acknowledged}건 확인 · 수신 성공은 사고 판정이나 구조 완료를 뜻하지 않아요.`}</Txt> : null}
       </View> : null}
-      {detail || advanced ? <Txt style={styles.note}>실측 파형 · 라이더·주문·위치는 시연 데이터 · 문자·119·외부 배차 실제 발송 없음</Txt> : null}
+      <Txt style={styles.note}>실측 파형 · 라이더·주문·위치는 시연 데이터 · 문자·119·외부 배차 실제 발송 없음</Txt>
     </View>
   );
 }

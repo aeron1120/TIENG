@@ -3,11 +3,13 @@ export type Size = { width: number; height: number };
 export const EDGE = 12;
 export const GAP = 16;
 export const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(n, Math.max(min, max)));
+export const tourCardMaxHeight = (viewportHeight: number, actionHeight?: number) =>
+  Math.max(96, viewportHeight - EDGE * 2 - (actionHeight === undefined ? 0 : Math.max(44, actionHeight) + GAP + 10));
 
 /** The card always fits; oversized targets expose the portion next to the card. */
-export function tourLayout(target: Rect, viewport: Size, measuredCard: Size): { card: Rect; hole: Rect } {
+export function tourLayout(target: Rect, viewport: Size, measuredCard: Size, interactive = false): { card: Rect; hole: Rect } {
   const width = Math.min(measuredCard.width, viewport.width - EDGE * 2);
-  const height = Math.min(measuredCard.height, viewport.height - EDGE * 2);
+  const height = Math.min(measuredCard.height, tourCardMaxHeight(viewport.height, interactive ? target.height : undefined));
   const left = clamp(target.x - 5, 4, viewport.width - 4);
   const top = clamp(target.y - 5, 4, viewport.height - 4);
   const right = clamp(target.x + target.width + 5, left, viewport.width - 4);

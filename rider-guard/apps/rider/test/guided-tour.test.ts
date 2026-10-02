@@ -24,6 +24,14 @@ test('bottom navigation has its card above it', () => {
   assert.ok(card.y + card.height <= hole.y - 12);
 });
 
+test('short landscape reserves the entire action button beside a scrollable guide card', () => {
+  const target = { x: 160, y: 12, width: 248, height: 44 };
+  const { card, hole } = tourLayout(target, { width: 568, height: 320 }, { width: 350, height: 296 }, true);
+  assert.ok(hole.height >= target.height);
+  assert.ok(hole.y + hole.height < card.y);
+  assert.ok(card.y + card.height <= 308);
+});
+
 test('offscreen targets scroll into a reserved space, with scroll limits respected', () => {
   assert.equal(scrollDestination(900, 0, 12, 1500), 888);
   assert.equal(scrollDestination(-200, 100, 12, 1500), 0);

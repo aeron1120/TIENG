@@ -211,7 +211,7 @@ test('a durable journal exists before the first request is sent and a scoped rep
   assert.equal(viewer.connection().canResume, false);
   assert.equal(viewer.connection().monitorUrl, 'https://api.example.test/ops/presentation#session=pres_1&key=read_pres_1');
   viewer.report();
-  assert.deepEqual(viewer.opened, ['https://api.example.test/ops/presentation#session=pres_1&key=read_pres_1']);
+  assert.deepEqual(viewer.opened, ['/demo/report#session=pres_1&key=read_pres_1']);
   assert.ok(![...a.localStorage.values.values()].join('').includes('write_pres_1'));
   assert.ok(!JSON.stringify(viewer.connection()).includes('write_pres_1'));
 });
@@ -279,7 +279,7 @@ test('a tab with its own journal retains its report identity when another sessio
   const restored = tab(remote, first.sessionStorage, first.localStorage);
   assert.equal(restored.connection().monitorUrl, 'https://api.example.test/ops/presentation#session=pres_1&key=read_pres_1');
   restored.report();
-  assert.deepEqual(restored.opened, ['https://api.example.test/ops/presentation#session=pres_1&key=read_pres_1']);
+  assert.deepEqual(restored.opened, ['/demo/report#session=pres_1&key=read_pres_1']);
 });
 
 test('corrupt and expired journals cannot resume and report links never accept a foreign origin', async () => {
@@ -447,8 +447,8 @@ test('two recovered controllers and their scoped viewers keep UI, commands, and 
   for (const client of [b, viewB]) assert.equal(client.state().t, 3.5);
   viewA.report();
   viewB.report();
-  assert.deepEqual(viewA.opened, ['https://api.example.test/ops/presentation#session=pres_1&key=read_pres_1']);
-  assert.deepEqual(viewB.opened, ['https://api.example.test/ops/presentation#session=pres_2&key=read_pres_2']);
+  assert.deepEqual(viewA.opened, ['/demo/report#session=pres_1&key=read_pres_1']);
+  assert.deepEqual(viewB.opened, ['/demo/report#session=pres_2&key=read_pres_2']);
   assert.equal(remote.commands.flatMap((entry) => entry.commands).filter((command) => command.action.type === 'reset').length, 0);
 });
 

@@ -311,7 +311,8 @@ export function openPresentationReport() {
     update({ message: '이 발표의 읽기 링크를 가져오지 못했어요. 원본 발표 탭에서 보고서를 열어 주세요.' });
     return;
   }
-  window.open(connection.monitorUrl ?? '/demo/report', '_blank', 'noopener,noreferrer');
+  const reportPath = connection.monitorUrl ? `/demo/report${new URL(connection.monitorUrl).hash}` : '/demo/report';
+  window.open(reportPath, '_blank', 'noopener,noreferrer');
 }
 
 loadRecovery();

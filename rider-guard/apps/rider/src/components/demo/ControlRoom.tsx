@@ -4,7 +4,7 @@ import type { SensorAnalysis } from '@rider-guard/contract';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
-import { evidenceHeadline } from '@/components/IncidentEvidence';
+import { SensorEvidenceTable } from '@/components/SensorEvidenceTable';
 import { MapPill, RiderMap } from '@/components/RiderMap';
 import { Badge, Button, Txt, type BadgeTone } from '@/components/ui';
 import {
@@ -33,8 +33,6 @@ import { TourActionButton, TourTarget } from '@/components/tour/GuidedTour';
 const STATUS_TONE: Record<RiderStatus, BadgeTone> = { delivering: 'green', idle: 'neutral', off: 'muted', check: 'red', incident: 'redSolid' };
 const ORDER_LABEL: Record<DemoOrder['status'], string> = { delivering: '배달 중', held: '보류', reassigned: '대체 배차', delivered: '완료' };
 const ORDER_TONE: Record<DemoOrder['status'], BadgeTone> = { delivering: 'green', held: 'red', reassigned: 'dark', delivered: 'neutral' };
-const METRIC_LABEL: Record<SensorAnalysis['evidence'][number]['key'], string> = { peak_g: '가속도', peak_gyro: '각속도', delta_v150: 'ΔV', bank_deg: '뱅크각' };
-const UNIT: Record<string, string> = { g: 'g', 'deg/s': '°/s', 'm/s': 'm/s', deg: '°' };
 const mutate = (action: DemoAction) => dispatchPresentationAction(getPresentationConnection(), action, dispatch);
 
 export function openReport() {
@@ -226,7 +224,6 @@ function IncidentPanel({ s, analysis, compact = false, actions, showSource }: { 
   }
   const left = waitLeft(s);
   const tone: BadgeTone = i.status === 'resolved' || i.status === 'rider_ok' ? 'neutral' : i.status === 'confirming' ? 'red' : 'redSolid';
-  const passed = analysis?.evidence.filter((e) => e.passedAt !== null) ?? [];
   const canAck = i.status === 'escalated';
   const canAct = i.status === 'escalated' || i.status === 'acknowledged';
   return (
@@ -245,15 +242,7 @@ function IncidentPanel({ s, analysis, compact = false, actions, showSource }: { 
       </Section>
 
       {!compact ? <Section title="감지 근거">
-        {analysis ? (
-          <>
-            <Txt style={styles.strongLine}>{evidenceHeadline(analysis)}</Txt>
-            {passed.map((e) => (
-              <Txt key={e.key} style={styles.meta}>{`${METRIC_LABEL[e.key]} ${e.value?.toFixed(e.unit === 'g' || e.unit === 'm/s' ? 2 : 0)}${UNIT[e.unit] ?? e.unit} ≥ ${e.threshold}${UNIT[e.unit] ?? e.unit} · ${e.passedAt?.toFixed(3)}초`}</Txt>
-            ))}
-            <Txt style={styles.meta}>{`규칙 ${analysis.ruleVersion} · 판정창 ${analysis.windowS}초 · 파형 ${i.caseId} (실측)`}</Txt>
-          </>
-        ) : (
+        {analysis ? <SensorEvidenceTable analysis={analysis} /> : (
           <Txt style={styles.meta}>판정 근거를 불러오는 중</Txt>
         )}
       </Section> : null}
